@@ -14,6 +14,32 @@ volatile uint32_t *lcd = (volatile uint32_t *)0x51000000;
 static uint32_t framebuffer[320 * 240] = { 0 };
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 
+#define TOUCH_BASE   (0x51001000UL)
+#define TOUCH_STATUS (*(volatile uint32_t *)(TOUCH_BASE + 0x00))
+#define TOUCH_X      (*(volatile uint32_t *)(TOUCH_BASE + 0x04))
+#define TOUCH_Y      (*(volatile uint32_t *)(TOUCH_BASE + 0x08))
+#define TOUCH_CTRL   (*(volatile uint32_t *)(TOUCH_BASE + 0x0c))
+
+void Interrupt5_Handler(void) {
+    uint32_t x;
+    uint32_t y;
+    uint32_t status;
+    status = TOUCH_STATUS;
+    printf("touch irq\n");
+    if (status) {
+        x = TOUCH_X;
+        y = TOUCH_Y;
+        printf("touch x=%lu y=%lu\n", x, y);
+        TOUCH_CTRL = 1;
+    }
+}
+
+void test_touch(void) {
+    NVIC_EnableIRQ(5);
+    TOUCH_CTRL = 1;
+    printf("ISER0=%08lx\n", *(volatile uint32_t *)0xE000E100);
+}
+
 void HardFault_Handler_Legency(void) {
     printf("%s\n", __func__);
 }
@@ -99,6 +125,7 @@ static void main_task_entry(void *parameters) {
     height = lcd[1];
     printf("lcd init %d %d\n", width, height);
     test_lcd();
+    test_touch();
     
     while(1) {
         vTaskDelay(1000);
