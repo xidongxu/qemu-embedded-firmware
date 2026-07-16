@@ -206,7 +206,7 @@ ifeq ($(tool), gcc)
 CPU = -mcpu=cortex-m33
 FPU = -mfpu=fpv5-sp-d16
 FLOAT-ABI = -mfloat-abi=hard
-MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
+MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI) -mcmse 
 endif
 ifeq ($(tool), iar)
 CPU = --cpu=Cortex-M33

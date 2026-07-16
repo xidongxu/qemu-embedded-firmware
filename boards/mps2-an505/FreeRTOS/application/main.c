@@ -20,7 +20,7 @@ uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 #define TOUCH_Y      (*(volatile uint32_t *)(TOUCH_BASE + 0x08))
 #define TOUCH_CTRL   (*(volatile uint32_t *)(TOUCH_BASE + 0x0c))
 
-void Interrupt5_Handler(void) {
+void Interrupt32_Handler(void) {
     uint32_t x;
     uint32_t y;
     uint32_t status;
@@ -35,7 +35,7 @@ void Interrupt5_Handler(void) {
 }
 
 void test_touch(void) {
-    NVIC_EnableIRQ(5);
+    NVIC_EnableIRQ(32);
     TOUCH_CTRL = 1;
     printf("ISER0=%08lx\n", *(volatile uint32_t *)0xE000E100);
 }

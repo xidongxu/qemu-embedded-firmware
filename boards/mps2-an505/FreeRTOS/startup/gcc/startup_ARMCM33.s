@@ -65,8 +65,41 @@ __Vectors:
                 .long    Interrupt7_Handler                 /*   7 Interrupt 7 */
                 .long    Interrupt8_Handler                 /*   8 Interrupt 8 */
                 .long    Interrupt9_Handler                 /*   9 Interrupt 9 */
+                
+                .long    Interrupt10_Handler                /*   10 Interrupt 10 */
+                .long    Interrupt11_Handler                /*   11 Interrupt 11 */
+                .long    Interrupt12_Handler                /*   12 Interrupt 12 */
+                .long    Interrupt13_Handler                /*   13 Interrupt 13 */
+                .long    Interrupt14_Handler                /*   14 Interrupt 14 */
+                .long    Interrupt15_Handler                /*   15 Interrupt 15 */
+                .long    Interrupt16_Handler                /*   16 Interrupt 16 */
+                .long    Interrupt17_Handler                /*   17 Interrupt 17 */
+                .long    Interrupt18_Handler                /*   18 Interrupt 18 */
+                .long    Interrupt19_Handler                /*   19 Interrupt 19 */
 
-                .space   (470 * 4)                          /* Interrupts 10 .. 480 are left out */
+                .long    Interrupt20_Handler                /*   20 Interrupt 20 */
+                .long    Interrupt21_Handler                /*   21 Interrupt 21 */
+                .long    Interrupt22_Handler                /*   22 Interrupt 22 */
+                .long    Interrupt23_Handler                /*   23 Interrupt 23 */
+                .long    Interrupt24_Handler                /*   24 Interrupt 24 */
+                .long    Interrupt25_Handler                /*   25 Interrupt 25 */
+                .long    Interrupt26_Handler                /*   26 Interrupt 26 */
+                .long    Interrupt27_Handler                /*   27 Interrupt 27 */
+                .long    Interrupt28_Handler                /*   28 Interrupt 28 */
+                .long    Interrupt29_Handler                /*   29 Interrupt 29 */
+
+                .long    Interrupt30_Handler                /*   30 Interrupt 30 */
+                .long    Interrupt31_Handler                /*   31 Interrupt 31 */
+                .long    Interrupt32_Handler                /*   32 Interrupt 32 */
+                .long    Interrupt33_Handler                /*   33 Interrupt 33 */
+                .long    Interrupt34_Handler                /*   34 Interrupt 34 */
+                .long    Interrupt35_Handler                /*   35 Interrupt 35 */
+                .long    Interrupt36_Handler                /*   36 Interrupt 36 */
+                .long    Interrupt37_Handler                /*   37 Interrupt 37 */
+                .long    Interrupt38_Handler                /*   38 Interrupt 38 */
+                .long    Interrupt39_Handler                /*   39 Interrupt 39 */
+
+                .space   (440 * 4)                          /* Interrupts 40 .. 480 are left out */
 __Vectors_End:
                 .equ     __Vectors_Size, __Vectors_End - __Vectors
                 .size    __Vectors, . - __Vectors
@@ -198,5 +231,38 @@ Default_Handler:
                 Set_Default_Handler  Interrupt7_Handler
                 Set_Default_Handler  Interrupt8_Handler
                 Set_Default_Handler  Interrupt9_Handler
+
+                Set_Default_Handler  Interrupt10_Handler
+                Set_Default_Handler  Interrupt11_Handler
+                Set_Default_Handler  Interrupt12_Handler
+                Set_Default_Handler  Interrupt13_Handler
+                Set_Default_Handler  Interrupt14_Handler
+                Set_Default_Handler  Interrupt15_Handler
+                Set_Default_Handler  Interrupt16_Handler
+                Set_Default_Handler  Interrupt17_Handler
+                Set_Default_Handler  Interrupt18_Handler
+                Set_Default_Handler  Interrupt19_Handler
+
+                Set_Default_Handler  Interrupt20_Handler
+                Set_Default_Handler  Interrupt21_Handler
+                Set_Default_Handler  Interrupt22_Handler
+                Set_Default_Handler  Interrupt23_Handler
+                Set_Default_Handler  Interrupt24_Handler
+                Set_Default_Handler  Interrupt25_Handler
+                Set_Default_Handler  Interrupt26_Handler
+                Set_Default_Handler  Interrupt27_Handler
+                Set_Default_Handler  Interrupt28_Handler
+                Set_Default_Handler  Interrupt29_Handler
+
+                Set_Default_Handler  Interrupt30_Handler
+                Set_Default_Handler  Interrupt31_Handler
+                Set_Default_Handler  Interrupt32_Handler
+                Set_Default_Handler  Interrupt33_Handler
+                Set_Default_Handler  Interrupt34_Handler
+                Set_Default_Handler  Interrupt35_Handler
+                Set_Default_Handler  Interrupt36_Handler
+                Set_Default_Handler  Interrupt37_Handler
+                Set_Default_Handler  Interrupt38_Handler
+                Set_Default_Handler  Interrupt39_Handler
 
                 .end
