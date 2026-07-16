@@ -116,6 +116,11 @@ void test5(void) {
      ((uint32_t)(b)))
 
 void test_lcd(void) { 
+    uint32_t width;
+    uint32_t height;
+    width  = lcd[0];
+    height = lcd[1];
+    printf("lcd init %dx%d\n", width, height);
     for (int y = 0; y < 240; y++) { 
         for (int x = 0; x < 320; x++) { 
             uint8_t r = x * 255 / 319; 
@@ -127,22 +132,18 @@ void test_lcd(void) {
     lcd[2] = (uint32_t)framebuffer; 
     printf("lcd update started\n");
     lcd[3] = 1; 
-    printf("lcd update done\n");
+    printf("lcd update finshed\n");
 }
 
 static void main_task_entry(void *parameters) {
     int counter = 0;
-    uint32_t width;
-    uint32_t height;
-    width  = lcd[0];
-    height = lcd[1];
-    printf("lcd init %d %d\n", width, height);
+    
     test_lcd();
     test_touch();
-    
+
     while(1) {
         vTaskDelay(1000);
-        printf("hello this is FreeRTOS: %d, %dx%d.\r\n", counter++, width, height);
+        printf("hello this is FreeRTOS: %d.\r\n", counter++);
     }
 }
 
