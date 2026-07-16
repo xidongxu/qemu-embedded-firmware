@@ -19,25 +19,38 @@ uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 #define TOUCH_X      (*(volatile uint32_t *)(TOUCH_BASE + 0x04))
 #define TOUCH_Y      (*(volatile uint32_t *)(TOUCH_BASE + 0x08))
 #define TOUCH_CTRL   (*(volatile uint32_t *)(TOUCH_BASE + 0x0c))
+#define TOUCH_ID     (*(volatile uint32_t *)(TOUCH_BASE + 0x10))
+#define TOUCH_RES_X  (*(volatile uint32_t *)(TOUCH_BASE + 0x14))
+#define TOUCH_RES_Y  (*(volatile uint32_t *)(TOUCH_BASE + 0x18))
+
+#define TOUCH_STATUS_PRESSED (1 << 0)
+#define TOUCH_STATUS_READY   (1 << 1)
+#define TOUCH_CTRL_CLEAR_INT (1 << 0)
+
+static void touch_clear_irq(void) {
+    TOUCH_CTRL = TOUCH_CTRL_CLEAR_INT;
+}
 
 void Interrupt32_Handler(void) {
     uint32_t x;
     uint32_t y;
     uint32_t status;
     status = TOUCH_STATUS;
-    printf("touch irq\n");
-    if (status) {
+    printf("status=0x%08lx\n", status);
+    if (status & TOUCH_STATUS_READY) {
         x = TOUCH_X;
         y = TOUCH_Y;
         printf("touch x=%lu y=%lu\n", x, y);
-        TOUCH_CTRL = 1;
     }
+    touch_clear_irq();
 }
 
 void test_touch(void) {
     NVIC_EnableIRQ(32);
     TOUCH_CTRL = 1;
-    printf("ISER0=%08lx\n", *(volatile uint32_t *)0xE000E100);
+    printf("TOUCH_ID = %08lx\n", TOUCH_ID);
+    printf("TOUCH_RES = %lux%lu\n", TOUCH_RES_X, TOUCH_RES_Y);
+    printf("TOUCH_STATUS = %08lx\n", TOUCH_STATUS);
 }
 
 void HardFault_Handler_Legency(void) {
