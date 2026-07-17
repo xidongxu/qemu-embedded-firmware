@@ -93,6 +93,7 @@ C_SOURCES = \
 ./application/system_ARMCM33.c \
 ../Core/Src/printf.c \
 ../Core/Src/uart.c \
+../Core/Src/lcd.c \
 ../../../libutils/fault-dump/src/fault-dump.c \
 ../../../libutils/fault-dump/cpu/cortex-m33/fault-hal.c \
 ../../../libutils/fault-dump/sys/FreeRTOS/stack-dump.c  

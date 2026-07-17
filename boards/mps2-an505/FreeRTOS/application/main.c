@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "lcd.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -10,8 +11,6 @@
 #include <queue.h>
 #include <timers.h>
 
-volatile uint32_t *lcd = (volatile uint32_t *)0x51000000;
-static uint32_t framebuffer[320 * 240] = { 0 };
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 
 #define TOUCH_BASE   (0x51001000UL)
@@ -77,6 +76,10 @@ void dump_callstack(void) {
     }
 }
 
+void test_lcd(void) {
+    lcd_init();
+}
+
 void test0(void) {
     printf("this is %s.\r\n", __func__);
     dump_callstack();
@@ -109,41 +112,25 @@ void test5(void) {
     test4();
 }
 
-#define ARGB8888(a,r,g,b) \
-    (((uint32_t)(a) << 24) | \
-     ((uint32_t)(r) << 16) | \
-     ((uint32_t)(g) << 8)  | \
-     ((uint32_t)(b)))
-
-void test_lcd(void) { 
-    uint32_t width;
-    uint32_t height;
-    width  = lcd[0];
-    height = lcd[1];
-    printf("lcd init %dx%d\n", width, height);
-    for (int y = 0; y < 240; y++) { 
-        for (int x = 0; x < 320; x++) { 
-            uint8_t r = x * 255 / 319; 
-            uint8_t g = y * 255 / 239; 
-            uint8_t b = 0; 
-            framebuffer[y * 320 + x] = ARGB8888(0xff, r, g, b); 
-        } 
-    } 
-    lcd[2] = (uint32_t)framebuffer; 
-    printf("lcd update started\n");
-    lcd[3] = 1; 
-    printf("lcd update finshed\n");
-}
-
 static void main_task_entry(void *parameters) {
     int counter = 0;
-    
     test_lcd();
     test_touch();
-
     while(1) {
+        printf("hello this is FreeRTOS: %d.\r\n", counter);
+        if (counter % 3 == 0) {
+            lcd_clear(0xffff0000);
+        }
+        if (counter % 3 == 1) {
+            lcd_clear(0xff00ff00);
+        }
+        if (counter % 3 == 2) {
+            lcd_clear(0xff0000ff);
+        }
+        lcd_update();
+        lcd_wait_done();
         vTaskDelay(1000);
-        printf("hello this is FreeRTOS: %d.\r\n", counter++);
+        counter++;
     }
 }
 
