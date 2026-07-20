@@ -309,7 +309,6 @@ SECTIONS
   /* ARMv8-M stack sealing:
      to use ARMv8-M stack sealing uncomment '.stackseal' section
    */
-/*
   .stackseal (ORIGIN(RAM) + LENGTH(RAM) - __STACKSEAL_SIZE) (COPY) :
   {
     . = ALIGN(8);
@@ -317,7 +316,6 @@ SECTIONS
     . = . + 8;
     . = ALIGN(8);
   } > RAM
-*/
 
   /* Check if data + heap + stack exceeds RAM limit */
   ASSERT(__StackLimit >= __HeapLimit, "region RAM overflowed with stack")

@@ -2,6 +2,7 @@
 #define LCD_H
 
 #include <stdint.h>
+#include <stdio.h>
 
 #define LCD_BASE            (0x51000000UL)
 #define LCD_WIDTH_ADDR      (LCD_BASE + 0x00)
