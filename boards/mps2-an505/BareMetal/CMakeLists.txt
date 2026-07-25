@@ -1,4 +1,4 @@
-set(TARGET an505-qemu)
+﻿set(TARGET an505-qemu)
 
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
@@ -15,7 +15,8 @@ file(GLOB CORE_SOURCES
 )
 
 file(GLOB STARTUP_SOURCES
-    "startup/gcc/startup_ARMCM33.s"
+    "startup/gcc/*.s"
+    "startup/gcc/*.S"
 )
 
 target_sources(${TARGET} PRIVATE
@@ -27,6 +28,8 @@ target_sources(${TARGET} PRIVATE
 target_include_directories(${TARGET} PRIVATE
     application
     ../Core/Inc
+    ../Drivers/CMSIS_5/Device/ARM/ARMCM33/Include
+    ../Drivers/CMSIS_5/CMSIS/Core/Include
     ../Drivers/CMSIS_5/Device/ARM/ARMCM33/Include
     ../Drivers/CMSIS_5/CMSIS/Core/Include
 )
@@ -41,10 +44,9 @@ target_compile_options(${TARGET} PRIVATE
     -mfpu=fpv5-sp-d16
     -mfloat-abi=hard
     -Wall
-    -specs=nosys.specs
     -fdata-sections
     -ffunction-sections
-    -fno-exceptions
+    -specs=nano.specs
 )
 
 target_link_libraries(${TARGET} PRIVATE utils)
@@ -53,8 +55,13 @@ target_link_options(${TARGET} PRIVATE
     -T${CMAKE_CURRENT_SOURCE_DIR}/startup/gcc/gcc_arm.ld
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.map,--cref
     -Wl,--gc-sections
+    -specs=nano.specs
     -lc
     -lm
+)
+
+target_link_libraries(${TARGET} PRIVATE
+    utils
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")

@@ -144,12 +144,11 @@ SECTIONS
    * must be set, either with the command line option ?-section-start?or in a linker script,
    * to indicate where to place these veneers in memory.
    */
-/*
   .gnu.sgstubs :
   {
     . = ALIGN(32);
   } > FLASH
-*/
+
   .ARM.extab :
   {
     *(.ARM.extab* .gnu.linkonce.armextab.*)
@@ -310,7 +309,6 @@ SECTIONS
   /* ARMv8-M stack sealing:
      to use ARMv8-M stack sealing uncomment '.stackseal' section
    */
-/*
   .stackseal (ORIGIN(RAM) + LENGTH(RAM) - __STACKSEAL_SIZE) (COPY) :
   {
     . = ALIGN(8);
@@ -318,7 +316,7 @@ SECTIONS
     . = . + 8;
     . = ALIGN(8);
   } > RAM
-*/
+
   __RAM_segment_used_end__ = .;
   _end = .;
   /* Check if data + heap + stack exceeds RAM limit */

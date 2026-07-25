@@ -1,4 +1,4 @@
-set(TARGET an505-qemu)
+﻿set(TARGET an505-qemu)
 
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
@@ -14,18 +14,14 @@ file(GLOB CORE_SOURCES
     "../Core/Src/*.c"
 )
 
-set(BOARD_APP_SOURCES
-    ${APP_SOURCES}
-    ${CORE_SOURCES}
-    "../Core/Src/semihosting.c"
-)
-
 file(GLOB STARTUP_SOURCES
     "startup/gcc/*.s"
+    "startup/gcc/*.S"
 )
 
 target_sources(${TARGET} PRIVATE
-    ${BOARD_APP_SOURCES}
+    ${APP_SOURCES}
+    ${CORE_SOURCES}
     ${STARTUP_SOURCES}
 )
 
@@ -47,16 +43,21 @@ target_compile_options(${TARGET} PRIVATE
     -mthumb
     -mfpu=fpv5-sp-d16
     -mfloat-abi=hard
-    -mcmse
     -Wall
-    $<$<COMPILE_LANGUAGE:C>:-Wno-implicit-function-declaration>
-    $<$<COMPILE_LANGUAGE:C>:-include stdio.h>
+    -fdata-sections
+    -ffunction-sections
+    -specs=nano.specs
 )
+
+target_link_libraries(${TARGET} PRIVATE utils)
 
 target_link_options(${TARGET} PRIVATE
     -T${CMAKE_CURRENT_SOURCE_DIR}/startup/gcc/gcc_arm.ld
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.map,--cref
     -Wl,--gc-sections
+    -specs=nano.specs
+    -lc
+    -lm
 )
 
 target_link_libraries(${TARGET} PRIVATE
