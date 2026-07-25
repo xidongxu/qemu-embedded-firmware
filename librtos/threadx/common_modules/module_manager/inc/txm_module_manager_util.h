@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -25,7 +26,7 @@
 /*  COMPONENT DEFINITION                                   RELEASE        */
 /*                                                                        */
 /*    txm_module_manager_util.h                           PORTABLE C      */
-/*                                                           6.3.0        */
+/*                                                           6.4.3        */
 /*  AUTHOR                                                                */
 /*                                                                        */
 /*    Scott Larson, Microsoft Corporation                                 */
@@ -34,18 +35,6 @@
 /*                                                                        */
 /*    This file declares prototypes of utility functions used by the      */
 /*    module manager.                                                     */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*  04-02-2021      Scott Larson            Modified comment(s) and       */
-/*                                            optimized object checks,    */
-/*                                            resulting in version 6.1.6  */
-/*  10-31-2023      Tiejun Zhou             Modified comment(s) and       */
-/*                                            improved object check,      */
-/*                                            resulting in version 6.3.0  */
 /*                                                                        */
 /**************************************************************************/
 
@@ -102,16 +91,11 @@
 
 /* Kernel objects should be outside the module at the very least.  */
 #define TXM_MODULE_MANAGER_PARAM_CHECK_OBJECT_FOR_USE(module_instance, obj_ptr, obj_size) \
-    (TXM_MODULE_MANAGER_ENSURE_OUTSIDE_MODULE(module_instance, obj_ptr, obj_size) || \
-     (_txm_module_manager_created_object_check(module_instance, (void *)obj_ptr) == TX_FALSE) || \
-     ((void *) (obj_ptr) == TX_NULL))
+    (_txm_module_manager_param_check_object_for_use(module_instance, obj_ptr, obj_size))
 
 /* When creating an object, the object must be inside the object pool.  */
 #define TXM_MODULE_MANAGER_PARAM_CHECK_OBJECT_FOR_CREATION(module_instance, obj_ptr, obj_size) \
-    ((TXM_MODULE_MANAGER_ENSURE_INSIDE_OBJ_POOL(module_instance, obj_ptr, obj_size) && \
-      (_txm_module_manager_object_size_check(obj_ptr, obj_size) == TX_SUCCESS)) || \
-     (_txm_module_manager_created_object_check(module_instance, (void *)obj_ptr) == TX_FALSE) || \
-     ((void *) (obj_ptr) == TX_NULL))
+    (_txm_module_manager_param_check_object_for_creation(module_instance, obj_ptr, obj_size))
 
 /* Strings we dereference can be in RW/RO/Shared areas.  */
 #define TXM_MODULE_MANAGER_PARAM_CHECK_DEREFERENCE_STRING(module_instance, string_ptr) \
@@ -136,6 +120,8 @@ UINT    _txm_module_manager_object_memory_check(TXM_MODULE_INSTANCE *module_inst
 UINT    _txm_module_manager_object_size_check(ALIGN_TYPE object_ptr, ULONG object_size);
 UINT    _txm_module_manager_object_name_compare(CHAR *object_name1, UINT object_name1_length, CHAR *object_name2);
 UCHAR   _txm_module_manager_created_object_check(TXM_MODULE_INSTANCE *module_instance, void *object_ptr);
+UINT    _txm_module_manager_param_check_object_for_creation(TXM_MODULE_INSTANCE *module_instance, ALIGN_TYPE object_ptr, ULONG object_size);
+UINT    _txm_module_manager_param_check_object_for_use(TXM_MODULE_INSTANCE *module_instance, ALIGN_TYPE object_ptr, ULONG object_size);
 UINT    _txm_module_manager_util_code_allocation_size_and_alignment_get(TXM_MODULE_PREAMBLE *module_preamble, ULONG *code_alignment_dest, ULONG *code_allocation_size_dest);
 
 #endif

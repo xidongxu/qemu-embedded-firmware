@@ -1,10 +1,10 @@
 @/***************************************************************************
-@ * Copyright (c) 2024 Microsoft Corporation 
-@ * 
+@ * Copyright (c) 2024 Microsoft Corporation
+@ *
 @ * This program and the accompanying materials are made available under the
 @ * terms of the MIT License which is available at
 @ * https://opensource.org/licenses/MIT.
-@ * 
+@ *
 @ * SPDX-License-Identifier: MIT
 @ **************************************************************************/
 @
@@ -31,7 +31,7 @@
     .global  _tx_thread_schedule
     .global  _tx_thread_preempt_disable
     .global _tx_execution_isr_exit
-#if (defined(TX_ENABLE_EXECUTION_CHANGE_NOTIFY) || defined(TX_EXECUTION_PROFILE_ENABLE))                                        
+#if (defined(TX_ENABLE_EXECUTION_CHANGE_NOTIFY) || defined(TX_EXECUTION_PROFILE_ENABLE))
     .global  _tx_execution_isr_exit
 #endif
 @
@@ -73,17 +73,6 @@
 @/*  CALLED BY                                                             */
 @/*                                                                        */
 @/*    ISRs                                  Interrupt Service Routines    */
-@/*                                                                        */
-@/*  RELEASE HISTORY                                                       */
-@/*                                                                        */
-@/*    DATE              NAME                      DESCRIPTION             */
-@/*                                                                        */
-@/*  05-19-2020     William E. Lamie         Initial Version 6.0           */
-@/*  09-30-2020     Scott Larson             Modified comment(s), and      */
-@/*                                            cleaned up whitespace,      */
-@/*                                            resulting in version 6.1    */
-@/*  03-08-2023      Scott Larson            Include tx_user.h,            */
-@/*                                            resulting in version 6.2.1  */
 @/*                                                                        */
 @/**************************************************************************/
 @VOID   _tx_thread_context_restore(VOID)

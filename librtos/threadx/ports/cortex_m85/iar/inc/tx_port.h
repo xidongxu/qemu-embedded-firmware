@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -44,39 +45,6 @@
 /*                                                                        */
 /*    This file replaces the previous Cortex-M85 files. It unifies        */
 /*    the Cortex-M85 compilers into one common file.                      */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*  03-02-2021      Scott Larson            Modified comment(s), added    */
-/*                                            ULONG64_DEFINED,            */
-/*                                            resulting in version 6.1.5  */
-/*  06-02-2021      Scott Larson            Modified comment(s), removed  */
-/*                                            unneeded header file, funcs */
-/*                                            set_control and get_control */
-/*                                            changed to inline,          */
-/*                                            added symbol to enable      */
-/*                                            stack error handler,        */
-/*                                            resulting in version 6.1.7  */
-/*  10-15-2021      Scott Larson            Modified comment(s), improved */
-/*                                            stack check error handling, */
-/*                                            resulting in version 6.1.9  */
-/*  01-31-2022      Scott Larson            Modified comment(s), unified  */
-/*                                            this file across compilers, */
-/*                                            fixed predefined macro,     */
-/*                                            resulting in version 6.1.10 */
-/*  04-25-2022      Scott Larson            Modified comments and added   */
-/*                                            volatile to registers,      */
-/*                                            resulting in version 6.1.11 */
-/*  07-29-2022      Scott Larson            Modified comments and changed */
-/*                                            secure stack initialization */
-/*                                            macro to port-specific,     */
-/*                                            described BASEPRI usage,    */
-/*                                            resulting in version 6.1.12 */
-/*  03-08-2023      Scott Larson            Removed unneeded #include,    */
-/*                                            resulting in version 6.2.1  */
 /*                                                                        */
 /**************************************************************************/
 
@@ -573,7 +541,7 @@ UINT posture;
 #ifdef TX_PORT_USE_BASEPRI
 __attribute__( ( always_inline ) ) static inline void __set_basepri_value(UINT basepri_value)
 {
-    __asm__ volatile ("MSR  BASEPRI,%0 ": : "r" (basepri_value));
+    __asm__ volatile ("MSR  BASEPRI,%0 ": : "r" (basepri_value) : "memory");
 }
 #else
 __attribute__( ( always_inline ) ) static inline void __enable_interrupts(void)
@@ -586,6 +554,7 @@ __attribute__( ( always_inline ) ) static inline void __restore_interrupt(UINT i
 {
 #ifdef TX_PORT_USE_BASEPRI
     __set_basepri_value(int_posture);
+    __asm__ volatile ("" : : : "memory");
 #else
     __asm__ volatile ("MSR  PRIMASK,%0": : "r" (int_posture): "memory");
 #endif
@@ -645,13 +614,15 @@ VOID                                            _tx_thread_interrupt_restore(UIN
 
 #ifdef TX_THREAD_INIT
 CHAR                            _tx_version_id[] =
-                                    "Copyright (c) 2024 Microsoft Corporation. * ThreadX Cortex-M85/IAR Version 6.4.1 *";
+                                    "(c) 2024 Microsoft Corp. (c) 2026-present Eclipse ThreadX contributors. * ThreadX Cortex-M85/IAR Version 6.5.1.202602a *";
 #else
 #ifdef TX_MISRA_ENABLE
 extern  CHAR                    _tx_version_id[100];
 #else
 extern  CHAR                    _tx_version_id[];
 #endif
+#endif
+
 #endif
 
 #endif

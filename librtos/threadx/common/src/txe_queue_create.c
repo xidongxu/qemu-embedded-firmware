@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -69,14 +70,6 @@
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    Application Code                                                    */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  05-19-2020     William E. Lamie         Initial Version 6.0           */
-/*  09-30-2020     Yuxin Zhou               Modified comment(s),          */
-/*                                            resulting in version 6.1    */
 /*                                                                        */
 /**************************************************************************/
 UINT  _txe_queue_create(TX_QUEUE *queue_ptr, CHAR *name_ptr, UINT message_size,
@@ -178,8 +171,8 @@ TX_THREAD       *thread_ptr;
             status =  TX_SIZE_ERROR;
         }
 
-        /* Check for an invalid message size - greater than 16.  */
-        else if (message_size > TX_16_ULONG)
+        /* Check for an invalid message size - greater than TX_QUEUE_MESSAGE_MAX_SIZE 16 by default.  */
+        else if (message_size > TX_QUEUE_MESSAGE_MAX_SIZE)
         {
 
             /* Invalid message size specified.  */

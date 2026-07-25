@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -34,12 +35,6 @@
 /*                                                                        */
 /*    This file defines the basic module constants, interface structures, */
 /*    and function prototypes.                                            */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  12-31-2020     Andres Mlinar            Initial Version 6.1.3         */
 /*                                                                        */
 /**************************************************************************/
 
@@ -273,6 +268,6 @@ ALIGN_TYPE _txm_module_manager_port_dispatch(TXM_MODULE_INSTANCE *module_instanc
 
 #define TXM_MODULE_MANAGER_VERSION_ID   \
 CHAR                            _txm_module_manager_version_id[] =  \
-                                    "Copyright (c) 2024 Microsoft Corporation.  *  ThreadX Module Cortex-A35/GNU Version 6.4.1 *";
+                                    "Copyright (c) 2024 Microsoft Corporation.  *  ThreadX Module Cortex-A35/GNU Version 6.5.0.202601 *";
 
 #endif

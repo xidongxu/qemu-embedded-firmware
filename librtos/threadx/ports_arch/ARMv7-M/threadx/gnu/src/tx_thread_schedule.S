@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -67,18 +68,6 @@
 /*                                                                        */
 /*    _tx_initialize_kernel_enter          ThreadX entry function         */
 /*    _tx_thread_system_return             Return to system from thread   */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  06-02-2021      Scott Larson            Initial Version 6.1.7         */
-/*  01-31-2022      Scott Larson            Fixed predefined macro name,  */
-/*                                            resulting in version 6.1.10 */
-/*  04-25-2022      Scott Larson            Added BASEPRI support,        */
-/*                                            resulting in version 6.1.11 */
-/*  03-08-2023      Scott Larson            Include tx_user.h,            */
-/*                                            resulting in version 6.2.1  */
 /*                                                                        */
 /**************************************************************************/
 // VOID   _tx_thread_schedule(VOID)

@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -29,11 +30,11 @@
 
 SYSTEM_CLOCK      EQU   25000000
 SYSTICK_CYCLES    EQU   ((SYSTEM_CLOCK / 100) -1)
-        
+
     RSEG    FREE_MEM:DATA
     PUBLIC  __tx_free_memory_start
 __tx_free_memory_start
-    DS32    4        
+    DS32    4
 
     SECTION `.text`:CODE:NOROOT(2)
     THUMB
@@ -70,15 +71,6 @@ __tx_free_memory_start
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    _tx_initialize_kernel_enter           ThreadX entry function        */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  11-09-2020     Scott Larson             Modified comment(s),          */
-/*                                            resulting in version 6.1.2  */
-/*                                                                        */
 /**************************************************************************/
 // VOID   _tx_initialize_low_level(VOID)
 // {
@@ -86,7 +78,7 @@ __tx_free_memory_start
 _tx_initialize_low_level:
 
     /* Disable interrupts during ThreadX initialization.  */
-    
+
     CPSID   i
 
     /* Set base of available memory to end of non-initialised RAM area.  */
@@ -96,7 +88,7 @@ _tx_initialize_low_level:
     STR     r1, [r0]                                // Setup first unused memory pointer
 
     /* Setup Vector Table Offset Register.  */
-    
+
     MOV     r0, #0xE000E000                         // Build address of NVIC registers
     LDR     r1, =__vector_table                     // Pickup address of vector table
     STR     r1, [r0, #0xD08]                        // Set vector table address
@@ -106,7 +98,7 @@ _tx_initialize_low_level:
 //    LDR     r0, =0xE0001000                         // Build address of DWT register
 //    LDR     r1, [r0]                                // Pickup the current value
 //    ORR     r1, r1, #1                              // Set the CYCCNTENA bit
-//    STR     r1, [r0]                                // Enable the cycle count register 
+//    STR     r1, [r0]                                // Enable the cycle count register
 
     /* Set system stack pointer from vector value.  */
 
@@ -138,7 +130,7 @@ _tx_initialize_low_level:
 
     /* Return to caller.  */
 
-    BX      lr 
+    BX      lr
 // }
 
     PUBLIC  SysTick_Handler

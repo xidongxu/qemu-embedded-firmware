@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -19,8 +20,6 @@
 /**************************************************************************/
 /**************************************************************************/
 
-    RETURN_MASK = 0x000000000000000F
-    SET_SR_MASK = 0xFFFFFFFFFFFFFFF0
 
     .section .text
 /**************************************************************************/
@@ -54,12 +53,6 @@
 /*                                                                        */
 /*    Application Code                                                    */
 /*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  03-08-2023      Scott Larson            Initial Version 6.2.1         */
-/*                                                                        */
 /**************************************************************************/
 /* UINT   _tx_thread_interrupt_control(UINT new_posture)
 {  */
@@ -67,15 +60,24 @@
 _tx_thread_interrupt_control:
     /* Pickup current interrupt lockout posture.  */
 
+#ifdef TX_RISCV_SMODE
+    csrr    t0, sstatus
+    mv      t1, t0                                      // Save original sstatus for return
+    li      t2, ~0x02                                   // Build mask to clear SIE (bit 1)
+    and     t0, t0, t2                                  // Clear SIE bit
+    andi    a0, a0, 0x02                                // Mask incoming to only SIE bit
+    or      t0, t0, a0                                  // Set requested SIE state
+    csrw    sstatus, t0
+    andi    a0, t1, 0x02                                // Return original SIE bit
+#else
     csrr    t0, mstatus
     mv      t1, t0                                      // Save original mstatus for return
-
-    /* Apply the new interrupt posture.  */
-
-    li      t2, SET_SR_MASK                             // Build set SR mask
-    and     t0, t0, t2                                  // Isolate interrupt lockout bits
-    or      t0, t0, a0                                  // Put new lockout bits in
+    li      t2, ~0x08                                   // Build mask to clear MIE
+    and     t0, t0, t2                                  // Clear MIE bit
+    andi    a0, a0, 0x08                                // Mask incoming to only MIE bit
+    or      t0, t0, a0                                  // Set requested MIE state
     csrw    mstatus, t0
-    andi    a0, t1, RETURN_MASK                         // Return original mstatus.
+    andi    a0, t1, 0x08                                // Return original MIE bit
+#endif
     ret
 /* }  */

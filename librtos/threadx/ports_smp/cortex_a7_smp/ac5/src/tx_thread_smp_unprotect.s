@@ -1,18 +1,18 @@
 ;/***************************************************************************
-; * Copyright (c) 2024 Microsoft Corporation 
-; * 
+; * Copyright (c) 2024 Microsoft Corporation
+; *
 ; * This program and the accompanying materials are made available under the
 ; * terms of the MIT License which is available at
 ; * https://opensource.org/licenses/MIT.
-; * 
+; *
 ; * SPDX-License-Identifier: MIT
 ; **************************************************************************/
 ;
 ;
 ;/**************************************************************************/
 ;/**************************************************************************/
-;/**                                                                       */ 
-;/** ThreadX Component                                                     */ 
+;/**                                                                       */
+;/** ThreadX Component                                                     */
 ;/**                                                                       */
 ;/**   Thread - Low Level SMP Support                                      */
 ;/**                                                                       */
@@ -37,10 +37,10 @@
 
         AREA ||.text||, CODE, READONLY
         PRESERVE8
-;/**************************************************************************/ 
-;/*                                                                        */ 
-;/*  FUNCTION                                               RELEASE        */ 
-;/*                                                                        */ 
+;/**************************************************************************/
+;/*                                                                        */
+;/*  FUNCTION                                               RELEASE        */
+;/*                                                                        */
 ;/*    _tx_thread_smp_unprotect                        SMP/Cortex-A7/AC5   */
 ;/*                                                            6.1         */
 ;/*  AUTHOR                                                                */
@@ -48,33 +48,27 @@
 ;/*    William E. Lamie, Microsoft Corporation                             */
 ;/*                                                                        */
 ;/*  DESCRIPTION                                                           */
-;/*                                                                        */ 
-;/*    This function releases previously obtained protection. The supplied */ 
-;/*    previous SR is restored. If the value of _tx_thread_system_state    */ 
-;/*    and _tx_thread_preempt_disable are both zero, then multithreading   */ 
-;/*    is enabled as well.                                                 */ 
-;/*                                                                        */ 
-;/*  INPUT                                                                 */ 
-;/*                                                                        */ 
-;/*    Previous Status Register                                            */ 
-;/*                                                                        */ 
-;/*  OUTPUT                                                                */ 
-;/*                                                                        */ 
-;/*    None                                                                */
-;/*                                                                        */ 
-;/*  CALLS                                                                 */ 
-;/*                                                                        */ 
-;/*    None                                                                */
-;/*                                                                        */ 
-;/*  CALLED BY                                                             */ 
-;/*                                                                        */ 
-;/*    ThreadX Source                                                      */
-;/*                                                                        */ 
-;/*  RELEASE HISTORY                                                       */ 
-;/*                                                                        */ 
-;/*    DATE              NAME                      DESCRIPTION             */
 ;/*                                                                        */
-;/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
+;/*    This function releases previously obtained protection. The supplied */
+;/*    previous SR is restored. If the value of _tx_thread_system_state    */
+;/*    and _tx_thread_preempt_disable are both zero, then multithreading   */
+;/*    is enabled as well.                                                 */
+;/*                                                                        */
+;/*  INPUT                                                                 */
+;/*                                                                        */
+;/*    Previous Status Register                                            */
+;/*                                                                        */
+;/*  OUTPUT                                                                */
+;/*                                                                        */
+;/*    None                                                                */
+;/*                                                                        */
+;/*  CALLS                                                                 */
+;/*                                                                        */
+;/*    None                                                                */
+;/*                                                                        */
+;/*  CALLED BY                                                             */
+;/*                                                                        */
+;/*    ThreadX Source                                                      */
 ;/*                                                                        */
 ;/**************************************************************************/
     EXPORT  _tx_thread_smp_unprotect

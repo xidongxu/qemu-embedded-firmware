@@ -1,18 +1,19 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
 
 /**************************************************************************/
 /**************************************************************************/
-/**                                                                       */ 
-/** POSIX wrapper for THREADX                                             */ 
+/**                                                                       */
+/** POSIX wrapper for THREADX                                             */
 /**                                                                       */
 /**                                                                       */
 /**                                                                       */
@@ -26,18 +27,18 @@
 #include "px_int.h"    /* Posix helper functions */
 
 
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  FUNCTION                                               RELEASE        */ 
-/*                                                                        */ 
-/*  pthread_cond_signal                                   PORTABLE C      */ 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*  pthread_cond_signal                                   PORTABLE C      */
 /*                                                           6.1.7        */
 /*  AUTHOR                                                                */
 /*                                                                        */
 /*    William E. Lamie, Microsoft Corporation                             */
 /*                                                                        */
-/*  DESCRIPTION                                                           */ 
-/*                                                                        */ 
+/*  DESCRIPTION                                                           */
+/*                                                                        */
 /*    This function shall unblock at least one of the threads that are    */
 /*    blocked on the specified condition variable cond                    */
 /*    (if any threads are blocked on cond).If more than one thread is     */
@@ -58,28 +59,22 @@
 /*    This function shall have no effect if there are no threads currently*/
 /*    blocked on cond.                                                    */
 /*                                                                        */
-/*  INPUT                                                                 */ 
+/*  INPUT                                                                 */
 /*                                                                        */
 /*     Nothing                                                            */
 /*                                                                        */
-/*  OUTPUT                                                                */ 
-/*                                                                        */ 
+/*  OUTPUT                                                                */
+/*                                                                        */
 /*     Nothing                                                            */
 /*                                                                        */
-/*  CALLS                                                                 */ 
+/*  CALLS                                                                 */
 /*                                                                        */
 /*     tx_semaphore_prioritize       line up pthreads waiting at semaphore*/
 /*     tx_semaphore_put              ThreadX semaphore put service        */
 /*                                                                        */
-/*  CALLED BY                                                             */ 
-/*                                                                        */ 
-/*    Application Code                                                    */ 
-/*                                                                        */ 
-/*  RELEASE HISTORY                                                       */ 
-/*                                                                        */ 
-/*    DATE              NAME                      DESCRIPTION             */
+/*  CALLED BY                                                             */
 /*                                                                        */
-/*  06-02-2021     William E. Lamie         Initial Version 6.1.7         */
+/*    Application Code                                                    */
 /*                                                                        */
 /**************************************************************************/
 INT  pthread_cond_signal(pthread_cond_t *cond)
@@ -89,7 +84,7 @@ TX_SEMAPHORE        *semaphore_ptr;
 UINT                 status;
 
     /* Get the condition variable's internal semaphore.  */
-    /* Simply convert the COndition variable control block into a semaphore  a cast */ 
+    /* Simply convert the COndition variable control block into a semaphore  a cast */
     semaphore_ptr = (&( cond->cond_semaphore ));
     if ( semaphore_ptr->tx_semaphore_suspended_count)
     {
@@ -107,6 +102,6 @@ UINT                 status;
 	        posix_set_pthread_errno(EINVAL);
             return(EINVAL);
         }
-    }   
+    }
     return(OK);
 }

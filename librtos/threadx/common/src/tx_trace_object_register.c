@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -64,17 +65,6 @@
 /*                                                                        */
 /*    Application Code                                                    */
 /*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  05-19-2020      William E. Lamie        Initial Version 6.0           */
-/*  09-30-2020      Yuxin Zhou              Modified comment(s),          */
-/*                                            resulting in version 6.1    */
-/*  07-29-2022      Scott Larson            Modified comment(s),          */
-/*                                            check for null name,        */
-/*                                            resulting in version 6.1.12 */
-/*                                                                        */
 /**************************************************************************/
 VOID  _tx_trace_object_register(UCHAR object_type, VOID *object_ptr, CHAR *object_name, ULONG parameter_1, ULONG parameter_2)
 {
@@ -95,7 +85,7 @@ TX_TRACE_OBJECT_ENTRY           *entry_ptr;
         /* Trace buffer is enabled, proceed.  */
 
         /* Pickup the total entries.  */
-        entries =  _tx_trace_total_registry_entries;
+        entries =  (UINT) _tx_trace_total_registry_entries;
 
         /* Determine if there are available entries in the registry.  */
         if (_tx_trace_available_registry_entries != ((ULONG) 0))
@@ -108,7 +98,7 @@ TX_TRACE_OBJECT_ENTRY           *entry_ptr;
             loop_break =  TX_FALSE;
 
             /* Loop to find available entry.  */
-            i =  _tx_trace_registry_search_start;
+            i =  (UINT) _tx_trace_registry_search_start;
             do
             {
 

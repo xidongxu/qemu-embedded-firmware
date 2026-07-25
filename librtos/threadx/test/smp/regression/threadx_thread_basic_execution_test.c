@@ -1,5 +1,16 @@
-/* This test is designed to see if one thread can be created and executed.  
-   It thread_0_entry is hit, then the thread was successfully scheduled.  
+/***************************************************************************/
+/* Copyright (c) 2024 Microsoft Corporation                                */
+/* Copyright (c) 2026 Eclipse ThreadX contributors                         */
+/*                                                                         */
+/* This program and the accompanying materials are made available under    */
+/* the terms of the MIT License which is available at                      */
+/* https://opensource.org/licenses/MIT.                                    */
+/*                                                                         */
+/* SPDX-License-Identifier: MIT                                            */
+/***************************************************************************/
+
+/* This test is designed to see if one thread can be created and executed.
+   It thread_0_entry is hit, then the thread was successfully scheduled.
    On success, thread_0_counter gets incremented.  */
 
 #include   <stdio.h>
@@ -11,6 +22,7 @@
 #include   "tx_queue.h"
 #include   "tx_semaphore.h"
 #include   "tx_thread.h"
+#include   "tx_timer.h"
 
 
 typedef struct THREAD_MEMORY_TEST_STRUCT
@@ -33,6 +45,7 @@ static  THREAD_MEMORY_TEST   thread_memory;
 /* Define the ISR dispatch.  */
 
 extern VOID    (*test_isr_dispatch)(void);
+extern TX_TIMER_INTERNAL   *_tx_timer_expired_timer_ptr;
 
 
 static unsigned long   thread_0_counter =  0;
@@ -56,10 +69,10 @@ static unsigned long isr_executed =  0;
 
 static void    thread_0_entry(ULONG task_input);
 
-UINT        _txe_thread_create(TX_THREAD *thread_ptr, CHAR *name_ptr, 
+UINT        _txe_thread_create(TX_THREAD *thread_ptr, CHAR *name_ptr,
                 VOID (*entry_function)(ULONG), ULONG entry_input,
-                VOID *stack_start, ULONG stack_size, 
-                UINT priority, UINT preempt_threshold, 
+                VOID *stack_start, ULONG stack_size,
+                UINT priority, UINT preempt_threshold,
                 ULONG time_slice, UINT auto_start, UINT thread_control_block_size);
 
 
@@ -80,8 +93,8 @@ CHAR    *pointer;
 
     /* Attempt to create a thread from a timer.  */
     pointer =  (CHAR *) 0x3000;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_DONT_START);
 
     /* Check for status.  */
@@ -125,8 +138,8 @@ ULONG   old_time_slice;
 
     /* Attempt to create a thread from a timer.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_DONT_START);
 
     /* Check for status.  */
@@ -139,7 +152,7 @@ ULONG   old_time_slice;
 
     /* Attempt to delete a thread from an ISR.  */
     status =  tx_thread_delete(&thread_0);
-    
+
     /* Check for status.  */
     if (status != TX_CALLER_ERROR)
     {
@@ -150,7 +163,7 @@ ULONG   old_time_slice;
 
     /* Attempt to change preemption from an ISR.  */
     status =  tx_thread_preemption_change(&thread_0, 1, &old_value);
-    
+
     /* Check for status.  */
     if (status != TX_CALLER_ERROR)
     {
@@ -161,7 +174,7 @@ ULONG   old_time_slice;
 
     /* Attempt to change priority from an ISR.  */
     status =  tx_thread_priority_change(&thread_0, 1, &old_value);
-    
+
     /* Check for status.  */
     if (status != TX_CALLER_ERROR)
     {
@@ -241,15 +254,15 @@ TX_THREAD   fake_thread;
 
     /* Setup a pointer.  */
     pointer =  (CHAR *) first_unused_memory;
-    
+
     /* Adjust it forward just to make sure there is some space for the test below.  */
     pointer =  pointer + 200;
 
     /* Put system definition stuff in here, e.g. thread creates and other assorted
        create information.  */
-    
-    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+
+    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -298,7 +311,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Setup test thread to make sure _tx_thread_wait_abort can handle a NULL cleanup.  */
     test_thread.tx_thread_state =                              TX_IO_DRIVER;
-    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;  
+    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;
     test_thread.tx_thread_timer.tx_timer_internal_list_head =  TX_NULL;
     test_thread.tx_thread_suspending =                         TX_TRUE;
     test_thread.tx_thread_delayed_suspend =                    TX_TRUE;
@@ -310,22 +323,37 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Setup test thread to make sure _tx_thread_timeout can handle a NULL cleanup.  */
     test_thread.tx_thread_state =                              TX_IO_DRIVER;
-    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;  
+    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;
     test_thread.tx_thread_timer.tx_timer_internal_list_head =  TX_NULL;
     test_thread.tx_thread_suspending =                         TX_TRUE;
     test_thread.tx_thread_delayed_suspend =                    TX_TRUE;
+#if defined(_WIN64)
+    {
+    TX_TIMER_INTERNAL   timeout_timer;
+    TX_TIMER_INTERNAL   *saved_expired_timer_ptr;
+
+
+        TX_MEMSET(&timeout_timer, 0, sizeof(TX_TIMER_INTERNAL));
+        saved_expired_timer_ptr =  _tx_timer_expired_timer_ptr;
+        _tx_timer_expired_timer_ptr =  &timeout_timer;
+        timeout_timer.tx_timer_internal_extension_ptr =  (VOID *) &test_thread;
+        _tx_thread_timeout(0);
+        _tx_timer_expired_timer_ptr =  saved_expired_timer_ptr;
+    }
+#else
     _tx_thread_timeout((ULONG) &test_thread);
+#endif
 
     /* Setup test thread to make sure _tx_thread_terminate can handle a NULL mutex release function pointer.  */
     temp_mutex_release =  _tx_thread_mutex_release;
     _tx_thread_mutex_release =  TX_NULL;
     test_thread.tx_thread_state =                              TX_TERMINATED;
-    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;  
+    test_thread.tx_thread_suspend_cleanup =                    TX_NULL;
     test_thread.tx_thread_timer.tx_timer_internal_list_head =  TX_NULL;
     test_thread.tx_thread_suspending =                         TX_TRUE;
     test_thread.tx_thread_timer.tx_timer_internal_list_head =  TX_NULL;
     test_thread.tx_thread_delayed_suspend =                    TX_TRUE;
-    status =  _tx_thread_terminate(&test_thread);    
+    status =  _tx_thread_terminate(&test_thread);
     _tx_thread_mutex_release =  temp_mutex_release;     /* Recover Mutex release pointer.  */
 
     /* Perform thread memory test.  */
@@ -335,10 +363,10 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     thread_memory.second_middle= 0x61718191;
     thread_memory.next_to_last = 0x99aabbcc;
     thread_memory.last =         0xddeeff00;
-    
+
     /* Create the thread.  */
-    status +=  tx_thread_create(&thread_memory.thread_block, "thread memory", thread_0_entry, 1,  
-            &thread_memory.stack[0], (2048*sizeof(ULONG))/sizeof(ULONG), 
+    status +=  tx_thread_create(&thread_memory.thread_block, "thread memory", thread_0_entry, 1,
+            &thread_memory.stack[0], (2048*sizeof(ULONG))/sizeof(ULONG),
             16, 16, TX_NO_TIME_SLICE, TX_DONT_START);
     tx_thread_delete(&thread_memory.thread_block);
 
@@ -351,7 +379,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         (thread_memory.next_to_last != 0x99aabbcc) ||
         (thread_memory.last != 0xddeeff00))
     {
-    
+
         /* Memory overwrite error.  */
         printf("ERROR #2\n");
         test_control_return(1);
@@ -363,8 +391,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with a null pointer.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(TX_NULL, "thread 0", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(TX_NULL, "thread 0", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -377,8 +405,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with a bad control block size.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  _txe_thread_create(&thread_3, "thread 3", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  _txe_thread_create(&thread_3, "thread 3", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START, (sizeof(TX_THREAD)+1));
 
     /* Check for status.  */
@@ -391,8 +419,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with a NULL entry function.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_3, "thread 3", TX_NULL, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_3, "thread 3", TX_NULL, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -405,8 +433,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread that has already been created.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -418,8 +446,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     }
 
     /* Attempt to create a thread with an overlapping stack.  */
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            thread_0.tx_thread_stack_ptr, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            thread_0.tx_thread_stack_ptr, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -433,8 +461,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     /* Attempt to create a thread with another variation of an overlapping stack.  */
     pointer =  thread_0.tx_thread_stack_start;
     pointer =  pointer - 20;
-    status =  tx_thread_create(&thread_1, "thread 1", TX_NULL, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", TX_NULL, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -447,8 +475,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread an extra small stack.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, 1, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, 1,
             16, 16, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -461,8 +489,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with an invalid thread priority.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             5000, 5000, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -475,8 +503,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with an invalid preemption-threshold.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 17, TX_NO_TIME_SLICE, TX_AUTO_START);
 
     /* Check for status.  */
@@ -489,8 +517,8 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to create a thread with an invalid auto start.  */
     pointer =  (CHAR *) not_used_stack;
-    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, 3456);
 
     /* Check for status.  */
@@ -526,7 +554,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to register a entry/exit callback on a non-thread.  */
     status =  tx_thread_entry_exit_notify(TX_NULL, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -538,7 +566,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     /* Attempt to register a entry/exit callback on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status =  tx_thread_entry_exit_notify(&thread_2, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -549,7 +577,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to get info on a non-thread.  */
     status =  tx_thread_info_get(TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -561,7 +589,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     /* Attempt to get info on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status =  tx_thread_info_get(&thread_2, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -572,7 +600,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to change preemption of a non-thread.  */
     status =  tx_thread_preemption_change(TX_NULL, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -580,11 +608,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #19\n");
         test_control_return(1);
     }
-    
+
     /* Attempt to change preemption of a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status =  tx_thread_preemption_change(&thread_2, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -595,7 +623,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to change preemption with a NULL return value.  */
     status =  tx_thread_preemption_change(&thread_0, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_PTR_ERROR)
     {
@@ -603,10 +631,10 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #21\n");
         test_control_return(1);
     }
-    
+
     /* Attempt to change preemption with a bad threshold value.  */
     status =  tx_thread_preemption_change(&thread_0, 17, &old_value);
-    
+
     /* Check for status.  */
     if (status != TX_THRESH_ERROR)
     {
@@ -618,7 +646,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to change priority of a non-thread.  */
     status =  tx_thread_priority_change(TX_NULL, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -626,11 +654,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #23\n");
         test_control_return(1);
     }
-    
+
     /* Attempt to change priority of a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status =  tx_thread_priority_change(&thread_2, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -641,7 +669,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt to change priority with a NULL return value.  */
     status =  tx_thread_priority_change(&thread_0, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_PTR_ERROR)
     {
@@ -649,10 +677,10 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #25\n");
         test_control_return(1);
     }
-    
+
     /* Attempt to change priority with a bad priority value.  */
     status =  tx_thread_priority_change(&thread_0, 2046, &old_value);
-    
+
     /* Check for status.  */
     if (status != TX_PRIORITY_ERROR)
     {
@@ -697,7 +725,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt a thread resume with a NULL pointer.  */
     status = tx_thread_resume(TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -705,11 +733,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #30\n");
         test_control_return(1);
     }
-    
+
     /* Attempt a thread resume on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status = tx_thread_resume(&thread_2);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -720,7 +748,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt a thread suspend with a NULL pointer.  */
     status = tx_thread_suspend(TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -728,11 +756,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #32\n");
         test_control_return(1);
     }
-    
+
     /* Attempt a thread suspend on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status = tx_thread_suspend(&thread_2);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -741,9 +769,9 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         test_control_return(1);
     }
 
-    /* Attempt a thread termiante with a NULL pointer.  */
+    /* Attempt a thread terminate with a NULL pointer.  */
     status = tx_thread_terminate(TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -751,11 +779,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #34\n");
         test_control_return(1);
     }
-    
+
     /* Attempt a thread terminate on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status = tx_thread_terminate(&thread_2);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -764,9 +792,9 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         test_control_return(1);
     }
 
-    /* Attempt a thread time-slice chagne with a NULL pointer.  */
+    /* Attempt a thread time-slice change with a NULL pointer.  */
     status = tx_thread_time_slice_change(TX_NULL, 1, &old_time_slice);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -774,11 +802,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #36\n");
         test_control_return(1);
     }
-    
+
     /* Attempt a thread time-slice change on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status = tx_thread_time_slice_change(&thread_2, 1, &old_time_slice);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -789,7 +817,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt a thread time-slice change with a null return pointer.  */
     status = tx_thread_time_slice_change(&thread_0, 1, TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_PTR_ERROR)
     {
@@ -800,7 +828,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
 
     /* Attempt a thread wait abort with a NULL pointer.  */
     status = tx_thread_wait_abort(TX_NULL);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -808,11 +836,11 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
         printf("ERROR #39\n");
         test_control_return(1);
     }
-    
+
     /* Attempt a thread wait abort on a non-created thread.  */
     thread_2.tx_thread_id =  0;
     status = tx_thread_wait_abort(&thread_2);
-    
+
     /* Check for status.  */
     if (status != TX_THREAD_ERROR)
     {
@@ -836,7 +864,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     /* Test for error.  */
     if ((error) || (timer_executed != 1) || (isr_executed != 1))
     {
-    
+
         /* Thread error.  */
         printf("ERROR #41\n");
         test_control_return(1);
@@ -854,7 +882,7 @@ VOID            (*temp_mutex_release)(TX_THREAD *thread_ptr);
     }
     else
     {
-    
+
         /* Successful test.  */
         printf("SUCCESS!\n");
         test_control_return(0);

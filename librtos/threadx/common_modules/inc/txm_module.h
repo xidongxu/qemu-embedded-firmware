@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -34,18 +35,6 @@
 /*                                                                        */
 /*    This file defines the basic module constants, interface structures, */
 /*    and function prototypes.                                            */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*  12-31-2020      Scott Larson            Modified comment(s), added    */
-/*                                            port-specific extension,    */
-/*                                            resulting in version 6.1.3  */
-/*  01-31-2022      Scott Larson            Modified comment(s), added    */
-/*                                            callback thread prototype,  */
-/*                                            resulting in version 6.1.10 */
 /*                                                                        */
 /**************************************************************************/
 

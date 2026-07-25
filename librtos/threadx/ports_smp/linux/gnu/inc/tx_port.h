@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -41,18 +42,6 @@
 /*    directly use native C data types.  Instead, ThreadX creates its     */
 /*    own special types that can be mapped to actual data types by this   */
 /*    file to guarantee consistency in the interface and functionality.   */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  04-02-2021     Bhupendra Naphade        Modified comment(s),updated   */
-/*                                            macro definition,           */
-/*                                            resulting in version 6.1.6  */
-/*  10-15-2021     William E. Lamie         Modified comment(s), added    */
-/*                                            symbol ULONG64_DEFINED,     */
-/*                                            resulting in version 6.1.9  */
 /*                                                                        */
 /**************************************************************************/
 
@@ -173,7 +162,7 @@ typedef uint64_t                                ULONG64;
 #define ULONG64_DEFINED
 
 
-/* Define automated coverage test extensions...  These are required for the 
+/* Define automated coverage test extensions...  These are required for the
    ThreadX regression test.  */
 
 typedef unsigned int    TEST_FLAG;
@@ -298,7 +287,7 @@ extern UINT             priority_change_extension_selection;
                                                 else                                                            \
                                                 {                                                               \
                                                     test_stack_analyze_flag =     ((TEST_FLAG) 0);              \
-                                                }                                                               
+                                                }
 
 #define TX_INITIALIZE_KERNEL_ENTER_EXTENSION    if (test_initialize_flag == ((TEST_FLAG) 1))                    \
                                                 {                                                               \
@@ -633,7 +622,7 @@ void                        _tx_thread_smp_debug_entry_insert(ULONG id, ULONG su
 
 #ifdef TX_THREAD_INIT
 CHAR                            _tx_version_id[] =
-                                    "Copyright (c) 2024 Microsoft Corporation.  *  ThreadX SMP/Linux/gcc Version 6.4.1 *";
+                                    "(c) 2024 Microsoft Corp. (c) 2026-present Eclipse ThreadX contributors.  *  ThreadX SMP/Linux/gcc Version 6.5.1.202602a *";
 #else
 extern  CHAR                    _tx_version_id[];
 #endif

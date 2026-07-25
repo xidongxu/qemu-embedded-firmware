@@ -1,3 +1,14 @@
+/***************************************************************************/
+/* Copyright (c) 2024 Microsoft Corporation                                */
+/* Copyright (c) 2026 Eclipse ThreadX contributors                         */
+/*                                                                         */
+/* This program and the accompanying materials are made available under    */
+/* the terms of the MIT License which is available at                      */
+/* https://opensource.org/licenses/MIT.                                    */
+/*                                                                         */
+/* SPDX-License-Identifier: MIT                                            */
+/***************************************************************************/
+
 /* This test is designed to test for simultaneous thread suspension lifting AND thread wait abort calls.  */
 
 #include   <stdio.h>
@@ -54,7 +65,7 @@ static volatile UINT miss_count = 0;
     /* Check for proper error status.  */
     if (status != TX_CALLER_ERROR)
     {
-    
+
         /* Blow up the test to force an error.  */
         condition_count =  10000000;
         semaphore_put_counter =  0xFFFF0000;
@@ -68,7 +79,7 @@ static volatile UINT miss_count = 0;
         condition_count++;
     }
 
-    /* 
+    /*
     It is possible for this test to get into a resonance condition in which
     the ISR never occurs while preemption is disabled (especially if the
     ISR is installed in the periodic timer interrupt handler, which is
@@ -106,8 +117,8 @@ CHAR    *pointer;
     /* Put system definition stuff in here, e.g. thread creates and other assorted
        create information.  */
 
-    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             17, 17, 100, TX_AUTO_START);
     pointer = pointer + TEST_STACK_SIZE_PRINTF;
 
@@ -119,8 +130,8 @@ CHAR    *pointer;
         test_control_return(1);
     }
 
-    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             17, 17, 100, TX_AUTO_START);
     pointer = pointer + TEST_STACK_SIZE_PRINTF;
 
@@ -134,7 +145,7 @@ CHAR    *pointer;
 
     /* Create semaphore - consumer producer semaphore.  */
     status =  tx_semaphore_create(&semaphore_0, "semaphore 0", 0);
-    
+
     /* Check for status.  */
     if (status != TX_SUCCESS)
     {
@@ -191,7 +202,7 @@ UINT    status;
         }
 
         /* Check for the preempt disable flag being set.  */
-        if (_tx_thread_preempt_disable) 
+        if (_tx_thread_preempt_disable)
         {
 
             /* Test error!  */
@@ -208,13 +219,13 @@ UINT    status;
 
 #ifdef TX_NOT_INTERRUPTABLE
 
-            /* Determine if we have a non-interruptable build of ThreadX. If so, just 
+            /* Determine if we have a non-interruptable build of ThreadX. If so, just
                get out of this loop after 100 passes.  */
 
             if (thread_0_counter >= 100)
                 break;
 #endif
-              
+
         }
     }
 
@@ -224,7 +235,7 @@ UINT    status;
 #ifdef TX_NOT_INTERRUPTABLE
     /* At this point, check to see if we got all the semaphores!  */
     if ((thread_0_counter != (semaphore_put_counter - semaphore_0.tx_semaphore_count)) ||
-        (condition_count != 0))    
+        (condition_count != 0))
 #else
     /* At this point, check to see if we got all the semaphores!  */
     if (thread_0_counter != (semaphore_put_counter - semaphore_0.tx_semaphore_count))
@@ -269,4 +280,3 @@ static void    timer_0_entry(ULONG input)
 {
     timer_0_counter++;
 }
-

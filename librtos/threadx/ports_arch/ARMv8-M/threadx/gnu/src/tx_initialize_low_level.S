@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -64,16 +65,6 @@ HEAP_SIZE           =     0x00000000
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    _tx_initialize_kernel_enter           ThreadX entry function        */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*  01-31-2022      Scott Larson            Fixed predefined macro name,  */
-/*                                            resulting in version 6.1.10 */
-/*  03-08-2023      Scott Larson            Include tx_user.h,            */
-/*                                            resulting in version 6.2.1  */
 /*                                                                        */
 /**************************************************************************/
 // VOID   _tx_initialize_low_level(VOID)

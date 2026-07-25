@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -66,21 +67,6 @@ SYS_MODE        =     0x1F            // SYS mode
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    ThreadX components                                                  */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  10-15-2021     William E. Lamie         Modified comment(s), added    */
-/*                                            execution profile support,  */
-/*                                            resulting in version 6.1.9  */
-/*  04-25-2022     Zhen Kong                Updated comments,             */
-/*                                            resulting in version 6.1.11 */
-/*  10-31-2023     Yajun Xia                Updated comments,             */
-/*                                            Added thumb mode support,   */
-/*                                            resulting in version 6.3.0  */
-/*                                                                        */
 /**************************************************************************/
 #if defined(THUMB_MODE)
     .thumb_func

@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -68,29 +69,6 @@
 /*                                                                        */
 /*    _tx_initialize_kernel_enter          ThreadX entry function         */
 /*    _tx_thread_system_return             Return to system from thread   */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  03-02-2021      Scott Larson            Initial Version 6.1.5         */
-/*  04-02-2021      Scott Larson            Modified comments and fixed   */
-/*                                            MPU region configuration,   */
-/*                                            resulting in version 6.1.6  */
-/*  06-02-2021      Scott Larson            Fixed extended stack handling */
-/*                                            when calling kernel APIs,   */
-/*                                            resulting in version 6.1.7  */
-/*  04-25-2022      Scott Larson            Optimized MPU configuration,  */
-/*                                            added BASEPRI support,      */
-/*                                            resulting in version 6.1.11 */
-/*  07-29-2022      Scott Larson            Removed the code path to skip */
-/*                                            MPU reloading,              */
-/*                                            resulting in version 6.1.12 */
-/*  10-31-2022      Scott Larson            Added low power support,      */
-/*                                            resulting in version 6.2.0  */
-/*  03-08-2023      Scott Larson            Added preproc FPU option,     */
-/*                                            resulting in version 6.2.1  */
-/*                                                                        */
 /**************************************************************************/
 // VOID   _tx_thread_schedule(VOID)
 // {
@@ -533,7 +511,7 @@ SVC_Handler:
     ORREQ   lr, lr, #0x10                           // Set bit, return with standard frame
     STR     r3, [r2, #0xB0]                         // Save thread stack pointer
     BIC     r3, #1                                  // Clear possibly OR'd bit
-    
+
     /* Build kernel stack by copying thread stack two registers at a time */
     ADD     r3, r3, #32                             // Start at bottom of hardware stack
     LDMDB   r3!, {r1-r2}
@@ -639,20 +617,20 @@ _tx_svc_secure_alloc:
     CMP     r1, r2                                  // Did we come from _tx_thread_secure_stack_allocate?
     IT      NE                                      // If no (not equal), then...
     BXNE    lr                                      // return from where we came.
-    
+
     PUSH    {r0, lr}                                // Save SP and EXC_RETURN
     LDM     r0, {r0-r3}                             // Load function parameters from stack
     BL      _tx_thread_secure_mode_stack_allocate
     POP     {r12, lr}                               // Restore SP and EXC_RETURN
     STR     r0, [r12]                               // Store function return value
     BX      lr
-    
+
 _tx_svc_secure_free:
     LDR     r2, =_tx_free_return-1                  // Load address of where we should have come from
     CMP     r1, r2                                  // Did we come from _tx_thread_secure_stack_free?
     IT      NE                                      // If no (not equal), then...
     BXNE    lr                                      // return from where we came.
-    
+
     PUSH    {r0, lr}                                // Save SP and EXC_RETURN
     LDM     r0, {r0-r3}                             // Load function parameters from stack
     BL      _tx_thread_secure_mode_stack_free

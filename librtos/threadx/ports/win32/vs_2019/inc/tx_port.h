@@ -1,17 +1,18 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
 
 /**************************************************************************/
 /**************************************************************************/
-/**                                                                       */ 
+/**                                                                       */
 /** ThreadX Component                                                     */
 /**                                                                       */
 /**   Port Specific                                                       */
@@ -20,33 +21,27 @@
 /**************************************************************************/
 
 
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  PORT SPECIFIC C INFORMATION                            RELEASE        */ 
-/*                                                                        */ 
-/*    tx_port.h                                          Win32/Visual     */ 
-/*                                                           6.1          */
+/**************************************************************************/
+/*                                                                        */
+/*  PORT SPECIFIC C INFORMATION                            RELEASE        */
+/*                                                                        */
+/*    tx_port.h                                          Win32/Visual     */
+/*                                                  6.5.1.202602          */
 /*                                                                        */
 /*  AUTHOR                                                                */
 /*                                                                        */
 /*    William E. Lamie, Microsoft Corporation                             */
 /*                                                                        */
 /*  DESCRIPTION                                                           */
-/*                                                                        */ 
-/*    This file contains data type definitions that make the ThreadX      */ 
-/*    real-time kernel function identically on a variety of different     */ 
-/*    processor architectures.  For example, the size or number of bits   */ 
-/*    in an "int" data type vary between microprocessor architectures and */ 
-/*    even C compilers for the same microprocessor.  ThreadX does not     */ 
-/*    directly use native C data types.  Instead, ThreadX creates its     */ 
-/*    own special types that can be mapped to actual data types by this   */ 
-/*    file to guarantee consistency in the interface and functionality.   */ 
-/*                                                                        */ 
-/*  RELEASE HISTORY                                                       */ 
-/*                                                                        */ 
-/*    DATE              NAME                      DESCRIPTION             */
 /*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
+/*    This file contains data type definitions that make the ThreadX      */
+/*    real-time kernel function identically on a variety of different     */
+/*    processor architectures.  For example, the size or number of bits   */
+/*    in an "int" data type vary between microprocessor architectures and */
+/*    even C compilers for the same microprocessor.  ThreadX does not     */
+/*    directly use native C data types.  Instead, ThreadX creates its     */
+/*    own special types that can be mapped to actual data types by this   */
+/*    file to guarantee consistency in the interface and functionality.   */
 /*                                                                        */
 /**************************************************************************/
 
@@ -59,7 +54,7 @@
 #ifdef TX_INCLUDE_USER_DEFINE_FILE
 
 
-/* Yes, include the user defines in tx_user.h. The defines in this file may 
+/* Yes, include the user defines in tx_user.h. The defines in this file may
    alternately be defined on the command line.  */
 
 #include "tx_user.h"
@@ -70,6 +65,95 @@
 
 #include <stdlib.h>
 #include <string.h>
+
+/* Define automated coverage test extensions required by the regression tests.  */
+
+typedef unsigned int    TEST_FLAG;
+extern TEST_FLAG        threadx_byte_allocate_loop_test;
+extern TEST_FLAG        threadx_byte_release_loop_test;
+extern TEST_FLAG        threadx_mutex_suspension_put_test;
+extern TEST_FLAG        threadx_mutex_suspension_priority_test;
+#ifndef TX_TIMER_PROCESS_IN_ISR
+extern TEST_FLAG        threadx_delete_timer_thread;
+#endif
+extern void             abort_and_resume_byte_allocating_thread(void);
+extern void             abort_all_threads_suspended_on_mutex(void);
+extern void             suspend_lowest_priority(void);
+#ifndef TX_TIMER_PROCESS_IN_ISR
+extern void             delete_timer_thread(void);
+#endif
+extern TEST_FLAG        test_stack_analyze_flag;
+extern TEST_FLAG        test_initialize_flag;
+extern TEST_FLAG        test_forced_mutex_timeout;
+
+#ifdef TX_REGRESSION_TEST
+
+#define TX_BYTE_ALLOCATE_EXTENSION              if (threadx_byte_allocate_loop_test == ((TEST_FLAG) 1))         \
+                                                {                                                               \
+                                                    pool_ptr -> tx_byte_pool_owner =  TX_NULL;                  \
+                                                    threadx_byte_allocate_loop_test = ((TEST_FLAG) 0);          \
+                                                }
+
+#define TX_BYTE_RELEASE_EXTENSION               if (threadx_byte_release_loop_test == ((TEST_FLAG) 1))          \
+                                                {                                                               \
+                                                    threadx_byte_release_loop_test = ((TEST_FLAG) 0);           \
+                                                    abort_and_resume_byte_allocating_thread();                  \
+                                                }
+
+#define TX_MUTEX_PUT_EXTENSION_1                if (threadx_mutex_suspension_put_test == ((TEST_FLAG) 1))       \
+                                                {                                                               \
+                                                    threadx_mutex_suspension_put_test = ((TEST_FLAG) 0);        \
+                                                    abort_all_threads_suspended_on_mutex();                     \
+                                                }
+
+#define TX_MUTEX_PUT_EXTENSION_2                if (test_forced_mutex_timeout == ((TEST_FLAG) 1))               \
+                                                {                                                               \
+                                                    test_forced_mutex_timeout = ((TEST_FLAG) 0);                \
+                                                    _tx_thread_wait_abort(mutex_ptr -> tx_mutex_suspension_list); \
+                                                }
+
+#define TX_MUTEX_PRIORITY_CHANGE_EXTENSION      if (threadx_mutex_suspension_priority_test == ((TEST_FLAG) 1))  \
+                                                {                                                               \
+                                                    threadx_mutex_suspension_priority_test = ((TEST_FLAG) 0);   \
+                                                    suspend_lowest_priority();                                  \
+                                                }
+
+#ifndef TX_TIMER_PROCESS_IN_ISR
+#define TX_TIMER_INITIALIZE_EXTENSION(a)        if (threadx_delete_timer_thread == ((TEST_FLAG) 1))             \
+                                                {                                                               \
+                                                    threadx_delete_timer_thread = ((TEST_FLAG) 0);              \
+                                                    delete_timer_thread();                                      \
+                                                    (a) =  ((UINT) 1);                                          \
+                                                }
+#endif
+
+#define TX_THREAD_STACK_ANALYZE_EXTENSION       if (test_stack_analyze_flag == ((TEST_FLAG) 1))                 \
+                                                {                                                               \
+                                                    thread_ptr -> tx_thread_id =  ((TEST_FLAG) 0);              \
+                                                    test_stack_analyze_flag =     ((TEST_FLAG) 0);              \
+                                                }                                                               \
+                                                else if (test_stack_analyze_flag == ((TEST_FLAG) 2))            \
+                                                {                                                               \
+                                                    stack_ptr =  thread_ptr -> tx_thread_stack_start;           \
+                                                    test_stack_analyze_flag =     ((TEST_FLAG) 0);              \
+                                                }                                                               \
+                                                else if (test_stack_analyze_flag == ((TEST_FLAG) 3))            \
+                                                {                                                               \
+                                                    *stack_ptr =  TX_STACK_FILL;                                \
+                                                    test_stack_analyze_flag =     ((TEST_FLAG) 0);              \
+                                                }                                                               \
+                                                else                                                            \
+                                                {                                                               \
+                                                    test_stack_analyze_flag =     ((TEST_FLAG) 0);              \
+                                                }
+
+#define TX_INITIALIZE_KERNEL_ENTER_EXTENSION    if (test_initialize_flag == ((TEST_FLAG) 1))                    \
+                                                {                                                               \
+                                                    test_initialize_flag =  ((TEST_FLAG) 0);                    \
+                                                    return;                                                     \
+                                                }
+
+#endif
 
 
 /* Define performance metric symbols.  */
@@ -106,7 +190,6 @@
 #define TX_TIMER_ENABLE_PERFORMANCE_INFO
 #endif
 
-
 /* Enable trace info.  */
 
 #ifndef TX_ENABLE_EVENT_TRACE
@@ -114,7 +197,7 @@
 #endif
 
 
-/* Define ThreadX basic types for this port.  */ 
+/* Define ThreadX basic types for this port.  */
 
 #define VOID                                    void
 typedef char                                    CHAR;
@@ -128,7 +211,7 @@ typedef unsigned short                          USHORT;
 
 
 /* Add Win32 debug insert prototype.  */
- 
+
 void    _tx_win32_debug_entry_insert(char *action, char *file, unsigned long line);
 
 #ifndef TX_WIN32_DEBUG_ENABLE
@@ -155,7 +238,7 @@ void    _tx_win32_debug_entry_insert(char *action, char *file, unsigned long lin
                                                         *ptr++ =  value;                \
                                                     }                                   \
                                                 }
-                                               
+
 
 /* Include windows include file.  */
 
@@ -185,25 +268,25 @@ void    _tx_win32_debug_entry_insert(char *action, char *file, unsigned long lin
 #define TX_TIMER_THREAD_STACK_SIZE              400         /* Default timer thread stack size - Not used in Win32 port!  */
 #endif
 
-#ifndef TX_TIMER_THREAD_PRIORITY    
-#define TX_TIMER_THREAD_PRIORITY                0           /* Default timer thread priority    */ 
+#ifndef TX_TIMER_THREAD_PRIORITY
+#define TX_TIMER_THREAD_PRIORITY                0           /* Default timer thread priority    */
 #endif
 
 
-/* Define various constants for the ThreadX  port.  */ 
+/* Define various constants for the ThreadX  port.  */
 
 #define TX_INT_DISABLE                          1           /* Disable interrupts               */
 #define TX_INT_ENABLE                           0           /* Enable interrupts                */
 
 
-/* Define the clock source for trace event entry time stamp. The following two item are port specific.  
-   For example, if the time source is at the address 0x0a800024 and is 16-bits in size, the clock 
+/* Define the clock source for trace event entry time stamp. The following two item are port specific.
+   For example, if the time source is at the address 0x0a800024 and is 16-bits in size, the clock
    source constants would be:
 
 #define TX_TRACE_TIME_SOURCE                    *((ULONG *) 0x0a800024)
 #define TX_TRACE_TIME_MASK                      0x0000FFFFUL
 
-*/
+ */
 
 #ifndef TX_TRACE_TIME_SOURCE
 #define TX_TRACE_TIME_SOURCE                    ((ULONG) (_tx_win32_time_stamp.LowPart));
@@ -215,7 +298,7 @@ void    _tx_win32_debug_entry_insert(char *action, char *file, unsigned long lin
 
 /* Define the port-specific trace extension to pickup the Windows timer.  */
 
-#define TX_TRACE_PORT_EXTENSION                 QueryPerformanceCounter((LARGE_INTEGER *)&_tx_win32_time_stamp); 
+#define TX_TRACE_PORT_EXTENSION                 QueryPerformanceCounter((LARGE_INTEGER *)&_tx_win32_time_stamp);
 
 
 /* Define the port specific options for the _tx_build_options variable. This variable indicates
@@ -237,8 +320,7 @@ void    _tx_initialize_start_interrupts(void);
 
 #define TX_PORT_SPECIFIC_PRE_SCHEDULER_INITIALIZATION                       _tx_initialize_start_interrupts();
 
-
-/* Determine whether or not stack checking is enabled. By default, ThreadX stack checking is 
+/* Determine whether or not stack checking is enabled. By default, ThreadX stack checking is
    disabled. When the following is defined, ThreadX thread stack checking is enabled.  If stack
    checking is enabled (TX_ENABLE_STACK_CHECKING is defined), the TX_DISABLE_STACK_FILLING
    define is negated, thereby forcing the stack fill which is necessary for the stack checking
@@ -250,7 +332,7 @@ void    _tx_initialize_start_interrupts(void);
 
 
 /* Define the TX_THREAD control block extensions for this port. The main reason
-   for the multiple macros is so that backward compatibility can be maintained with 
+   for the multiple macros is so that backward compatibility can be maintained with
    existing ThreadX kernel awareness modules.  */
 
 #define TX_THREAD_EXTENSION_0                                               HANDLE tx_thread_win32_thread_handle; \
@@ -258,9 +340,9 @@ void    _tx_initialize_start_interrupts(void);
                                                                             HANDLE tx_thread_win32_thread_run_semaphore; \
                                                                             UINT   tx_thread_win32_suspension_type; \
                                                                             UINT   tx_thread_win32_int_disabled_flag;
-#define TX_THREAD_EXTENSION_1                  
-#define TX_THREAD_EXTENSION_2          
-#define TX_THREAD_EXTENSION_3          
+#define TX_THREAD_EXTENSION_1
+#define TX_THREAD_EXTENSION_2
+#define TX_THREAD_EXTENSION_3
 
 
 /* Define the port extensions of the remaining ThreadX objects.  */
@@ -274,11 +356,11 @@ void    _tx_initialize_start_interrupts(void);
 #define TX_TIMER_EXTENSION
 
 
-/* Define the user extension field of the thread control block.  Nothing 
+/* Define the user extension field of the thread control block.  Nothing
    additional is needed for this port so it is defined as white space.  */
 
 #ifndef TX_THREAD_USER_EXTENSION
-#define TX_THREAD_USER_EXTENSION    
+#define TX_THREAD_USER_EXTENSION
 #endif
 
 
@@ -286,10 +368,10 @@ void    _tx_initialize_start_interrupts(void);
    tx_thread_shell_entry, and tx_thread_terminate.  */
 
 
-#define TX_THREAD_CREATE_EXTENSION(thread_ptr)                                  
+#define TX_THREAD_CREATE_EXTENSION(thread_ptr)
 #define TX_THREAD_DELETE_EXTENSION(thread_ptr)
 #define TX_THREAD_COMPLETED_EXTENSION(thread_ptr)
-#define TX_THREAD_TERMINATED_EXTENSION(thread_ptr)                              
+#define TX_THREAD_TERMINATED_EXTENSION(thread_ptr)
 
 
 /* Define the ThreadX object creation extensions for the remaining objects.  */
@@ -387,9 +469,9 @@ HANDLE          threadhandle;                                                   
 }
 
 
-/* Define ThreadX interrupt lockout and restore macros for protection on 
-   access of critical kernel information.  The restore interrupt macro must 
-   restore the interrupt posture of the running thread prior to the value 
+/* Define ThreadX interrupt lockout and restore macros for protection on
+   access of critical kernel information.  The restore interrupt macro must
+   restore the interrupt posture of the running thread prior to the value
    present prior to the disable macro.  In most cases, the save area macro
    is used to define a local function save area for the disable and restore
    macros.  */
@@ -417,8 +499,8 @@ VOID   _tx_thread_interrupt_restore(UINT previous_posture);
 /* Define the version ID of ThreadX.  This may be utilized by the application.  */
 
 #ifdef TX_THREAD_INIT
-CHAR                            _tx_version_id[] = 
-                                    "Copyright (c) 2024 Microsoft Corporation.  *  ThreadX Win32/Visual Studio Version 6.4.1 *";
+CHAR                            _tx_version_id[] =
+                                    "(c) 2024 Microsoft Corp. (c) 2026-present Eclipse ThreadX contributors.  *  ThreadX Win32/Visual Studio Version 6.5.1.202602a *";
 #else
 extern  CHAR                    _tx_version_id[];
 #endif
@@ -442,11 +524,11 @@ extern LARGE_INTEGER                            _tx_win32_time_stamp;
 #endif
 
 #ifndef TX_TIMER_PERIODIC
+#ifdef TX_WIN32_SLOW_TIMER
+#define TX_TIMER_PERIODIC                       TX_WIN32_SLOW_TIMER
+#else
 #define TX_TIMER_PERIODIC                       10
 #endif
-
 #endif
 
-
-
-
+#endif

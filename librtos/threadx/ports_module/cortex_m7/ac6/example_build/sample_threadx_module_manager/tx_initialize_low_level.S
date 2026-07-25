@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -74,14 +75,6 @@ SYSTICK_CYCLES    =   ((SYSTEM_CLOCK / 100) -1)
 /*                                                                        */
 /*    _tx_initialize_kernel_enter           ThreadX entry function        */
 /*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  11-09-2020     Scott Larson             Modified comment(s),          */
-/*                                            resulting in version 6.1.2  */
-/*                                                                        */
 /**************************************************************************/
 // VOID   _tx_initialize_low_level(VOID)
 // {
@@ -111,7 +104,7 @@ _tx_initialize_low_level:
 //    LDR     r0, =0xE0001000                         // Build address of DWT register
 //    LDR     r1, [r0]                                // Pickup the current value
 //    ORR     r1, r1, #1                              // Set the CYCCNTENA bit
-//    STR     r1, [r0]                                // Enable the cycle count register 
+//    STR     r1, [r0]                                // Enable the cycle count register
 
     /* Set system stack pointer from vector value.  */
 

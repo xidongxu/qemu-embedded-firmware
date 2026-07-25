@@ -1,8 +1,20 @@
-/* This test is designed to test simple memory block pool creation, deletion, and 
+/***************************************************************************/
+/* Copyright (c) 2024 Microsoft Corporation                                */
+/* Copyright (c) 2026 Eclipse ThreadX contributors                         */
+/*                                                                         */
+/* This program and the accompanying materials are made available under    */
+/* the terms of the MIT License which is available at                      */
+/* https://opensource.org/licenses/MIT.                                    */
+/*                                                                         */
+/* SPDX-License-Identifier: MIT                                            */
+/***************************************************************************/
+
+/* This test is designed to test simple memory block pool creation, deletion, and
    allocates and releases.  */
 
 #include   <stdio.h>
 #include   "tx_api.h"
+#include   "threadx_test_port.h"
 
 typedef struct BLOCK_MEMORY_TEST_STRUCT
 {
@@ -79,15 +91,15 @@ CHAR    *pointer;
     /* Determine if calling block pool create from initialization was successful.  */
     if (test_block_pool_create_init != TX_SUCCESS)
     {
-    
+
         /* Error!  */
         error++;
     }
 
     /* Attempt to create a block pool from a timer.  */
     pointer =  (CHAR *) 0x30000;
-    status =  tx_block_pool_create(&pool_3, "pool 3", 100, pointer, 320);
-    
+    status =  tx_block_pool_create(&pool_3, "pool 3", 100, pointer, TX_TEST_BLOCK_POOL_BYTES(100, 3));
+
         /* Check status.  */
     if (status != TX_CALLER_ERROR)
     {
@@ -98,7 +110,7 @@ CHAR    *pointer;
 
     /* Attempt to delete a block pool.  */
     status =  tx_block_pool_delete(&pool_0);
-    
+
         /* Check status.  */
     if (status != TX_CALLER_ERROR)
     {
@@ -106,7 +118,7 @@ CHAR    *pointer;
         /* Error!  */
         error++;
     }
-    
+
     timer_executed =  1;
 
     /* Attempt to allocate a block with suspension from a timer.  */
@@ -146,7 +158,7 @@ UINT    status;
     }
 
     /* Attempt to create a block pool from an ISR.  */
-    status =  tx_block_pool_create(&pool_3, "pool 3", 100, (void *) 0x100000, 320);
+    status =  tx_block_pool_create(&pool_3, "pool 3", 100, (void *) 0x100000, TX_TEST_BLOCK_POOL_BYTES(100, 3));
 
     /* Check status.  */
     if (status != TX_CALLER_ERROR)
@@ -190,8 +202,8 @@ CHAR    *pointer;
     /* Put system definition stuff in here, e.g. thread creates and other assorted
        create information.  */
 
-    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             17, 17, 100, TX_AUTO_START);
     pointer = pointer + TEST_STACK_SIZE_PRINTF;
 
@@ -203,8 +215,8 @@ CHAR    *pointer;
         test_control_return(1);
     }
 
-    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             18, 18, 100, TX_DONT_START);
     pointer = pointer + TEST_STACK_SIZE_PRINTF;
 
@@ -217,8 +229,8 @@ CHAR    *pointer;
     }
 
     /* Create block pools 0 and 1.  */
-    status =  tx_block_pool_create(&pool_0, "pool 0", 100, pointer, 320);
-    pointer = pointer + 320;
+    status =  tx_block_pool_create(&pool_0, "pool 0", 100, pointer, TX_TEST_BLOCK_POOL_BYTES(100, 3));
+    pointer = pointer + TX_TEST_BLOCK_POOL_BYTES(100, 3);
 
     /* Check status.  */
     if (status != TX_SUCCESS)
@@ -228,8 +240,8 @@ CHAR    *pointer;
         test_control_return(1);
     }
 
-    status =  tx_block_pool_create(&pool_1, "pool 1", 100, pointer, 320);
-    pointer = pointer + 320;
+    status =  tx_block_pool_create(&pool_1, "pool 1", 100, pointer, TX_TEST_BLOCK_POOL_BYTES(100, 3));
+    pointer = pointer + TX_TEST_BLOCK_POOL_BYTES(100, 3);
 
     /* Check status.  */
     if (status != TX_SUCCESS)
@@ -241,7 +253,7 @@ CHAR    *pointer;
 
     /* Check the no-blocks path.  */
     status =  _tx_block_pool_create(&pool_2, "pool 2", 100, pointer, 50);
-    pointer = pointer + 320;
+    pointer = pointer + TX_TEST_BLOCK_POOL_BYTES(100, 3);
 
     /* Check status.  */
     if (status != TX_SIZE_ERROR)
@@ -265,7 +277,7 @@ CHAR    *pointer_2;
 CHAR    *pointer_3;
 CHAR    *pointer_4;
 INT      i;
-unsigned long fake_block[20];
+TX_TEST_POINTER_WORD fake_block[20];
 
 
     /* Inform user.  */
@@ -278,7 +290,7 @@ unsigned long fake_block[20];
     block_memory.second_middle= 0x61718191;
     block_memory.next_to_last = 0x99aabbcc;
     block_memory.last =         0xddeeff00;
-    
+
     /* Create the block pool.  */
     status =  tx_block_pool_create(&block_memory.pool, "pool memory", 16, &block_memory.pool_area[0], (2048*sizeof(ULONG))/sizeof(ULONG));
     tx_block_pool_delete(&block_memory.pool);
@@ -304,7 +316,7 @@ unsigned long fake_block[20];
     fake_block[0] =  0;
     fake_block[1] =  0;
     status =  tx_block_release(&fake_block[2]);
-    
+
     /* Check status.  */
     if (status != TX_PTR_ERROR)
     {
@@ -316,9 +328,9 @@ unsigned long fake_block[20];
 
     /* Try to release a block that points to a non-pool.  */
     fake_block[0] =  0;
-    fake_block[1] =  (unsigned long) &fake_block[0];
+    TX_TEST_STORE_POINTER(fake_block[1], &fake_block[0]);
     status =  tx_block_release(&fake_block[2]);
-    
+
     /* Check status.  */
     if (status != TX_PTR_ERROR)
     {
@@ -328,7 +340,7 @@ unsigned long fake_block[20];
         test_control_return(1);
     }
 #endif
-   
+
     /* Allocate first block from the pool.  */
     status = tx_block_allocate(&pool_0, (VOID **) &pointer_1, TX_NO_WAIT);
 
@@ -504,10 +516,10 @@ unsigned long fake_block[20];
 
     /* Sleep for a bit...  */
     tx_thread_sleep(3);
-    
+
     /* Now resume the background thread.  */
     tx_thread_resume(&thread_1);
-    
+
     /* Sleep for a bit...  */
     tx_thread_sleep(3);
 
@@ -517,9 +529,9 @@ unsigned long fake_block[20];
     /* Test for error.  */
     if ((error) || (timer_executed != 1) || (isr_executed != 1))
     {
-    
+
         /* Block memory error.  */
-        printf("ERROR #20\n");
+        printf("ERROR #20 (%lu %lu %lu)\n", error, timer_executed, isr_executed);
         test_control_return(1);
     }
 
@@ -549,7 +561,7 @@ unsigned long fake_block[20];
     }
     else
     {
-    
+
         /* Successful test.  */
         printf("SUCCESS!\n");
         test_control_return(0);
@@ -562,7 +574,7 @@ static void    thread_1_entry(ULONG thread_input)
 
     while(1)
     {
-    
-        tx_thread_relinquish();    
+
+        tx_thread_relinquish();
     }
 }

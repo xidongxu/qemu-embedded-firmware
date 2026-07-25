@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -37,63 +38,6 @@
 /*    and data structure definitions are defined in this file.            */
 /*    Please note that basic data type definitions and other architecture-*/
 /*    specific information is contained in the file tx_port.h.            */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      William E. Lamie        Initial Version 6.1           */
-/*  10-16-2020      William E. Lamie        Modified comment(s), and      */
-/*                                            increased patch version,    */
-/*                                            resulting in version 6.1.1  */
-/*  12-31-2020      William E. Lamie        Modified comment(s), and      */
-/*                                            increased patch version,    */
-/*                                            resulting in version 6.1.3  */
-/*  03-02-2021      Scott Larson            Modified comment(s), and      */
-/*                                            order defines numerically,  */
-/*                                            add option to remove FileX  */
-/*                                            pointer, fix whitespace,    */
-/*                                            resulting in version 6.1.5  */
-/*  04-02-2021      Scott Larson            Modified comment(s), and      */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.1.6  */
-/*  06-02-2021      Scott Larson            Added options for multiple    */
-/*                                            block pool search & delay,  */
-/*                                            resulting in version 6.1.7  */
-/*  08-02-2021      Scott Larson            Modified comment(s), and      */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.1.8  */
-/*  10-15-2021      Yuxin Zhou              Modified comment(s),          */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.1.9  */
-/*  01-31-2022      Scott Larson            Modified comment(s),          */
-/*                                            add unused parameter macro, */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.1.10 */
-/*  04-25-2022      Wenhui Xie              Modified comment(s),          */
-/*                                            optimized the definition of */
-/*                                            TX_TIMER_TICKS_PER_SECOND,  */
-/*                                            resulting in version 6.1.11 */
-/*  07-29-2022      Scott Larson            Modified comment(s),          */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.1.12 */
-/*  10-31-2022      Scott Larson            Modified comment(s),          */
-/*                                            add extension macros,       */
-/*                                            update version numbers,     */
-/*                                            resulting in version 6.2.0  */
-/*  03-08-2023      Tiejun Zhou             Modified comment(s),          */
-/*                                            update patch number,        */
-/*                                            resulting in version 6.2.1  */
-/*  10-31-2023      Xiuwen Cai              Modified comment(s),          */
-/*                                            added option for random     */
-/*                                            number stack filling,       */
-/*                                            resulting in version 6.3.0  */
-/*  12-31-2023      Tiejun Zhou             Modified comment(s),          */
-/*                                            update version number,      */
-/*                                            resulting in version 6.4.0  */
-/*  03-01-2024      Tiejun Zhou             Modified comment(s),          */
-/*                                            update version number,      */
-/*                                            resulting in version 6.4.1  */
 /*                                                                        */
 /**************************************************************************/
 
@@ -132,9 +76,10 @@ extern   "C" {
 #ifndef TX_BYTE_POOL_MULTIPLE_BLOCK_SEARCH
 #define TX_BYTE_POOL_MULTIPLE_BLOCK_SEARCH    20
 #endif
-#ifndef TX_BTYE_POOL_DELAY_VALUE
+
+#ifndef TX_BYTE_POOL_DELAY_VALUE
 #define TX_BYTE_POOL_DELAY_VALUE              3
-#endif
+#endif /* TX_BYTE_POOL_DELAY_VALUE */
 
 
 /* Define basic constants for the ThreadX kernel.  */
@@ -145,8 +90,11 @@ extern   "C" {
 
 #define AZURE_RTOS_THREADX
 #define THREADX_MAJOR_VERSION           6
-#define THREADX_MINOR_VERSION           4
-#define THREADX_PATCH_VERSION           1
+#define THREADX_MINOR_VERSION           5
+#define THREADX_PATCH_VERSION           0
+#define THREADX_BUILD_VERSION           202601
+#define THREADX_HOTFIX_VERSION          ' '
+
 
 /* Define the following symbol for backward compatibility */
 #define EL_PRODUCT_THREADX
@@ -324,6 +272,14 @@ extern   "C" {
 
 #ifndef TX_TIMER_TICKS_PER_SECOND
 #define TX_TIMER_TICKS_PER_SECOND       (100UL)
+#endif
+
+
+/* Define the default maximum message size in a queue. The default value is TX_16_ULONG, but may
+   be customized in tx_user.h or as a compilation option. */
+
+#ifndef TX_QUEUE_MESSAGE_MAX_SIZE
+#define TX_QUEUE_MESSAGE_MAX_SIZE           TX_16_ULONG
 #endif
 
 
@@ -653,7 +609,7 @@ typedef struct TX_THREAD_STRUCT
     ULONG               tx_thread_suspension_sequence;
 
 #if defined(TX_ENABLE_RANDOM_NUMBER_STACK_FILLING) && defined(TX_ENABLE_STACK_CHECKING)
-       
+
     /* Define the random stack fill number. This can be used to detect stack overflow.  */
     ULONG               tx_thread_stack_fill_value;
 #endif

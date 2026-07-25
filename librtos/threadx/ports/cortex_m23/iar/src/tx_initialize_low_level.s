@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -70,13 +71,6 @@ __tx_free_memory_start
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    _tx_initialize_kernel_enter           ThreadX entry function        */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*                                                                        */
 /**************************************************************************/
 // VOID   _tx_initialize_low_level(VOID)
 // {
@@ -118,21 +112,21 @@ _tx_initialize_low_level:
     /* Configure handler priorities.  */
     LDR     r1, =0x00000000                         // Rsrv, UsgF, BusF, MemM
     LDR     r0, =0xE000E000                         // Build address of NVIC registers
-    LDR     r2, =0xD18                              // 
-    ADD     r0, r0, r2                              // 
+    LDR     r2, =0xD18                              //
+    ADD     r0, r0, r2                              //
     STR     r1, [r0]                                // Setup System Handlers 4-7 Priority Registers
 
     LDR     r1, =0xFF000000                         // SVCl, Rsrv, Rsrv, Rsrv
     LDR     r0, =0xE000E000                         // Build address of NVIC registers
-    LDR     r2, =0xD1C                              // 
-    ADD     r0, r0, r2                              // 
+    LDR     r2, =0xD1C                              //
+    ADD     r0, r0, r2                              //
     STR     r1, [r0]                                // Setup System Handlers 8-11 Priority Registers
                                                     // Note: SVC must be lowest priority, which is 0xFF
 
     LDR     r1, =0x40FF0000                         // SysT, PnSV, Rsrv, DbgM
     LDR     r0, =0xE000E000                         // Build address of NVIC registers
-    LDR     r2, =0xD20                              // 
-    ADD     r0, r0, r2                              // 
+    LDR     r2, =0xD20                              //
+    ADD     r0, r0, r2                              //
     STR     r1, [r0]                                // Setup System Handlers 12-15 Priority Registers
                                                     // Note: PnSV must be lowest priority, which is 0xFF
 
@@ -191,7 +185,7 @@ HardFault_Handler:
     // A stack overflow will trigger a hardfault.
     // There is no CFSR in M23, so we will not try to
     // determine if the fault is caused by a stack overflow
-    // or some other condition. 
+    // or some other condition.
     B       HardFault_Handler
 
 

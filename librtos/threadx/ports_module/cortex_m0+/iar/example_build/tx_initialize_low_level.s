@@ -1,10 +1,10 @@
 ;/***************************************************************************
-; * Copyright (c) 2024 Microsoft Corporation 
-; * 
+; * Copyright (c) 2024 Microsoft Corporation
+; *
 ; * This program and the accompanying materials are made available under the
 ; * terms of the MIT License which is available at
 ; * https://opensource.org/licenses/MIT.
-; * 
+; *
 ; * SPDX-License-Identifier: MIT
 ; **************************************************************************/
 ;
@@ -40,11 +40,11 @@
 ;
 SYSTEM_CLOCK      EQU   7200000
 SYSTICK_CYCLES    EQU   ((SYSTEM_CLOCK / 100) -1)
-        
+
     RSEG    FREE_MEM:DATA
     PUBLIC  __tx_free_memory_start
 __tx_free_memory_start
-    DS32    4        
+    DS32    4
 ;
 ;
         SECTION `.text`:CODE:NOROOT(2)
@@ -82,12 +82,6 @@ __tx_free_memory_start
 ;/*  CALLED BY                                                             */
 ;/*                                                                        */
 ;/*    _tx_initialize_kernel_enter           ThreadX entry function        */
-;/*                                                                        */
-;/*  RELEASE HISTORY                                                       */
-;/*                                                                        */
-;/*    DATE              NAME                      DESCRIPTION             */
-;/*                                                                        */
-/*  01-31-2022      Scott Larson            Initial Version 6.1.10        */
 ;/*                                                                        */
 ;/**************************************************************************/
 ;VOID   _tx_initialize_low_level(VOID)
@@ -178,7 +172,7 @@ __tx_SysTickHandler:
     MOV     lr, r1
     BX      lr
 ; }
-        
+
     END
-                
+
 

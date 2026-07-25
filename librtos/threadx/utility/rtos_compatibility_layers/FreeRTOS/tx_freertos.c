@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -17,26 +18,6 @@
 /**                                                                       */
 /**************************************************************************/
 /**************************************************************************/
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  10-15-2021     William E. Lamie         Modified comment(s), and      */
-/*                                            fixed compiler warnings,    */
-/*                                            resulting in version 6.1.7  */
-/*  01-31-2022     William E. Lamie         Modified comment(s), and      */
-/*                                            fixed compiler warnings,    */
-/*                                            resulting in version 6.1.10 */
-/*  07-29-2022     Cindy Deng               Added simple static scheduler */
-/*                                            start flag, corrected stack */
-/*                                            allocation size,            */
-/*                                            resulting in version 6.1.12 */
-/*  12-31-2023     Xiuwen Cai               Modified comment(s), and      */
-/*                                            added check for overflow in */
-/*                                            queue size calculation,     */
-/*                                            resulting in version 6.4.0  */
-/*                                                                        */
 /**************************************************************************/
 
 #include <stdint.h>

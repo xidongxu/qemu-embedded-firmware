@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -63,12 +64,6 @@
 /*                                                                        */
 /*    _txm_module_manager_kernel_dispatch   Kernel dispatch function      */
 /*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020      Scott Larson            Initial Version 6.1           */
-/*                                                                        */
 /**************************************************************************/
 UINT  _txm_module_manager_object_memory_check(TXM_MODULE_INSTANCE *module_instance, ALIGN_TYPE object_ptr, ULONG object_size)
 {
@@ -104,7 +99,7 @@ UINT  _txm_module_manager_object_memory_check(TXM_MODULE_INSTANCE *module_instan
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
 /*    _txm_module_manager_created_object_check            PORTABLE C      */
-/*                                                           6.1          */
+/*                                                           6.1x         */
 /*  AUTHOR                                                                */
 /*                                                                        */
 /*    Scott Larson, Microsoft Corporation                                 */
@@ -137,6 +132,10 @@ UINT  _txm_module_manager_object_memory_check(TXM_MODULE_INSTANCE *module_instan
 /*    DATE              NAME                      DESCRIPTION             */
 /*                                                                        */
 /*  09-30-2020      Scott Larson            Initial Version 6.1           */
+/*  xx-xx-2025      William E. Lamie        Modified comment(s), and      */
+/*                                            removed module local memory */
+/*                                            check, resulting in         */
+/*                                            version 6.1x                */
 /*                                                                        */
 /**************************************************************************/
 UCHAR _txm_module_manager_created_object_check(TXM_MODULE_INSTANCE *module_instance, VOID *object_ptr)
@@ -144,15 +143,9 @@ UCHAR _txm_module_manager_created_object_check(TXM_MODULE_INSTANCE *module_insta
 
 TXM_MODULE_ALLOCATED_OBJECT     *allocated_object_ptr;
 
-    /* Determine if the socket control block is inside the module.  */
-    if ( (((CHAR *) object_ptr) >= ((CHAR *) module_instance -> txm_module_instance_data_start)) &&
-         (((CHAR *) object_ptr) < ((CHAR *) module_instance -> txm_module_instance_data_end)))
-    {
-        return TX_TRUE;
-    }
 
-    /* Determine if this object control block was allocated by this module instance.  */
-    else if (_txm_module_manager_object_pool_created)
+    /* Determine if the object pool has been created.  */
+    if (_txm_module_manager_object_pool_created)
     {
 
         /* Determine if the current object is from the pool of dynamically allocated objects.  */
@@ -340,6 +333,158 @@ CHAR    object_name_char;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
+/*    _txm_module_manager_param_check_object_for_creation PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    William E. Lamie, RTOSX                                             */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function checks to make sure the object pointer for one of the */
+/*    creation APIs is valid.                                             */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    module_instance                   Requesting module instance pointer*/
+/*    object_ptr                        Address of object memory area     */
+/*    ojbect_size                       Size of object memory area        */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    TX_TRUE                           Valid object pointer              */
+/*    TX_FALSE                          Invalid object pointer            */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    txm_module_manager_*              Module manager functions          */
+/*                                                                        */
+/*  RELEASE HISTORY                                                       */
+/*                                                                        */
+/*    DATE              NAME                      DESCRIPTION             */
+/*                                                                        */
+/*  xx-xx-2025      William E. Lamie        Initial Version 6.4.3         */
+/*                                                                        */
+/**************************************************************************/
+UINT    _txm_module_manager_param_check_object_for_creation(TXM_MODULE_INSTANCE *module_instance, ALIGN_TYPE object_ptr, ULONG object_size)
+{
+
+    /* Determine if the object pointer is NULL.  */
+    if ((void *) object_ptr == TX_NULL)
+    {
+
+        /* Object pointer is NULL, which is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Determine if the object pointer is inside the module object pool.  */
+    if (TXM_MODULE_MANAGER_ENSURE_INSIDE_OBJ_POOL(module_instance, object_ptr, object_size) == TX_FALSE)
+    {
+
+        /* Object pointer is not inside the object pool, which is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Determine if the object size is correct.  */
+    if (_txm_module_manager_object_size_check(object_ptr, object_size) != TX_SUCCESS)
+    {
+
+        /* Object size is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Determine if the ojbect has already been created.  */
+    if (_txm_module_manager_created_object_check(module_instance, (void *) object_ptr) == TX_FALSE)
+    {
+
+        /* Object has already been created, which is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Everything is okay with the object, return TX_TRUE.  */
+    return(TX_TRUE);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _txm_module_manager_param_check_object_for_use      PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    William E. Lamie, RTOSX                                             */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function checks to make sure the object pointer is valid.      */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    module_instance                   Requesting module instance pointer*/
+/*    object_ptr                        Address of object memory area     */
+/*    ojbect_size                       Size of object memory area        */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    TX_TRUE                           Valid object pointer              */
+/*    TX_FALSE                          Invalid object pointer            */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    txm_module_manager_*              Module manager functions          */
+/*                                                                        */
+/*  RELEASE HISTORY                                                       */
+/*                                                                        */
+/*    DATE              NAME                      DESCRIPTION             */
+/*                                                                        */
+/*  xx-xx-2025      William E. Lamie        Initial Version 6.4.3         */
+/*                                                                        */
+/**************************************************************************/
+UINT    _txm_module_manager_param_check_object_for_use(TXM_MODULE_INSTANCE *module_instance, ALIGN_TYPE object_ptr, ULONG object_size)
+{
+
+    /* Determine if the object pointer is NULL.  */
+    if ((void *) object_ptr == TX_NULL)
+    {
+
+        /* Object pointer is NULL, which is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Determine if the object pointer is inside the module object pool.  */
+    if (TXM_MODULE_MANAGER_ENSURE_OUTSIDE_MODULE(module_instance, object_ptr, object_size) == TX_FALSE)
+    {
+
+        /* Object pointer is not inside the object pool, which is invalid.  */
+        return(TX_FALSE);
+    }
+
+    /* Define application-specific object memory check.  */
+#ifdef TXM_MODULE_MANGER_APPLICATION_VALID_OBJECT_MEMORY_CHECK
+
+    /* Bring in the application-spefic objeft memory check, defined by the user.  */
+    TXM_MODULE_MANGER_APPLICATION_VALID_OBJECT_MEMORY_CHECK
+#endif /* TXM_MODULE_MANGER_APPLICATION_VALID_OBJECT_MEMORY_ENABLE  */
+
+    /* Everything is okay with the object, return TX_TRUE.  */
+    return(TX_TRUE);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _txm_module_manager_util_code_allocation_size_and_alignment_get     */
 /*                                                        PORTABLE C      */
 /*                                                           6.1          */
@@ -414,3 +559,5 @@ ULONG   data_alignment_ignored;
     /* Return success.  */
     return(TX_SUCCESS);
 }
+
+

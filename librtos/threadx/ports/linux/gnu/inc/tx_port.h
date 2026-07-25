@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -20,11 +21,11 @@
 /**************************************************************************/
 
 
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  PORT SPECIFIC C INFORMATION                            RELEASE        */ 
-/*                                                                        */ 
-/*    tx_port.h                                           Linux/GNU       */ 
+/**************************************************************************/
+/*                                                                        */
+/*  PORT SPECIFIC C INFORMATION                            RELEASE        */
+/*                                                                        */
+/*    tx_port.h                                           Linux/GNU       */
 /*                                                           6.3.0        */
 /*                                                                        */
 /*  AUTHOR                                                                */
@@ -32,30 +33,15 @@
 /*    William E. Lamie, Microsoft Corporation                             */
 /*                                                                        */
 /*  DESCRIPTION                                                           */
-/*                                                                        */ 
-/*    This file contains data type definitions that make the ThreadX      */ 
-/*    real-time kernel function identically on a variety of different     */ 
-/*    processor architectures.  For example, the size or number of bits   */ 
-/*    in an "int" data type vary between microprocessor architectures and */ 
-/*    even C compilers for the same microprocessor.  ThreadX does not     */ 
-/*    directly use native C data types.  Instead, ThreadX creates its     */ 
-/*    own special types that can be mapped to actual data types by this   */ 
-/*    file to guarantee consistency in the interface and functionality.   */ 
-/*                                                                        */ 
-/*  RELEASE HISTORY                                                       */ 
-/*                                                                        */ 
-/*    DATE              NAME                      DESCRIPTION             */
 /*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-/*  10-15-2021     William E. Lamie         Modified comment(s), added    */
-/*                                            symbol ULONG64_DEFINED,     */
-/*                                            resulting in version 6.1.9  */
-/*  04-25-2022     William E. Lamie         Modified comment(s), removed  */
-/*                                            useless definition,         */
-/*                                            resulting in version 6.1.11 */
-/*  10-31-2023     Yanwu Cai                Modified comment(s), fixed    */
-/*                                            compile warnings,           */
-/*                                            resulting in version 6.3.0  */
+/*    This file contains data type definitions that make the ThreadX      */
+/*    real-time kernel function identically on a variety of different     */
+/*    processor architectures.  For example, the size or number of bits   */
+/*    in an "int" data type vary between microprocessor architectures and */
+/*    even C compilers for the same microprocessor.  ThreadX does not     */
+/*    directly use native C data types.  Instead, ThreadX creates its     */
+/*    own special types that can be mapped to actual data types by this   */
+/*    file to guarantee consistency in the interface and functionality.   */
 /*                                                                        */
 /**************************************************************************/
 
@@ -547,7 +533,7 @@ VOID   _tx_thread_interrupt_restore(UINT previous_posture);
 
 #ifdef TX_THREAD_INIT
 CHAR                            _tx_version_id[] =
-                                    "Copyright (c) Microsoft Corporation * ThreadX Linux/gcc Version 6.4.1 *";
+                                    "Copyright (c) Microsoft Corporation * ThreadX Linux/gcc Version 6.5.1.202602a *";
 #else
 extern  CHAR                    _tx_version_id[];
 #endif

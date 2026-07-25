@@ -1,10 +1,10 @@
 ;/***************************************************************************
-; * Copyright (c) 2024 Microsoft Corporation 
-; * 
+; * Copyright (c) 2024 Microsoft Corporation
+; *
 ; * This program and the accompanying materials are made available under the
 ; * terms of the MIT License which is available at
 ; * https://opensource.org/licenses/MIT.
-; * 
+; *
 ; * SPDX-License-Identifier: MIT
 ; **************************************************************************/
 ;
@@ -74,12 +74,6 @@ __tx_free_memory_start
 ;/*                                                                        */
 ;/*    _tx_initialize_kernel_enter           ThreadX entry function        */
 ;/*                                                                        */
-;/*  RELEASE HISTORY                                                       */
-;/*                                                                        */
-;/*    DATE              NAME                      DESCRIPTION             */
-;/*                                                                        */
-;/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
-;/*                                                                        */
 ;/**************************************************************************/
 ;VOID   _tx_initialize_low_level(VOID)
 ;{
@@ -124,6 +118,9 @@ _tx_initialize_low_level:
 ;    /* Configure SysTick.  */
 ;
     LDR     r0, =0xE000E000                         ; Build address of NVIC registers
+    LDR     r1, =0
+    STR     r1, [r0, #0x10]                         ; Reset SysTick Control
+    STR     r1, [r0, #0x18]                         ; Reset SysTick Counter Value
     LDR     r1, =SYSTICK_CYCLES
     STR     r1, [r0, #0x14]                         ; Setup SysTick Reload Value
     MOVS    r1, #0x7                                ; Build SysTick Control Enable Value

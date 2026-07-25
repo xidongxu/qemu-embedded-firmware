@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -39,7 +40,7 @@ extern pthread_t _tx_linux_timer_id;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
-/*    _tx_thread_schedule                                 Linux/GNU       */ 
+/*    _tx_thread_schedule                                 Linux/GNU       */
 /*                                                           6.1          */
 /*  AUTHOR                                                                */
 /*                                                                        */
@@ -72,12 +73,6 @@ extern pthread_t _tx_linux_timer_id;
 /*  CALLED BY                                                             */
 /*                                                                        */
 /*    _tx_initialize_kernel_enter          ThreadX entry function         */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  09-30-2020     William E. Lamie         Initial Version 6.1           */
 /*                                                                        */
 /**************************************************************************/
 VOID   _tx_thread_schedule(VOID)
@@ -127,9 +122,9 @@ struct timespec ts;
                     ts.tv_sec++;
                 }
                 sem_timedwait(&_tx_linux_semaphore_no_idle, &ts);
-#else                
+#else
                 nanosleep(&ts, &ts);
-#endif /* TX_LINUX_NO_IDLE_ENABLE */                
+#endif /* TX_LINUX_NO_IDLE_ENABLE */
             }
         }
 

@@ -1,10 +1,11 @@
 /***************************************************************************
- * Copyright (c) 2024 Microsoft Corporation 
- * 
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2025 Eclipse ThreadX Contributors
+ *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License which is available at
  * https://opensource.org/licenses/MIT.
- * 
+ *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
@@ -2389,6 +2390,11 @@ static ALIGN_TYPE _txm_module_manager_tx_thread_preemption_change_dispatch(TXM_M
 
 ALIGN_TYPE return_value;
 
+    if (param_1 < module_instance -> txm_module_instance_maximum_priority)
+    {
+        return(TX_THRESH_ERROR);
+    }
+
     if (module_instance -> txm_module_instance_property_flags & TXM_MODULE_MEMORY_PROTECTION)
     {
         if (!TXM_MODULE_MANAGER_PARAM_CHECK_OBJECT_FOR_USE(module_instance, param_0, sizeof(TX_THREAD)))
@@ -2417,6 +2423,11 @@ static ALIGN_TYPE _txm_module_manager_tx_thread_priority_change_dispatch(TXM_MOD
 {
 
 ALIGN_TYPE return_value;
+
+    if (param_1 < module_instance -> txm_module_instance_maximum_priority)
+    {
+        return(TX_PRIORITY_ERROR);
+    }
 
     if (module_instance -> txm_module_instance_property_flags & TXM_MODULE_MEMORY_PROTECTION)
     {

@@ -1,3 +1,14 @@
+/***************************************************************************/
+/* Copyright (c) 2024 Microsoft Corporation                                */
+/* Copyright (c) 2026 Eclipse ThreadX contributors                         */
+/*                                                                         */
+/* This program and the accompanying materials are made available under    */
+/* the terms of the MIT License which is available at                      */
+/* https://opensource.org/licenses/MIT.                                    */
+/*                                                                         */
+/* SPDX-License-Identifier: MIT                                            */
+/***************************************************************************/
+
 /* This test is for the thread stack checking services.  */
 
 #include   <stdio.h>
@@ -62,11 +73,11 @@ CHAR    *pointer;
     /* Put system definition stuff in here, e.g. thread creates and other assorted
        create information.  */
 
-    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0,
+            pointer, TEST_STACK_SIZE_PRINTF,
             15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
     pointer =  pointer + TEST_STACK_SIZE_PRINTF;
-    
+
     /* Check for status.  */
     if (status != TX_SUCCESS)
     {
@@ -75,8 +86,8 @@ CHAR    *pointer;
         test_control_return(1);
     }
 
-    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_1, "thread 1", thread_1_entry, 1,
+            pointer, TEST_STACK_SIZE_PRINTF,
             16, 16, TX_NO_TIME_SLICE, TX_DONT_START);
     pointer =  pointer + TEST_STACK_SIZE_PRINTF;
 
@@ -88,8 +99,8 @@ CHAR    *pointer;
         test_control_return(1);
     }
 
-    status =  tx_thread_create(&thread_2, "thread 2", thread_2_entry, 2,  
-            pointer, TEST_STACK_SIZE_PRINTF, 
+    status =  tx_thread_create(&thread_2, "thread 2", thread_2_entry, 2,
+            pointer, TEST_STACK_SIZE_PRINTF,
             17, 17, TX_NO_TIME_SLICE, TX_DONT_START);
     thread_2_stack_start =  pointer;
     pointer =  pointer + TEST_STACK_SIZE_PRINTF;
@@ -137,7 +148,7 @@ UINT        status;
 
     /* Resume thread 1 to get the stack checking to take place.  */
     status =  tx_thread_resume(&thread_1);
-    
+
     /* Suspend to allow thread 1 to run.  */
     tx_thread_suspend(&thread_0);
 
@@ -158,7 +169,7 @@ UINT        status;
     }
     else
     {
-    
+
         /* Success!  */
         printf("SUCCESS!\n");
         test_control_return(0);
@@ -201,10 +212,10 @@ TX_THREAD   fake_thread;
     /* Increment thread 1 counter.  */
     thread_1_counter++;
 
-    /* Now, deregister the stack error handler and get into a spin condition. We will then 
+    /* Now, deregister the stack error handler and get into a spin condition. We will then
        want to terminate thread 1 from thread 0 when it awakes!  */
     tx_thread_stack_error_notify(TX_NULL);
-    
+
     /* Now resume thread 2 again to cause the stack error!  */
     tx_thread_resume(&thread_2);
 
@@ -218,7 +229,7 @@ TX_THREAD   fake_thread;
 
 static void    thread_2_entry(ULONG thread_input)
 {
-       
+
         /* Increment thread 1 counter.  */
         thread_2_counter++;
 }
