@@ -7,20 +7,20 @@ set_target_properties(${TARGET} PROPERTIES
 )
 
 file(GLOB APP_SOURCES
-    "application/main.c"
-    "application/system_ARMCM33.c"
+    "application/*.c"
+)
+
+file(GLOB CORE_SOURCES
     "../Core/Src/*.c"
-    "../../../libutils/fault-dump/src/*.c"
-    "../../../libutils/fault-dump/cpu/cortex-m33/fault-hal.c"
 )
 
 file(GLOB STARTUP_SOURCES
     "startup/gcc/startup_ARMCM33.s"
-    "../../../libutils/fault-dump/cpu/cortex-m33/fault-gcc.s"
 )
 
 target_sources(${TARGET} PRIVATE
     ${APP_SOURCES}
+    ${CORE_SOURCES}
     ${STARTUP_SOURCES}
 )
 
@@ -29,8 +29,6 @@ target_include_directories(${TARGET} PRIVATE
     ../Core/Inc
     ../Drivers/CMSIS_5/Device/ARM/ARMCM33/Include
     ../Drivers/CMSIS_5/CMSIS/Core/Include
-    ${CMAKE_SOURCE_DIR}/libutils/fault-dump/inc
-    ${CMAKE_SOURCE_DIR}/libutils/fault-dump/cpu/cortex-m33
 )
 
 target_compile_definitions(${TARGET} PRIVATE
@@ -57,7 +55,6 @@ target_link_options(${TARGET} PRIVATE
     -Wl,--gc-sections
     -lc
     -lm
-    -lnosys
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")
