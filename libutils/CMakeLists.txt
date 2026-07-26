@@ -1,2 +1,5 @@
 add_subdirectory(fault-dump)
-# add_subdirectory(lvgl-9.5.0)
+if(TARGET_PROJECT STREQUAL "FreeRTOS")
+    set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/boards/${BOARD}/${PROJECT}/application/lv_conf.h CACHE FILEPATH "" FORCE)
+    add_subdirectory(lvgl-9.5.0)
+endif()

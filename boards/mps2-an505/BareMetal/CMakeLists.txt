@@ -49,8 +49,6 @@ target_compile_options(${TARGET} PRIVATE
     -specs=nano.specs
 )
 
-target_link_libraries(${TARGET} PRIVATE utils)
-
 target_link_options(${TARGET} PRIVATE
     -T${CMAKE_CURRENT_SOURCE_DIR}/startup/gcc/gcc_arm.ld
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.map,--cref
