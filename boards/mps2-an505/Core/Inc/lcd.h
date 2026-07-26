@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #define LCD_BASE            (0x51000000UL)
 #define LCD_WIDTH_ADDR      (LCD_BASE + 0x00)
@@ -46,5 +47,7 @@ void lcd_update(void);
 void lcd_wait_done(void);
 void lcd_clear(uint32_t color);
 void lcd_draw_pixel(int x, int y, uint32_t color);
+void lcd_draw(int x1, int y1, int x2, int y2, const uint32_t *pixels);
+void *lcd_get_framebuffer();
 
 #endif

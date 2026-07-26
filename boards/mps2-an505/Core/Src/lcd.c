@@ -37,3 +37,28 @@ void lcd_draw_pixel(int x, int y, uint32_t color) {
     }
     lcd_framebuffer[y * LCD_WIDTH_PIXELS + x] = color;
 }
+
+void lcd_draw(int x1, int y1, int x2, int y2, const uint32_t *pixels) {
+    if(x1 < 0) {
+        x1 = 0;
+    }
+    if(y1 < 0) {
+        y1 = 0;
+    }
+    if(x2 >= LCD_WIDTH_PIXELS) {
+        x2 = LCD_WIDTH_PIXELS - 1;
+    }
+    if(y2 >= LCD_HEIGHT_PIXELS) {
+        y2 = LCD_HEIGHT_PIXELS - 1;
+    }
+    int width  = x2 - x1 + 1;
+    int height = y2 - y1 + 1;
+    for(int y = 0; y < height; y++) {
+        memcpy(&lcd_framebuffer[(y1 + y) * LCD_WIDTH_PIXELS + x1], pixels, width * sizeof(uint32_t));
+        pixels += width;
+    }
+}
+
+void *lcd_get_framebuffer() {
+    return (void *)lcd_framebuffer;
+}

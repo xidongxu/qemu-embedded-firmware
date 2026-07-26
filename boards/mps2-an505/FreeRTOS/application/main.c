@@ -10,7 +10,6 @@
 #include <task.h>
 #include <queue.h>
 #include <timers.h>
-#include "lv_demos.h"
 
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 
@@ -81,11 +80,6 @@ void test_lcd(void) {
     lcd_init();
 }
 
-void test_lvgl(void) {
-    lv_init();
-    printf("LVGL %d.%d.%d\n", lv_version_major(), lv_version_minor(), lv_version_patch());
-}
-
 void test0(void) {
     printf("this is %s.\r\n", __func__);
     dump_callstack();
@@ -118,26 +112,13 @@ void test5(void) {
     test4();
 }
 
+extern void lv_task_init(void);
 static void main_task_entry(void *parameters) {
-    int counter = 0;
     test_lcd();
     test_touch();
-    test_lvgl();
+    lv_task_init();
     while(1) {
-        printf("hello this is FreeRTOS: %d.\r\n", counter);
-        if (counter % 3 == 0) {
-            lcd_clear(0xffff0000);
-        }
-        if (counter % 3 == 1) {
-            lcd_clear(0xff00ff00);
-        }
-        if (counter % 3 == 2) {
-            lcd_clear(0xff0000ff);
-        }
-        lcd_update();
-        lcd_wait_done();
         vTaskDelay(1000);
-        counter++;
     }
 }
 
