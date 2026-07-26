@@ -1,5 +1,5 @@
 /*
- * FreeRTOS Kernel V11.1.0
+ * FreeRTOS Kernel V11.3.0
  * Copyright (C) 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * SPDX-License-Identifier: MIT
@@ -130,7 +130,18 @@
 /* Task utilities. */
     #define portNOP()                                         __asm( "NOP" )
     #define portYIELD()                                       __asm( "BRK" )
-    #define portYIELD_FROM_ISR( xHigherPriorityTaskWoken )    do { if( xHigherPriorityTaskWoken ) vTaskSwitchContext( ); } while( 0 )
+    #ifndef configREQUIRE_ASM_ISR_WRAPPER
+        #define configREQUIRE_ASM_ISR_WRAPPER    1
+    #endif
+    #if( configREQUIRE_ASM_ISR_WRAPPER == 1 )
+        /* You must implement an assembly ISR wrapper (see the below for details) if you need an ISR to cause a context switch.
+         * https://www.freertos.org/Documentation/02-Kernel/03-Supported-devices/04-Demos/Renesas/RTOS_RL78_IAR_Demos#writing-interrupt-service-routines */
+        #define portYIELD_FROM_ISR( xHigherPriorityTaskWoken )    do { if( xHigherPriorityTaskWoken != pdFALSE ) vTaskSwitchContext(); } while( 0 )
+    #else
+        /* You must not implement an assembly ISR wrapper even if you need an ISR to cause a context switch.
+         * The portYIELD, which is similar to role of an assembly ISR wrapper, runs only when a context switch is required. */
+        #define portYIELD_FROM_ISR( xHigherPriorityTaskWoken )    do { if( xHigherPriorityTaskWoken != pdFALSE ) portYIELD(); } while( 0 )
+    #endif
 /*-----------------------------------------------------------*/
 
 /* Hardware specifics. */
@@ -176,7 +187,7 @@
               * ; * memory mode) registers the _usCriticalNesting value and the Stack Pointer
               * ; * of the active Task onto the task stack.
               * ; *---------------------------------------------------------------------------*/
-    portSAVE_CONTEXT MACRO
+portSAVE_CONTEXT MACRO
     PUSH AX; /* Save AX Register to stack. */
     PUSH HL
     #if  __CODE_MODEL__ == __CODE_MODEL_FAR__
@@ -206,7 +217,7 @@
  * ; * general purpose registers and the CS and ES (only in __far memory mode)
  * ; * of the selected task from the task stack.
  * ; *---------------------------------------------------------------------------*/
-    portRESTORE_CONTEXT MACRO
+portRESTORE_CONTEXT MACRO
     MOVW AX, _pxCurrentTCB; /* Restore the Task stack pointer. */
     MOVW HL, AX
     MOVW AX, [ HL ]

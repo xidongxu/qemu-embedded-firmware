@@ -1,6 +1,8 @@
 /*
- * FreeRTOS Kernel V11.1.0
+ * FreeRTOS Kernel V11.3.0
  * Copyright (C) 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2025 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
  *
  * SPDX-License-Identifier: MIT
  *
@@ -915,7 +917,10 @@ void vPortSVCHandler_C( uint32_t * pulCallerStackAddress ) /* PRIVILEGED_FUNCTIO
         xMPU_SETTINGS * pxMpuSettings;
         uint32_t * pulSystemCallStack;
         uint32_t ulSystemCallLocation, i;
-        const uint32_t ulStackFrameSize = 8;
+        /* Hardware Saved Stack Frame Size upon Exception entry:
+         * Basic frame (R0-R3, R12, LR, PC, and xPSR) = 8 words.
+         */
+        const uint32_t ulHardwareSavedExceptionFrameSize = 8;
 
         #if defined( __ARMCC_VERSION )
 
@@ -955,10 +960,10 @@ void vPortSVCHandler_C( uint32_t * pulCallerStackAddress ) /* PRIVILEGED_FUNCTIO
             pulSystemCallStack = pxMpuSettings->xSystemCallStackInfo.pulSystemCallStack;
 
             /* Make space on the system call stack for the stack frame. */
-            pulSystemCallStack = pulSystemCallStack - ulStackFrameSize;
+            pulSystemCallStack = pulSystemCallStack - ulHardwareSavedExceptionFrameSize;
 
             /* Copy the stack frame. */
-            for( i = 0; i < ulStackFrameSize; i++ )
+            for( i = 0; i < ulHardwareSavedExceptionFrameSize; i++ )
             {
                 pulSystemCallStack[ i ] = pulTaskStack[ i ];
             }
@@ -981,7 +986,7 @@ void vPortSVCHandler_C( uint32_t * pulCallerStackAddress ) /* PRIVILEGED_FUNCTIO
 
             /* Remember the location where we should copy the stack frame when we exit from
              * the system call. */
-            pxMpuSettings->xSystemCallStackInfo.pulTaskStack = pulTaskStack + ulStackFrameSize;
+            pxMpuSettings->xSystemCallStackInfo.pulTaskStack = pulTaskStack + ulHardwareSavedExceptionFrameSize;
 
             /* Record if the hardware used padding to force the stack pointer
              * to be double word aligned. */
@@ -1036,7 +1041,10 @@ void vPortSVCHandler_C( uint32_t * pulCallerStackAddress ) /* PRIVILEGED_FUNCTIO
         xMPU_SETTINGS * pxMpuSettings;
         uint32_t * pulTaskStack;
         uint32_t ulSystemCallLocation, i;
-        const uint32_t ulStackFrameSize = 8;
+        /* Hardware Saved Stack Frame Size upon Exception entry:
+         * Basic frame (R0-R3, R12, LR, PC, and xPSR) = 8 words.
+         */
+        const uint32_t ulHardwareSavedExceptionFrameSize = 8;
 
         #if defined( __ARMCC_VERSION )
 
@@ -1072,10 +1080,10 @@ void vPortSVCHandler_C( uint32_t * pulCallerStackAddress ) /* PRIVILEGED_FUNCTIO
             pulTaskStack = pxMpuSettings->xSystemCallStackInfo.pulTaskStack;
 
             /* Make space on the task stack for the stack frame. */
-            pulTaskStack = pulTaskStack - ulStackFrameSize;
+            pulTaskStack = pulTaskStack - ulHardwareSavedExceptionFrameSize;
 
             /* Copy the stack frame. */
-            for( i = 0; i < ulStackFrameSize; i++ )
+            for( i = 0; i < ulHardwareSavedExceptionFrameSize; i++ )
             {
                 pulTaskStack[ i ] = pulSystemCallStack[ i ];
             }
@@ -1288,7 +1296,7 @@ BaseType_t xPortStartScheduler( void ) /* PRIVILEGED_FUNCTION */
          *
          * Assertion failures here indicate incorrect installation of the
          * FreeRTOS handlers. For help installing the FreeRTOS handlers, see
-         * https://www.FreeRTOS.org/FAQHelp.html.
+         * https://www.freertos.org/Why-FreeRTOS/FAQs.
          *
          * Systems with a configurable address for the interrupt vector table
          * can also encounter assertion failures or even system faults here if
