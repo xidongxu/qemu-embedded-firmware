@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "lcd.h"
+#include "touch.h"
 #include "printf.h"
 #include "FreeRTOSConfig.h"
 #include <FreeRTOS.h>
@@ -23,6 +24,15 @@ static void lv_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
     lv_display_flush_ready(disp);
 }
 
+static void lv_touch_read(lv_indev_t * indev, lv_indev_data_t * data) {
+    touch_point_t point;
+    touch_read(&point);
+    data->point.x = (uint32_t)point.x * (LCD_WIDTH_PIXELS - 1) / 4095;
+    data->point.y = (uint32_t)point.y * (LCD_HEIGHT_PIXELS - 1) / 4095;
+    data->state = point.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    // printf("===> x:%d, y:%d, pressed:%d\n", data->point.x, data->point.y, data->state);
+}
+
 static void lv_task_entry(void *parameters) {
     lv_init();
     printf("LVGL %d.%d.%d\n", lv_version_major(), lv_version_minor(), lv_version_patch());
@@ -35,7 +45,12 @@ static void lv_task_entry(void *parameters) {
         LV_DISPLAY_RENDER_MODE_DIRECT
     );
     lv_display_set_flush_cb(disp, lv_flush);
-    lv_demo_benchmark();
+
+    lv_indev_t * indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, lv_touch_read);
+
+    lv_demo_widgets();
     while(1) {
         lv_timer_handler();
         vTaskDelay(5);
