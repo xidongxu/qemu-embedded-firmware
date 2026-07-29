@@ -43,7 +43,7 @@
 #define configUSE_PREEMPTION                       1
 #define configUSE_TIME_SLICING                     1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION    0
-#define configUSE_TICKLESS_IDLE                    1
+#define configUSE_TICKLESS_IDLE                    0
 #define configMAX_PRIORITIES                       5U
 #define configMINIMAL_STACK_SIZE                   128U
 #define configMAX_TASK_NAME_LEN                    32U
