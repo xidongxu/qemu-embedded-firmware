@@ -30,7 +30,6 @@ static void lv_touch_read(lv_indev_t * indev, lv_indev_data_t * data) {
     data->point.x = (uint32_t)point.x * (LCD_WIDTH_PIXELS - 1) / 4095;
     data->point.y = (uint32_t)point.y * (LCD_HEIGHT_PIXELS - 1) / 4095;
     data->state = point.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    // printf("===>tick:%d <x:%d, y:%d, pressed:%d>\n", xTaskGetTickCount(), data->point.x, data->point.y, data->state);
 }
 
 static void lv_task_entry(void *parameters) {

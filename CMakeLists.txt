@@ -9,6 +9,8 @@ set(TARGET_PROJECT "${PROJECT}")
 message(STATUS "Building board: ${BOARD}")
 message(STATUS "Building project: ${PROJECT}")
 
+add_compile_options(-O2)
+
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     set(FREERTOS_PORT GCC_ARM_CM33_NTZ_NONSECURE CACHE STRING "FreeRTOS port")
     set(FREERTOS_HEAP 4 CACHE STRING "FreeRTOS heap implementation")
