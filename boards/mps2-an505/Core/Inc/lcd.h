@@ -48,6 +48,9 @@ void lcd_wait_done(void);
 void lcd_clear(uint32_t color);
 void lcd_draw_pixel(int x, int y, uint32_t color);
 void lcd_draw(int x1, int y1, int x2, int y2, const uint32_t *pixels);
-void *lcd_get_framebuffer();
+void lcd_swap_framebuffer(void);
+void *lcd_get_framebuffer0(void);
+void *lcd_get_framebuffer1(void);
+void lcd_set_framebuffer(void *addr);
 
 #endif

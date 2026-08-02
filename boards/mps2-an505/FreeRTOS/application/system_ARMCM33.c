@@ -76,7 +76,7 @@ void SystemCoreClockUpdate (void)
 #if defined (__ARM_FEATURE_CMSE) && (__ARM_FEATURE_CMSE == 3U)
 void TZ_SAU_Setup()
 {
-
+  SAU->CTRL = 0;
 }
 #endif
 
