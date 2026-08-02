@@ -22,6 +22,10 @@ void Default_Handler(void) {
     printf("%s\n", __func__);
 }
 
+void vApplicationIdleHook(void) {
+    __WFI();
+}
+
 void dump_callstack(void) {
     unsigned int buffer[FD_STACK_DUMP_DEPTH_MAX] = {0};
     unsigned int point = fault_dump_bm_stack_point();

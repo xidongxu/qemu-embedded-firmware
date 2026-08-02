@@ -52,9 +52,10 @@ static void lv_task_entry(void *parameters) {
     int time = 0;
     while(1) {
         time = lv_timer_handler();
-        if (time > 1) {
-            vTaskDelay(pdMS_TO_TICKS(time));
+        if (time < 1) {
+            time = 1;
         }
+        vTaskDelay(pdMS_TO_TICKS(time));
     }
 }
 
