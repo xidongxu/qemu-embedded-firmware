@@ -100,15 +100,8 @@ static void main_task_init(void) {
 int main(void) {
     int count = 0;
     uart_init();
-
+    lan9118_open();
     printf("Start\r\n");
-
-    lan9118_probe();
-    lan9118_dump_mac();
-    lan9118_dump_phy();
-    lan9118_mac_enable();
-    lan9118_rx_init();
-
     fault_dump_init();
     extern int freertos_stack_parser(unsigned int *buffer, size_t length, unsigned int *stack_point, unsigned int *stack_start);
     fault_dump_psp_stack_parser(freertos_stack_parser);
