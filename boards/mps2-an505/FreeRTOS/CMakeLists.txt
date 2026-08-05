@@ -62,6 +62,7 @@ target_link_libraries(${TARGET} PRIVATE
     rtos
     utils
     lvgl
+    lwipcore
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")
