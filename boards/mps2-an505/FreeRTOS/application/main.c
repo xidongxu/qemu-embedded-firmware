@@ -76,13 +76,14 @@ void test5(void) {
 }
 
 extern void lv_task_init(void);
+extern void lwip_task_init(void);
 static void main_task_entry(void *parameters) {
     lcd_init();
     touch_init();
     lv_task_init();
+    lwip_task_init();
     while(1) {
         vTaskDelay(1000);
-        lan9118_test();
     }
 }
 

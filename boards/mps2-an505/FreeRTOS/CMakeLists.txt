@@ -32,10 +32,14 @@ target_include_directories(${TARGET} PRIVATE
     ../Drivers/CMSIS_5/CMSIS/Core/Include
     ../Drivers/CMSIS_5/Device/ARM/ARMCM33/Include
     ../Drivers/CMSIS_5/CMSIS/Core/Include
+    ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
+    ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
 )
 
 target_compile_definitions(${TARGET} PRIVATE
     ARMCM33_DSP_FP
+    LAN9118_USE_FREERTOS=1
+    LAN9118_HAVE_LWIP=1
 )
 
 target_compile_options(${TARGET} PRIVATE

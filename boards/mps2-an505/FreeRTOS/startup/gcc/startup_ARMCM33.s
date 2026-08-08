@@ -99,7 +99,9 @@ __Vectors:
                 .long    Interrupt38_Handler                /*   38 Interrupt 38 */
                 .long    Interrupt39_Handler                /*   39 Interrupt 39 */
 
-                .space   (440 * 4)                          /* Interrupts 40 .. 480 are left out */
+                .space   (8 * 4)                            /* Interrupts 40 .. 47 */
+                .long    Interrupt48_Handler                /*   48 Ethernet (LAN9118) */
+                .space   (431 * 4)                          /* Interrupts 49 .. 480 */
 __Vectors_End:
                 .equ     __Vectors_Size, __Vectors_End - __Vectors
                 .size    __Vectors, . - __Vectors
@@ -264,5 +266,7 @@ Default_Handler:
                 Set_Default_Handler  Interrupt37_Handler
                 Set_Default_Handler  Interrupt38_Handler
                 Set_Default_Handler  Interrupt39_Handler
+
+                Set_Default_Handler  Interrupt48_Handler
 
                 .end

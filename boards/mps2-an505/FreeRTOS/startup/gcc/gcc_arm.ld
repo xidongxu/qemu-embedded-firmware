@@ -53,6 +53,9 @@ __RAM_SIZE = 0x00FFFFF0;
 __STACK_SIZE = 0x00001000;
 __HEAP_SIZE  = 0x00001000;
 
+/* Used by sysmem.c (_sbrk) and the C library heap. */
+PROVIDE(_Min_Stack_Size = __STACK_SIZE);
+
 /*
  *-------------------- <<< end of configuration section >>> -------------------
  */
@@ -289,6 +292,8 @@ SECTIONS
     . = ALIGN(8);
     __end__ = .;
     PROVIDE(end = .);
+    /* Used by sysmem.c */
+    PROVIDE(_end = .);
     . = . + __HEAP_SIZE;
     . = ALIGN(8);
     __HeapLimit = .;
