@@ -10,6 +10,13 @@ file(GLOB APP_SOURCES
     "application/*.c"
 )
 
+# Only one lwIP demo app is built at a time: NO_SYS (raw API) vs OS mode.
+if(LWIP_OS STREQUAL "FreeRTOS")
+    list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/application/lwip_test.c")
+else()
+    list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/application/lwip_os_test.c")
+endif()
+
 file(GLOB CORE_SOURCES
     "../Core/Src/*.c"
 )
@@ -35,12 +42,23 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
 )
+if(LWIP_OS STREQUAL "FreeRTOS")
+    # OS mode pulls in arch/sys_arch.h via lwip/sys.h (local port copy).
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_SOURCE_DIR}/libutils/lwip/ports/freertos/include
+    )
+endif()
 
 target_compile_definitions(${TARGET} PRIVATE
     ARMCM33_DSP_FP
     LAN9118_USE_FREERTOS=1
     LAN9118_HAVE_LWIP=1
 )
+if(LWIP_OS STREQUAL "FreeRTOS")
+    # Flip NO_SYS=0 for this target too so lan9118_netif.c (Core/Src) and
+    # lwip_os_test.c build in OS mode (input = tcpip_input, etc.).
+    target_compile_definitions(${TARGET} PRIVATE LWIP_USE_FREERTOS=1)
+endif()
 
 target_compile_options(${TARGET} PRIVATE
     -mcpu=cortex-m33

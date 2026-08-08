@@ -31,11 +31,20 @@ static err_t lan9118_low_level_output(struct netif *netif, struct pbuf *p);
 
 static void lan9118_netif_link_cb(bool up, void *arg) {
     struct netif *netif = (struct netif *)arg;
+#if !NO_SYS
+    /* netif_set_link_up/down are lwIP core functions: in OS mode they must
+       be called from the tcpip_thread context or while holding the core lock
+       (the link callback runs from the lan9118_netif_thread task). */
+    LOCK_TCPIP_CORE();
+#endif
     if (up) {
         netif_set_link_up(netif);
     } else {
         netif_set_link_down(netif);
     }
+#if !NO_SYS
+    UNLOCK_TCPIP_CORE();
+#endif
 }
 
 static err_t lan9118_low_level_init(struct netif *netif) {

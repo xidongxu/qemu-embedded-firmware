@@ -76,12 +76,20 @@ void test5(void) {
 }
 
 extern void lv_task_init(void);
+#ifdef LWIP_USE_FREERTOS
+extern void lwip_os_task_init(void);
+#else
 extern void lwip_task_init(void);
+#endif
 static void main_task_entry(void *parameters) {
     lcd_init();
     touch_init();
     lv_task_init();
+#ifdef LWIP_USE_FREERTOS
+    lwip_os_task_init();
+#else
     lwip_task_init();
+#endif
     while(1) {
         vTaskDelay(1000);
     }

@@ -39,10 +39,64 @@
 #define LWIP_IPV4                  1
 #define LWIP_IPV6                  1
 
+/* Use the C library <errno.h> for the errno constants lwIP needs in
+   OS/socket mode (ENOMEM, EINVAL, ENXIO, ...). */
+#define LWIP_ERRNO_STDINCLUDE       1
+
+/* OS support: when built with the FreeRTOS backend (LWIP_USE_FREERTOS is
+   defined by the build system), lwIP runs in OS mode (NO_SYS=0) with a
+   dedicated tcpip_thread and the sequential/socket API.  Otherwise it stays
+   in NO_SYS (raw API only) mode. */
+#ifdef LWIP_USE_FREERTOS
+#define NO_SYS                     0
+#define LWIP_SOCKET                (NO_SYS==0)
+#define LWIP_NETCONN               (NO_SYS==0)
+#define LWIP_NETIF_API             (NO_SYS==0)
+#else
 #define NO_SYS                     1
 #define LWIP_SOCKET                (NO_SYS==0)
 #define LWIP_NETCONN               (NO_SYS==0)
 #define LWIP_NETIF_API             (NO_SYS==0)
+#endif
+
+#ifdef LWIP_USE_FREERTOS
+/* lwIP <-> FreeRTOS sys_arch port (contrib/ports/freertos) configuration. */
+#define LWIP_FREERTOS_SYS_ARCH_PROTECT_USES_MUTEX    0
+#define LWIP_FREERTOS_SYS_ARCH_PROTECT_SANITY_CHECK  0
+#define LWIP_FREERTOS_CHECK_QUEUE_EMPTY_ON_FREE      0
+#define LWIP_FREERTOS_CHECK_CORE_LOCKING             1
+#define LWIP_FREERTOS_SYS_NOW_FROM_FREERTOS          1
+/* lwIP thread stack sizes are given in FreeRTOS stack words. */
+#define LWIP_FREERTOS_THREAD_STACKSIZE_IS_STACKWORDS 1
+
+/* tcpip_thread: high priority, generous 16 KiB stack. */
+#define TCPIP_THREAD_STACKSIZE      4096
+#define TCPIP_THREAD_PRIO           4
+
+/* Message queue sizes used by the tcpip thread and the sequential/socket
+   API (must be > 0; the FreeRTOS mbox backend asserts on size <= 0). */
+#define TCPIP_MBOX_SIZE             128
+#define DEFAULT_RAW_RECVMBOX_SIZE   8
+#define DEFAULT_UDP_RECVMBOX_SIZE   8
+#define DEFAULT_TCP_RECVMBOX_SIZE   16
+#define DEFAULT_ACCEPTMBOX_SIZE     8
+
+/* Track the tcpip thread so LWIP_ASSERT_CORE_LOCKED() can verify core locking.
+   (Provided by contrib/ports/freertos/sys_arch.c, declared here because the
+   FreeRTOS port header does not declare it.) */
+void sys_mark_tcpip_thread(void);
+#define LWIP_MARK_TCPIP_THREAD()    sys_mark_tcpip_thread()
+
+/* Route LOCK_TCPIP_CORE()/UNLOCK_TCPIP_CORE() through the FreeRTOS port's
+   core-lock tracking functions.  The default mapping (sys_mutex_lock on
+   lock_tcpip_core) never updates the port's holder/count bookkeeping, so
+   sys_check_core_locking() would always fail.  This mirrors how the lwIP
+   unix/win32 ports wire up the core lock. */
+void sys_lock_tcpip_core(void);
+void sys_unlock_tcpip_core(void);
+#define LOCK_TCPIP_CORE()           sys_lock_tcpip_core()
+#define UNLOCK_TCPIP_CORE()         sys_unlock_tcpip_core()
+#endif /* LWIP_USE_FREERTOS */
 
 #define LWIP_IGMP                  LWIP_IPV4
 #define LWIP_ICMP                  LWIP_IPV4
@@ -118,7 +172,7 @@
 
 /* MEM_SIZE: the size of the heap memory. If the application will send
 a lot of data that needs to be copied, this should be set high. */
-#define MEM_SIZE               10240
+#define MEM_SIZE               20480
 
 /* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
    sends a lot of data out of ROM (or other static memory), this
@@ -141,7 +195,7 @@ a lot of data that needs to be copied, this should be set high. */
 #define MEMP_NUM_TCP_SEG        16
 /* MEMP_NUM_SYS_TIMEOUT: the number of simultaneously active
    timeouts. */
-#define MEMP_NUM_SYS_TIMEOUT    17
+#define MEMP_NUM_SYS_TIMEOUT    32
 
 /* The following four are used only with the sequential API and can be
    set to 0 if the application only will use the raw API. */
