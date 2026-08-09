@@ -101,7 +101,8 @@ __Vectors:
 
                 .space   (8 * 4)                            /* Interrupts 40 .. 47 */
                 .long    Interrupt48_Handler                /*   48 Ethernet (LAN9118) */
-                .space   (431 * 4)                          /* Interrupts 49 .. 480 */
+                .long    Interrupt49_Handler                /*   49 Audio (MPSX_SIMPLE_AUDIO) */
+                .space   (430 * 4)                          /* Interrupts 50 .. 480 */
 __Vectors_End:
                 .equ     __Vectors_Size, __Vectors_End - __Vectors
                 .size    __Vectors, . - __Vectors

@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "audio.h"
 #include "lcd.h"
 #include "lan9118.h"
 #include "touch.h"
@@ -84,6 +85,8 @@ extern void lwip_task_init(void);
 static void main_task_entry(void *parameters) {
     lcd_init();
     touch_init();
+    audio_init();
+    audio_test();
     lv_task_init();
 #ifdef LWIP_USE_FREERTOS
     lwip_os_task_init();
