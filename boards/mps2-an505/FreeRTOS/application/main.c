@@ -4,6 +4,7 @@
 #include "lcd.h"
 #include "lan9118.h"
 #include "touch.h"
+#include "spi_flash.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -83,10 +84,27 @@ extern void lwip_os_task_init(void);
 extern void lwip_task_init(void);
 #endif
 static void main_task_entry(void *parameters) {
+    spi_flash_err_t rc;
+    spi_flash_info_t fi = { 0 };
+
     lcd_init();
     touch_init();
     audio_init();
     audio_test();
+
+    /* SPI NOR flash (w25q02jvm) - probe and report geometry */
+    rc = spi_flash_init(NULL);
+    if (rc == SPI_FLASH_OK) {
+        spi_flash_get_info(&fi);
+        printf("spi_flash: JEDEC %02X %02X %02X, size=%uMiB, page=%u, "
+               "sector=%u, 4B-addr=%d\r\n",
+               fi.jedec[0], fi.jedec[1], fi.jedec[2],
+               (unsigned)(fi.size >> 20), (unsigned)fi.page_size,
+               (unsigned)fi.sector_size, fi.four_byte_addr ? 1 : 0);
+    } else {
+        printf("spi_flash: init failed (%d)\r\n", (int)rc);
+    }
+
     lv_task_init();
 #ifdef LWIP_USE_FREERTOS
     lwip_os_task_init();
