@@ -235,6 +235,8 @@ API 层   read/write/erase_sector/...（参数校验 + OS 锁 + 跨页拆分）
 
 ## 六、构建与运行命令
 
+> 💡 需要"生成 SPI flash 镜像"和"启动时挂载 SPI flash"的命令速查？见 `WORKLOG-2026-08-11-qemu-spi-flash-commands.md`（`qemu-img`/`flash_image.py` 生成镜像 + `-drive if=mtd` 挂载 + 辅助子命令 + 注意点）。
+
 ### QEMU 侧（重编译）
 
 ```powershell
