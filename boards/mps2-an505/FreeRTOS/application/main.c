@@ -5,6 +5,7 @@
 #include "lan9118.h"
 #include "touch.h"
 #include "spi_flash.h"
+#include "fatfs_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -104,6 +105,9 @@ static void main_task_entry(void *parameters) {
     } else {
         printf("spi_flash: init failed (%d)\r\n", (int)rc);
     }
+
+    /* FatFS over the SPI NOR flash - mount/format, write/read a file. */
+    fatfs_test();
 
     lv_task_init();
 #ifdef LWIP_USE_FREERTOS

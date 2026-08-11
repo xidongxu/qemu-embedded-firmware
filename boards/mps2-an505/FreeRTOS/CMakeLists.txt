@@ -1,4 +1,4 @@
-﻿set(TARGET an505-qemu)
+set(TARGET an505-qemu)
 
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
@@ -85,6 +85,8 @@ target_link_libraries(${TARGET} PRIVATE
     utils
     lvgl
     lwipcore
+    littlefs
+    fatfs
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")
