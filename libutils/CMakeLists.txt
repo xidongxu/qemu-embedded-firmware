@@ -55,3 +55,11 @@ if(TARGET_PROJECT STREQUAL "FreeRTOS")
         message(STATUS "lwIP built without OS support (NO_SYS=1, raw API)")
     endif()
 endif()
+
+# Embedded filesystems on the SPI NOR flash (ports/spi_flash under each lib).
+# Both are generic and RTOS-independent; they are built for the main FreeRTOS
+# project where the SPI flash demo lives.
+if(TARGET_PROJECT STREQUAL "FreeRTOS")
+    add_subdirectory(littlefs)
+    add_subdirectory(fatfs)
+endif()
