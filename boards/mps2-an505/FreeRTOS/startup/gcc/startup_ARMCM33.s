@@ -102,7 +102,8 @@ __Vectors:
                 .space   (8 * 4)                            /* Interrupts 40 .. 47 */
                 .long    Interrupt48_Handler                /*   48 Ethernet (LAN9118) */
                 .long    Interrupt49_Handler                /*   49 Audio (MPSX_SIMPLE_AUDIO) */
-                .space   (430 * 4)                          /* Interrupts 50 .. 480 */
+                .long    Interrupt50_Handler                /*   50 Mic (MPSX_SIMPLE_MIC) */
+                .space   (429 * 4)                          /* Interrupts 51 .. 480 */
 __Vectors_End:
                 .equ     __Vectors_Size, __Vectors_End - __Vectors
                 .size    __Vectors, . - __Vectors
@@ -269,5 +270,7 @@ Default_Handler:
                 Set_Default_Handler  Interrupt39_Handler
 
                 Set_Default_Handler  Interrupt48_Handler
+                Set_Default_Handler  Interrupt49_Handler
+                Set_Default_Handler  Interrupt50_Handler
 
                 .end

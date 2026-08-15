@@ -1,11 +1,13 @@
 #include <stdint.h>
 
 #include "audio.h"
+#include "mic.h"
 #include "lcd.h"
 #include "lan9118.h"
 #include "touch.h"
 #include "spi_flash.h"
 #include "fatfs_test.h"
+#include "mic_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -92,6 +94,8 @@ static void main_task_entry(void *parameters) {
     touch_init();
     audio_init();
     audio_test();
+    mic_init();
+    mic_test();
 
     /* SPI NOR flash (w25q02jvm) - probe and report geometry */
     rc = spi_flash_init(NULL);
