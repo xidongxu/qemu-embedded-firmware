@@ -1,0 +1,108 @@
+/***************************************************************************
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the MIT License which is available at
+ * https://opensource.org/licenses/MIT.
+ *
+ * SPDX-License-Identifier: MIT
+ **************************************************************************/
+
+
+/**************************************************************************/
+/**************************************************************************/
+/**                                                                       */
+/** FileX Component                                                       */
+/**                                                                       */
+/**   System                                                              */
+/**                                                                       */
+/**************************************************************************/
+/**************************************************************************/
+
+#define FX_SOURCE_CODE
+
+
+/* Include necessary system files.  */
+
+#include "fx_api.h"
+#include "fx_system.h"
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _fx_system_date_get                                 PORTABLE C      */
+/*                                                           6.1.7        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    William E. Lamie, Microsoft Corporation                             */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function returns the current contents of the system date in    */
+/*    the fields specified by the caller.                                 */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    year                                  Pointer to year               */
+/*    month                                 Pointer to month              */
+/*    day                                   Pointer to day                */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    FX_SUCCESS                                                          */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    Application Code                                                    */
+/*                                                                        */
+/**************************************************************************/
+UINT  _fx_system_date_get(UINT *year, UINT *month, UINT *day)
+{
+
+UINT date;
+
+
+    /* Get a copy of the current date.  */
+    date =  _fx_system_date;
+
+    /* Check to see if the year is required.  */
+    if (year)
+    {
+
+        /* Pickup the year.  */
+        *year =  ((date >> FX_YEAR_SHIFT) & FX_YEAR_MASK) + FX_BASE_YEAR;
+    }
+
+    /* Check to see if the month is required.  */
+    if (month)
+    {
+
+        /* Pickup the month.  */
+        *month =  (date >> FX_MONTH_SHIFT) & FX_MONTH_MASK;
+    }
+
+    /* Check to see if the day is required.  */
+    if (day)
+    {
+
+        /* Pickup the day.  */
+        *day =  date & FX_DAY_MASK;
+    }
+
+    /* If trace is enabled, insert this event into the trace buffer.  */
+    if (year && month && day)
+    {
+        FX_TRACE_IN_LINE_INSERT(FX_TRACE_SYSTEM_DATE_GET, *year, *month, *day, 0, FX_TRACE_INTERNAL_EVENTS, 0, 0)
+    }
+
+    /* Return successful status.  */
+    return(FX_SUCCESS);
+}
+

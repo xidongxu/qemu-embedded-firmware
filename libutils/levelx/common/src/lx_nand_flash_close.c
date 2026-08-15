@@ -1,0 +1,123 @@
+/***************************************************************************
+ * Copyright (c) 2024 Microsoft Corporation
+ * Copyright (c) 2026-present Eclipse ThreadX contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the MIT License which is available at
+ * https://opensource.org/licenses/MIT.
+ *
+ * SPDX-License-Identifier: MIT
+ **************************************************************************/
+
+
+/**************************************************************************/
+/**************************************************************************/
+/**                                                                       */
+/** LevelX Component                                                      */
+/**                                                                       */
+/**   NAND Flash                                                          */
+/**                                                                       */
+/**************************************************************************/
+/**************************************************************************/
+
+#define LX_SOURCE_CODE
+
+
+/* Disable ThreadX error checking.  */
+
+#ifndef LX_DISABLE_ERROR_CHECKING
+#define LX_DISABLE_ERROR_CHECKING
+#endif
+
+
+/* Include necessary system files.  */
+
+#include "lx_api.h"
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _lx_nand_flash_close                                PORTABLE C      */
+/*                                                           6.1.7        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    William E. Lamie, Microsoft Corporation                             */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function closes a NAND flash instance.                         */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    nand_flash                            NAND flash instance           */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    return status                                                       */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    tx_mutex_delete                       Delete thread-safe mutex      */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    Application Code                                                    */
+/*                                                                        */
+/**************************************************************************/
+UINT  _lx_nand_flash_close(LX_NAND_FLASH *nand_flash)
+{
+
+LX_INTERRUPT_SAVE_AREA
+
+
+    /* Lockout interrupts for NAND flash close.  */
+    LX_DISABLE
+
+    /* See if the media is the only one on the media opened list.  */
+    if ((_lx_nand_flash_opened_ptr == nand_flash) &&
+        (_lx_nand_flash_opened_ptr == nand_flash -> lx_nand_flash_open_next) &&
+        (_lx_nand_flash_opened_ptr == nand_flash -> lx_nand_flash_open_previous))
+    {
+
+        /* Only opened NAND flash, just set the opened list to NULL.  */
+        _lx_nand_flash_opened_ptr =  LX_NULL;
+    }
+    else
+    {
+
+        /* Otherwise, not the only opened NAND flash, link-up the neighbors.  */
+        (nand_flash -> lx_nand_flash_open_next) -> lx_nand_flash_open_previous =
+                                            nand_flash -> lx_nand_flash_open_previous;
+        (nand_flash -> lx_nand_flash_open_previous) -> lx_nand_flash_open_next =
+                                            nand_flash -> lx_nand_flash_open_next;
+
+        /* See if we have to update the opened list head pointer.  */
+        if (_lx_nand_flash_opened_ptr == nand_flash)
+        {
+
+            /* Yes, move the head pointer to the next opened NAND flash. */
+            _lx_nand_flash_opened_ptr =  nand_flash -> lx_nand_flash_open_next;
+        }
+    }
+
+    /* Decrement the opened NAND flash counter.  */
+    _lx_nand_flash_opened_count--;
+
+    /* Finally, indicate that this NAND flash is closed.  */
+    nand_flash -> lx_nand_flash_state =  LX_NAND_FLASH_CLOSED;
+
+    /* Restore interrupt posture.  */
+    LX_RESTORE
+
+#ifdef LX_THREAD_SAFE_ENABLE
+
+    /* Delete the thread safe mutex.  */
+    tx_mutex_delete(&nand_flash -> lx_nand_flash_mutex);
+#endif
+    /* Return success.  */
+    return(LX_SUCCESS);
+}
+
+
