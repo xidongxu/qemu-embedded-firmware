@@ -12,6 +12,7 @@
 #include "pj_net_test.h"
 #include "pj_sip_test.h"
 #include "pj_sip_inv_test.h"
+#include "pj_sip_dual_test.h"
 #include "pj_rtp_test.h"
 #include "pj_call_test.h"
 #include "uart.h"
@@ -127,6 +128,16 @@ static void main_task_entry(void *parameters) {
     lwip_os_task_init();
 #else
     lwip_task_init();
+#endif
+
+    /* Dual-QEMU inter-instance call mode: this build is configured as
+     * either the caller (UAC) or the callee (UAS); run ONLY that test and
+     * skip the single-instance loopback suite. */
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+    pj_sip_dual_test_run();
+    while (1) {
+        vTaskDelay(1000);
+    }
 #endif
 
     /* PJLIB socket/ioqueue over lwIP self-test (netif is up now). */

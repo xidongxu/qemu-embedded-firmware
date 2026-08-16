@@ -1,5 +1,11 @@
 set(TARGET an505-qemu)
 
+# Dual-QEMU inter-instance call role (stage 11): "none" runs the normal
+# single-instance loopback suite; "caller" builds the UAC that dials out;
+# "callee" builds the UAS that answers.  Caller/callee elf files are built
+# into separate build trees (e.g. build-caller / build-callee).
+set(PJ_DUAL_ROLE "none" CACHE STRING "Dual-QEMU role: none|caller|callee")
+
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
     OUTPUT_NAME "${TARGET}"
@@ -9,6 +15,13 @@ set_target_properties(${TARGET} PROPERTIES
 file(GLOB APP_SOURCES
     "application/*.c"
 )
+
+# pj_sip_dual_test.c is role-specific and #errors when neither role macro is
+# defined; only compile it in dual mode (main.c runs only that test then).
+if(PJ_DUAL_ROLE STREQUAL "none")
+    list(REMOVE_ITEM APP_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/application/pj_sip_dual_test.c")
+endif()
 
 # Only one lwIP demo app is built at a time: NO_SYS (raw API) vs OS mode.
 if(LWIP_OS STREQUAL "FreeRTOS")
@@ -54,6 +67,13 @@ target_compile_definitions(${TARGET} PRIVATE
     LAN9118_USE_FREERTOS=1
     LAN9118_HAVE_LWIP=1
 )
+if(PJ_DUAL_ROLE STREQUAL "caller")
+    target_compile_definitions(${TARGET} PRIVATE PJ_DUAL_ROLE_CALLER=1)
+elseif(PJ_DUAL_ROLE STREQUAL "callee")
+    target_compile_definitions(${TARGET} PRIVATE PJ_DUAL_ROLE_CALLEE=1)
+elseif(NOT PJ_DUAL_ROLE STREQUAL "none")
+    message(FATAL_ERROR "PJ_DUAL_ROLE must be one of none|caller|callee")
+endif()
 if(LWIP_OS STREQUAL "FreeRTOS")
     # Flip NO_SYS=0 for this target too so lan9118_netif.c (Core/Src) and
     # lwip_os_test.c build in OS mode (input = tcpip_input, etc.).
