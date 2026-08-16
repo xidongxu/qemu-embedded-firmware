@@ -11,6 +11,7 @@
 #include "pj_test.h"
 #include "pj_net_test.h"
 #include "pj_sip_test.h"
+#include "pj_sip_inv_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -132,6 +133,9 @@ static void main_task_entry(void *parameters) {
     /* PJSIP REGISTER loopback self-test (stage 3). */
     pj_sip_test_run();
 
+    /* PJSIP INVITE loopback self-test (stage 4, SDP negotiation). */
+    pj_sip_inv_test_run();
+
     while(1) {
         vTaskDelay(1000);
     }
@@ -140,7 +144,7 @@ static void main_task_entry(void *parameters) {
 static void main_task_init(void) {
     static TaskHandle_t main_task = NULL;
     BaseType_t xReturn = pdPASS;
-    xReturn = xTaskCreate(main_task_entry, "main_task", 4096, NULL, 1U, &main_task);
+    xReturn = xTaskCreate(main_task_entry, "main_task", 8192, NULL, 1U, &main_task);
     if (xReturn == pdPASS) {
         vTaskStartScheduler();
     } else {

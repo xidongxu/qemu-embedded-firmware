@@ -165,11 +165,29 @@ target_include_directories(pjsip-simple PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
 target_link_libraries(pjsip-simple PUBLIC pjlib pjsip PRIVATE pjlib-util)
 
 # ##############################################################################
-# pjsip-ua (currently only the REGISTER client pjsip_regc; the INVITE session
-# needs pjmedia/SDP and is deferred to the pjmedia stage)
+# pjmedia (trimmed: SDP parsing + negotiation only; no media/stream engines)
+# ##############################################################################
+add_library(pjmedia STATIC
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp_neg.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp_cmp.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/types.c
+  src/codec_stub.c
+)
+target_include_directories(pjmedia PUBLIC ${PJPROJECT_ROOT}/pjmedia/include)
+target_link_libraries(pjmedia PUBLIC pjlib PRIVATE pjlib-util)
+
+# ##############################################################################
+# pjsip-ua (INVITE session + REGISTER client; needs pjmedia/SDP)
 # ##############################################################################
 add_library(pjsip-ua STATIC
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_inv.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_reg.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_replaces.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_xfer.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_100rel.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_timer.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_siprec.c
 )
 target_include_directories(pjsip-ua PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
-target_link_libraries(pjsip-ua PUBLIC pjlib pjsip pjsip-simple PRIVATE pjlib-util)
+target_link_libraries(pjsip-ua PUBLIC pjlib pjsip pjsip-simple pjmedia PRIVATE pjlib-util)

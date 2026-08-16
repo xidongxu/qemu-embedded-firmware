@@ -33,7 +33,9 @@
   </h>
   -----------------------------------------------------------------------------*/
 __ROM_BASE = 0x10000000;
-__ROM_SIZE = 0x00100000;
+/* MPS2-AN505 (SSE-200) and the QEMU mps2-an505 machine both have 4 MB flash
+   at 0x10000000; the pjsip stack pushes the image past 1 MB. */
+__ROM_SIZE = 0x00400000;
 
 /*--------------------- Embedded RAM Configuration ----------------------------
   <h> RAM Configuration
