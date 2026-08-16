@@ -165,13 +165,15 @@ target_include_directories(pjsip-simple PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
 target_link_libraries(pjsip-simple PUBLIC pjlib pjsip PRIVATE pjlib-util)
 
 # ##############################################################################
-# pjmedia (trimmed: SDP parsing + negotiation only; no media/stream engines)
+# pjmedia (SDP + RTP packetization + G.711 tables; no stream/transport engines)
 # ##############################################################################
 add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp_neg.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp_cmp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/types.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/rtp.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/alaw_ulaw_table.c
   src/codec_stub.c
 )
 target_include_directories(pjmedia PUBLIC ${PJPROJECT_ROOT}/pjmedia/include)

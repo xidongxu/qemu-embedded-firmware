@@ -12,6 +12,8 @@
 #include "pj_net_test.h"
 #include "pj_sip_test.h"
 #include "pj_sip_inv_test.h"
+#include "pj_rtp_test.h"
+#include "pj_call_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -135,6 +137,12 @@ static void main_task_entry(void *parameters) {
 
     /* PJSIP INVITE loopback self-test (stage 4/5, INVITE session + SDP). */
     pj_sip_inv_test_run();
+
+    /* PJMEDIA RTP/PCMU media loopback self-test (stage 6). */
+    pj_rtp_test_run();
+
+    /* FULL CALL media test (stage 7): mic->PCMU->RTP->decode->speaker. */
+    pj_call_test_run();
 
     while(1) {
         vTaskDelay(1000);
