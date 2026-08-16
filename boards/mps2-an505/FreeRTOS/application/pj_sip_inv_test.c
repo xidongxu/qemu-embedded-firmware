@@ -29,6 +29,7 @@
 #include <pj/log.h>
 #include <pj/string.h>
 #include <pj/sock.h>
+#include <pj/sock_select.h>
 #include <pj/addr_resolv.h>
 #include <pjsip.h>
 #include <pjsip/sip_dialog.h>
@@ -37,6 +38,11 @@
 #include <pjsip-ua/sip_100rel.h>
 #include <pjsip-ua/sip_timer.h>
 #include <pjmedia/sdp.h>
+#include <pjmedia/rtp.h>
+#include <pjmedia/alaw_ulaw.h>
+
+#include "mic.h"
+#include "audio.h"
 
 #define SIP_INV_PORT    15062
 #define MAX_LOOP        100         /* 100 x 100ms = 10s max wait */
@@ -274,6 +280,215 @@ static pj_status_t uac_start(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Media phase: once the INVITE session is CONFIRMED, start real       */
+/* full-duplex RTP/PCMU media between UAC and UAS using the RTP ports  */
+/* that were negotiated in SDP (UAC offer port, UAS answer port).      */
+/* ------------------------------------------------------------------ */
+#define MEDIA_RATE       8000
+#define MEDIA_FMT        MIC_FORMAT_S16
+#define MFRAME_SAMPLES   80          /* 10 ms @ 8 kHz */
+#define MFRAME_BYTES     (MFRAME_SAMPLES * 2)
+#define MEDIA_FRAMES     200         /* 200 x 10 ms = 2 s */
+#define MEDIA_PCM_BYTES  (MEDIA_FRAMES * MFRAME_BYTES)   /* 32000 bytes */
+
+typedef struct media_ep {
+    pj_sock_t         rx, tx;
+    pj_sockaddr_in    peer;
+    pjmedia_rtp_session rtp;
+    const uint8_t    *cap;
+    uint8_t          *play;
+    pj_uint32_t       ssrc;
+} media_ep;
+
+static uint8_t s_mcap_uac[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
+static uint8_t s_mcap_uas[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
+static uint8_t s_mplay_uac[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
+static uint8_t s_mplay_uas[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
+static uint8_t s_mplay_uac_u8[MEDIA_PCM_BYTES / 2] __attribute__((aligned(64)));
+static uint8_t s_mplay_uas_u8[MEDIA_PCM_BYTES / 2] __attribute__((aligned(64)));
+
+static pj_status_t media_ep_open(media_ep *ep, const pj_sockaddr_in *peer_ip,
+                                 pj_uint16_t rx_port, pj_uint16_t tx_port,
+                                 pj_uint32_t ssrc)
+{
+    pj_sockaddr_in local;
+    pj_status_t rc;
+
+    rc = pj_sock_socket(PJ_AF_INET, PJ_SOCK_DGRAM, 0, &ep->rx);
+    if (rc != PJ_SUCCESS) return rc;
+    pj_sockaddr_in_init(&local, NULL, rx_port);
+    rc = pj_sock_bind(ep->rx, &local, sizeof(local));
+    if (rc != PJ_SUCCESS) return rc;
+    rc = pj_sock_socket(PJ_AF_INET, PJ_SOCK_DGRAM, 0, &ep->tx);
+    if (rc != PJ_SUCCESS) return rc;
+    pj_sockaddr_in_init(&ep->peer, NULL, tx_port);
+    ep->peer.sin_addr = peer_ip->sin_addr;
+    ep->ssrc = ssrc;
+    return pjmedia_rtp_session_init(&ep->rtp, 0, ssrc);
+}
+
+static pj_status_t media_ep_send(media_ep *ep, int frame)
+{
+    const uint8_t *fp = ep->cap + frame * MFRAME_BYTES;
+    pj_uint8_t ulaw[MFRAME_SAMPLES], pkt[256];
+    const void *rtphdr = NULL;
+    int hdrlen = 0, k;
+    pj_status_t rc;
+
+    for (k = 0; k < MFRAME_SAMPLES; ++k) {
+        pj_int16_t s;
+        memcpy(&s, fp + k * 2, 2);
+        ulaw[k] = pjmedia_linear2ulaw(s);
+    }
+    rc = pjmedia_rtp_encode_rtp(&ep->rtp, 0, 0, MFRAME_SAMPLES,
+                                MFRAME_SAMPLES, &rtphdr, &hdrlen);
+    if (rc != PJ_SUCCESS) return rc;
+    memcpy(pkt, rtphdr, (size_t)hdrlen);
+    memcpy(pkt + hdrlen, ulaw, sizeof(ulaw));
+    {
+        pj_ssize_t len = hdrlen + (int)sizeof(ulaw);
+        return pj_sock_sendto(ep->tx, pkt, &len, 0, &ep->peer, sizeof(ep->peer));
+    }
+}
+
+static int media_ep_recv(media_ep *ep, int frame)
+{
+    pj_uint8_t buf[256];
+    pj_ssize_t len = (pj_ssize_t)sizeof(buf);
+    const pjmedia_rtp_hdr *hdr = NULL;
+    const void *payload = NULL;
+    unsigned plen = 0;
+    pjmedia_rtp_status seq_st;
+    const pj_uint8_t *ul;
+    uint8_t *out = ep->play + frame * MFRAME_BYTES;
+    pj_fd_set_t rfds;
+    pj_time_val stmo;
+    int k;
+    pj_status_t rc;
+
+    PJ_FD_ZERO(&rfds);
+    PJ_FD_SET(ep->rx, &rfds);
+    stmo.sec = 2; stmo.msec = 0;
+    if (pj_sock_select((int)ep->rx + 1, &rfds, NULL, NULL, &stmo) <= 0 ||
+        !PJ_FD_ISSET(ep->rx, &rfds))
+        return -1;
+    rc = pj_sock_recvfrom(ep->rx, buf, &len, 0, NULL, NULL);
+    if (rc != PJ_SUCCESS) return -1;
+    rc = pjmedia_rtp_decode_rtp(&ep->rtp, buf, (int)len, &hdr, &payload, &plen);
+    if (rc != PJ_SUCCESS) return -1;
+    pjmedia_rtp_session_update(&ep->rtp, hdr, &seq_st);
+    if (seq_st.status.flag.bad) return -1;
+    ul = (const pj_uint8_t*)payload;
+    if (plen > MFRAME_SAMPLES) plen = MFRAME_SAMPLES;
+    for (k = 0; k < (int)plen; ++k) {
+        pj_int16_t s = (pj_int16_t)pjmedia_ulaw2linear(ul[k]);
+        out[k * 2]     = (uint8_t)(s & 0xFF);
+        out[k * 2 + 1] = (uint8_t)((s >> 8) & 0xFF);
+    }
+    return 0;
+}
+
+static void media_pcm_to_u8(const uint8_t *s16, uint8_t *u8, int bytes)
+{
+    int i;
+    for (i = 0; i < bytes / 2; ++i) {
+        pj_int16_t s;
+        memcpy(&s, s16 + i * 2, 2);
+        u8[i] = (uint8_t)(128 + (s >> 8));
+    }
+}
+
+static long media_peak(const uint8_t *pcm, int bytes)
+{
+    pj_int32_t peak = 0;
+    int i;
+    for (i = 0; i < bytes / 2; ++i) {
+        pj_int16_t s;
+        memcpy(&s, pcm + i * 2, 2);
+        if (s < 0) s = (pj_int16_t)(-s);
+        if (s > peak) peak = s;
+    }
+    return (long)peak;
+}
+
+/* Run media on the negotiated RTP ports. uac_rx / uas_rx are the RTP ports
+ * from SDP offer/answer; uac sends to uas_rx, uas sends to uac_rx. */
+static int run_confirmed_media(const pj_sockaddr_in *host_ip,
+                               pj_uint16_t uac_rx, pj_uint16_t uas_rx)
+{
+    media_ep epU, epS;
+    int i, okU = 0, okS = 0, badU = 0, badS = 0;
+
+    memset(&epU, 0, sizeof(epU));
+    memset(&epS, 0, sizeof(epS));
+    epU.rx = epU.tx = PJ_INVALID_SOCKET;
+    epS.rx = epS.tx = PJ_INVALID_SOCKET;
+
+    printf("pj_sip_inv: media phase on RTP ports uac=%u uas=%u\r\n",
+           (unsigned)uac_rx, (unsigned)uas_rx);
+
+    if (media_ep_open(&epU, host_ip, uac_rx, uas_rx, 0xAAA00002) != PJ_SUCCESS ||
+        media_ep_open(&epS, host_ip, uas_rx, uac_rx, 0xBBB00002) != PJ_SUCCESS) {
+        printf("pj_sip_inv: media socket open failed\r\n");
+        return -1;
+    }
+    epU.cap = s_mcap_uac; epU.play = s_mplay_uac;
+    epS.cap = s_mcap_uas; epS.play = s_mplay_uas;
+
+    /* Capture one 2 s source per endpoint. */
+    if (!mic_capture(s_mcap_uac, MEDIA_PCM_BYTES, MEDIA_RATE, MEDIA_FMT, 20000000UL)) {
+        printf("pj_sip_inv: mic capture UAC failed\r\n");
+        return -1;
+    }
+    if (!mic_capture(s_mcap_uas, MEDIA_PCM_BYTES, MEDIA_RATE, MEDIA_FMT, 20000000UL)) {
+        printf("pj_sip_inv: mic capture UAS failed\r\n");
+        return -1;
+    }
+    printf("pj_sip_inv: media source peaks uac=%ld uas=%ld\r\n",
+           media_peak(s_mcap_uac, MEDIA_PCM_BYTES),
+           media_peak(s_mcap_uas, MEDIA_PCM_BYTES));
+
+    /* Full-duplex: UAC and UAS exchange PCMU RTP frames. */
+    for (i = 0; i < MEDIA_FRAMES; ++i) {
+        if (media_ep_send(&epU, i) == PJ_SUCCESS &&
+            media_ep_send(&epS, i) == PJ_SUCCESS) {
+            pj_thread_sleep(3);
+            if (media_ep_recv(&epU, i) == 0) okU++; else badU++;
+            if (media_ep_recv(&epS, i) == 0) okS++; else badS++;
+        } else {
+            printf("pj_sip_inv: media send failed at %d\r\n", i);
+            break;
+        }
+    }
+
+    printf("pj_sip_inv: media UAS->UAC ok=%d bad=%d, UAC->UAS ok=%d bad=%d\r\n",
+           okU, badU, okS, badS);
+    printf("pj_sip_inv: media playback peaks uac=%ld uas=%ld\r\n",
+           media_peak(s_mplay_uac, MEDIA_PCM_BYTES),
+           media_peak(s_mplay_uas, MEDIA_PCM_BYTES));
+
+    /* Play both decoded streams (U8 for the QEMU wav backend). */
+    media_pcm_to_u8(s_mplay_uac, s_mplay_uac_u8, MEDIA_PCM_BYTES);
+    media_pcm_to_u8(s_mplay_uas, s_mplay_uas_u8, MEDIA_PCM_BYTES);
+    printf("pj_sip_inv: playing UAC->speaker\r\n");
+    audio_play(s_mplay_uac_u8, MEDIA_PCM_BYTES / 2, MEDIA_RATE, AUDIO_FORMAT_U8);
+    pj_thread_sleep(2500);
+    printf("pj_sip_inv: playing UAS->speaker\r\n");
+    audio_play(s_mplay_uas_u8, MEDIA_PCM_BYTES / 2, MEDIA_RATE, AUDIO_FORMAT_U8);
+    pj_thread_sleep(2500);
+    audio_stop();
+
+    if (epU.rx != PJ_INVALID_SOCKET) pj_sock_close(epU.rx);
+    if (epU.tx != PJ_INVALID_SOCKET) pj_sock_close(epU.tx);
+    if (epS.rx != PJ_INVALID_SOCKET) pj_sock_close(epS.rx);
+    if (epS.tx != PJ_INVALID_SOCKET) pj_sock_close(epS.tx);
+
+    if (okU == MEDIA_FRAMES && okS == MEDIA_FRAMES && badU == 0 && badS == 0)
+        return 0;
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Test entry                                                          */
 /* ------------------------------------------------------------------ */
 int pj_sip_inv_test_run(void)
@@ -366,6 +581,27 @@ int pj_sip_inv_test_run(void)
     if (g_uac_done && g_uas_done && !g_failed) {
         printf("pj_sip_inv: INVITE CONFIRMED (UAC + UAS)\r\n");
         pass = 1;
+
+        /* Media phase: use the RTP ports negotiated in SDP.  The UAC offer
+         * carries our (UAC) RTP port; the UAS answer carries the UAS RTP
+         * port.  Each side receives on its own port and sends to the peer's
+         * port. */
+        {
+            pj_uint16_t uac_rx, uas_rx;
+            int media_pass;
+
+            uac_rx = (g_offer_sdp && g_offer_sdp->media_count > 0) ?
+                     g_offer_sdp->media[0]->desc.port : 4000;
+            uas_rx = (g_ans_sdp && g_ans_sdp->media_count > 0) ?
+                     g_ans_sdp->media[0]->desc.port : 4002;
+            media_pass = run_confirmed_media(&host.ipv4, uac_rx, uas_rx);
+            if (media_pass != 0) {
+                printf("pj_sip_inv: media phase FAILED\r\n");
+                pass = 0;
+            } else {
+                printf("pj_sip_inv: media phase ALL PASSED\r\n");
+            }
+        }
     } else {
         printf("pj_sip_inv: FAILED (uac_done=%d uas_done=%d failed=%d)\r\n",
                g_uac_done, g_uas_done, g_failed);
