@@ -9,6 +9,7 @@
 #include "fatfs_test.h"
 #include "mic_test.h"
 #include "pj_test.h"
+#include "pj_net_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -123,6 +124,10 @@ static void main_task_entry(void *parameters) {
 #else
     lwip_task_init();
 #endif
+
+    /* PJLIB socket/ioqueue over lwIP self-test (netif is up now). */
+    pj_net_test_run();
+
     while(1) {
         vTaskDelay(1000);
     }

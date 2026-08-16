@@ -14,19 +14,21 @@
 /* Canonical OS name */
 #define PJ_OS_NAME "freertos"
 
-/* Legacy OS macros */
-#define PJ_WIN64        0
-#define PJ_WIN32        0
-#define PJ_WIN32_WINNT  0
-#define PJ_DARWINOS     0
-#define PJ_LINUX        0
-#define PJ_BSD          0
-#define PJ_RTEMS        0
-#define PJ_SUNOS        0
-#define PJ_ANDROID      0
+/* Legacy OS macros: UNDEFINED, not 0.  pjlib uses `#if defined(PJ_WIN32)`
+ * style checks in many places, so a defined-but-0 macro would wrongly select
+ * the Windows code paths. */
+#undef PJ_WIN64
+#undef PJ_WIN32
+#undef PJ_WIN32_WINNT
+#undef PJ_DARWINOS
+#undef PJ_LINUX
+#undef PJ_BSD
+#undef PJ_RTEMS
+#undef PJ_SUNOS
+#undef PJ_ANDROID
 
-/* Header availability (newlib nano) */
-#define PJ_HAS_ARPA_INET_H          0
+/* Header availability (newlib nano + lwIP compat headers in this port) */
+#define PJ_HAS_ARPA_INET_H          1
 #define PJ_HAS_ASSERT_H             1
 #define PJ_HAS_CTYPE_H              1
 #define PJ_HAS_ERRNO_H              1
@@ -34,9 +36,11 @@
 #define PJ_HAS_LIMITS_H             1
 #define PJ_HAS_LINUX_SOCKET_H       0
 #define PJ_HAS_MALLOC_H             1
-#define PJ_HAS_NETDB_H              0
+#define PJ_HAS_NETDB_H              1
 #define PJ_HAS_NETINET_IN_SYSTM_H   0
-#define PJ_HAS_NETINET_IN_H         0
+#define PJ_HAS_NETINET_IN_H         1
+/* lwIP has no netinet/ip.h or netinet/tcp.h; the TOS/TCP options it needs
+ * are all in lwip/sockets.h. */
 #define PJ_HAS_NETINET_IP_H         0
 #define PJ_HAS_NETINET_TCP_H        0
 #define PJ_HAS_NET_IF_H             0
@@ -51,8 +55,11 @@
 #define PJ_HAS_STDLIB_H             1
 #define PJ_HAS_STRING_H             1
 #define PJ_HAS_SYS_IOCTL_H          0
+/* NOTE: newlib's <sys/types.h> includes <sys/select.h> internally, so we
+ * must NOT shadow it with an lwIP compat header. select()/fd_set are
+ * provided via our own sock_select_lwip.c. */
 #define PJ_HAS_SYS_SELECT_H         0
-#define PJ_HAS_SYS_SOCKET_H         0
+#define PJ_HAS_SYS_SOCKET_H         1
 #define PJ_HAS_SYS_TIME_H           1
 #define PJ_HAS_SYS_TIMEB_H          0
 #define PJ_HAS_SYS_TYPES_H          1
@@ -68,13 +75,21 @@
 #define PJ_HAS_WINSOCK2_H           0
 #define PJ_HAS_WS2TCPIP_H           0
 
-/* Socket capability macros (no socket layer in stage-1 port) */
+/* Socket capability macros (lwIP socket layer) */
 #define PJ_SOCK_HAS_IPV6_V6ONLY     0
-#define PJ_SOCK_HAS_INET_ATON       0
-#define PJ_SOCK_HAS_INET_PTON       0
-#define PJ_SOCK_HAS_INET_NTOP       0
-#define PJ_SOCK_HAS_GETADDRINFO     0
+#define PJ_SOCK_HAS_INET_ATON       1
+#define PJ_SOCK_HAS_INET_PTON       1
+#define PJ_SOCK_HAS_INET_NTOP       1
+#define PJ_SOCK_HAS_GETADDRINFO     1
 #define PJ_SOCK_HAS_SOCKETPAIR      0
+
+/* lwIP sockaddr_in has a leading sa_len member; make pjlib's pj_sockaddr_in
+ * layout-identical so the two can be cast directly. */
+#define PJ_SOCKADDR_HAS_LEN         1
+
+/* socklen_t is provided by lwIP (u32_t); prevent pj/compat/socket.h from
+ * typedef'ing it as int (which would clash with lwIP's). */
+#define PJ_HAS_SOCKLEN_T            1
 
 /* Semaphores are provided by the FreeRTOS port (counting semaphores) */
 #define PJ_HAS_SEMAPHORE            1
@@ -82,14 +97,16 @@
 #define PJ_HAS_PTHREAD_MUTEXATTR_SETTYPE   0
 #define PJ_PTHREAD_MUTEXATTR_T_HAS_RECURSIVE 0
 
-#define PJ_SOCKADDR_HAS_LEN         0
-
 /* errno is available from newlib */
 #define PJ_HAS_ERRNO_VAR            1
 
+#include <errno.h>
+
+/* lwIP (with LWIP_ERRNO_STDINCLUDE=1) reports non-blocking would-block via
+ * EAGAIN and non-blocking connect via EINPROGRESS (newlib errno values). */
 #define PJ_HAS_SO_ERROR             0
-#define PJ_BLOCKING_ERROR_VAL       0
-#define PJ_BLOCKING_CONNECT_ERROR_VAL 0
+#define PJ_BLOCKING_ERROR_VAL       EAGAIN
+#define PJ_BLOCKING_CONNECT_ERROR_VAL EINPROGRESS
 
 /* Threading is enabled */
 #ifndef PJ_HAS_THREADS

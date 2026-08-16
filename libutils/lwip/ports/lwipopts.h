@@ -43,6 +43,10 @@
    OS/socket mode (ENOMEM, EINVAL, ENXIO, ...). */
 #define LWIP_ERRNO_STDINCLUDE       1
 
+/* newlib provides struct timeval (sys/time.h); don't let lwIP define its own
+ * (avoids redefinition when pjlib pulls in both headers). */
+#define LWIP_TIMEVAL_PRIVATE        0
+
 /* OS support: when built with the FreeRTOS backend (LWIP_USE_FREERTOS is
    defined by the build system), lwIP runs in OS mode (NO_SYS=0) with a
    dedicated tcpip_thread and the sequential/socket API.  Otherwise it stays

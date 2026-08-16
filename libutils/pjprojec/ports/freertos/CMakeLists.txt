@@ -43,6 +43,15 @@ add_library(pjlib STATIC
   ${PJPROJECT_ROOT}/pjlib/src/pj/string.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/timer.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/types.c
+  # ---- socket / ioqueue layer (lwIP-backed) ----
+  ${PJPROJECT_ROOT}/pjlib/src/pj/sock_common.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/sock_qos_common.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/activesock.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/addr_resolv_sock.c
+  src/sock_bsd.c
+  src/sock_select_lwip.c
+  src/ioqueue_select.c
+  src/ip_helper_freertos.c
   # ---- FreeRTOS platform port ----
   src/os_core_freertos.c
   src/os_time_freertos.c
@@ -50,18 +59,25 @@ add_library(pjlib STATIC
 )
 
 # First in the include path so our os_auto.h / m_auto.h / config_site.h
-# shadow the autoconf-generated ones in pjlib/include.
+# shadow the autoconf-generated ones in pjlib/include.  The lwIP include
+# dirs let pj/compat/socket.h (and friends) resolve to lwip/sockets.h.
 target_include_directories(pjlib
   PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${PJPROJECT_ROOT}/pjlib/include
+    ${PJPROJECT_ROOT}/pjlib/src/pj
+    ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
+    ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
 )
 
 # pj/config.h selects our hand-written os_auto.h/m_auto.h via PJ_AUTOCONF.
 # PUBLIC so that consumers of pjlib headers (e.g. the self-test app) get it too.
+# LWIP_USE_FREERTOS makes lwipopts.h select OS mode (NO_SYS=0 -> LWIP_SOCKET=1).
 target_compile_definitions(pjlib
   PUBLIC
     PJ_AUTOCONF=1
+  PRIVATE
+    LWIP_USE_FREERTOS=1
 )
 
 # FreeRTOS kernel headers + FreeRTOSConfig.h (via freertos_kernel_include and
@@ -69,4 +85,5 @@ target_compile_definitions(pjlib
 target_link_libraries(pjlib
   PRIVATE
     freertos_kernel
+    lwipcore
 )
