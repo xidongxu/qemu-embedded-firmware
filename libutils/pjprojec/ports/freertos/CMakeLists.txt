@@ -46,6 +46,7 @@ add_library(pjlib STATIC
   # ---- socket / ioqueue layer (lwIP-backed) ----
   ${PJPROJECT_ROOT}/pjlib/src/pj/sock_common.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/sock_qos_common.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/sock_qos_dummy.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/activesock.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/addr_resolv_sock.c
   src/sock_bsd.c
@@ -56,6 +57,7 @@ add_library(pjlib STATIC
   src/os_core_freertos.c
   src/os_time_freertos.c
   src/os_timestamp_freertos.c
+  src/os_rwmutex_freertos.c
 )
 
 # First in the include path so our os_auto.h / m_auto.h / config_site.h
@@ -87,3 +89,87 @@ target_link_libraries(pjlib
     freertos_kernel
     lwipcore
 )
+
+# ##############################################################################
+# pjlib-util (DNS resolver, scanner, xml, crypto used by pjsip)
+# ##############################################################################
+add_library(pjlib-util STATIC
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/base64.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/crc32.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/dns.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/errno.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/hmac_md5.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/hmac_sha1.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/md5.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/resolver.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/scanner.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/sha1.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/srv_resolver.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/string.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/xml.c
+)
+target_include_directories(pjlib-util PUBLIC ${PJPROJECT_ROOT}/pjlib-util/include)
+target_link_libraries(pjlib-util PUBLIC pjlib)
+
+# ##############################################################################
+# pjsip core (no TLS transport)
+# ##############################################################################
+add_library(pjsip STATIC
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_auth_aka.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_auth_client.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_auth_msg.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_auth_parser.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_auth_server.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_config.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_dialog.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_endpoint.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_errno.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_msg.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_multipart.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_parser.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_resolve.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_tel_uri.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transaction.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_loop.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_tcp.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_udp.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_ua_layer.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_uri.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_util.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_util_proxy.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_util_statefull.c
+)
+target_include_directories(pjsip PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
+target_link_libraries(pjsip PUBLIC pjlib pjlib-util)
+
+# ##############################################################################
+# pjsip-simple (SIMPLE/event subscription)
+# ##############################################################################
+add_library(pjsip-simple STATIC
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/errno.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/evsub.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/evsub_msg.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/iscomposing.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/mwi.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/pidf.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/dialog_info.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/presence.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/dlg_event.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/presence_body.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/publishc.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/rpid.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-simple/xpidf.c
+)
+target_include_directories(pjsip-simple PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
+target_link_libraries(pjsip-simple PUBLIC pjlib pjsip PRIVATE pjlib-util)
+
+# ##############################################################################
+# pjsip-ua (currently only the REGISTER client pjsip_regc; the INVITE session
+# needs pjmedia/SDP and is deferred to the pjmedia stage)
+# ##############################################################################
+add_library(pjsip-ua STATIC
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip-ua/sip_reg.c
+)
+target_include_directories(pjsip-ua PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
+target_link_libraries(pjsip-ua PUBLIC pjlib pjsip pjsip-simple PRIVATE pjlib-util)

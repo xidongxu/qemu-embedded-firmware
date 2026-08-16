@@ -48,7 +48,26 @@
 /* Stack checking is not available on FreeRTOS tasks. */
 #define PJ_OS_HAS_CHECK_STACK           0
 
+/* No OS-specific QoS backend for this target: use the dummy one. */
+#define PJ_QOS_IMPLEMENTATION           PJ_QOS_DUMMY
+
 /* Suppress the (intentional) unused-label warning from PJ_TODO(). */
 #define PJ_TODO(x)
+
+/* ---- PJSIP (stage 3) ------------------------------------------------ */
+
+/* Small embedded sizing: keep the transaction/dialog tables tiny. */
+#ifndef PJSIP_MAX_TSX_COUNT
+#   define PJSIP_MAX_TSX_COUNT          16
+#endif
+#ifndef PJSIP_MAX_DIALOG_COUNT
+#   define PJSIP_MAX_DIALOG_COUNT       8
+#endif
+#ifndef PJSIP_MAX_TRANSPORTS
+#   define PJSIP_MAX_TRANSPORTS         4
+#endif
+
+/* No TLS/SRTP on this bare-metal target. */
+#define PJSIP_HAS_TLS_TRANSPORT         0
 
 #endif  /* PJ_CONFIG_SITE_H */

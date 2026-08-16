@@ -10,6 +10,7 @@
 #include "mic_test.h"
 #include "pj_test.h"
 #include "pj_net_test.h"
+#include "pj_sip_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -127,6 +128,9 @@ static void main_task_entry(void *parameters) {
 
     /* PJLIB socket/ioqueue over lwIP self-test (netif is up now). */
     pj_net_test_run();
+
+    /* PJSIP REGISTER loopback self-test (stage 3). */
+    pj_sip_test_run();
 
     while(1) {
         vTaskDelay(1000);

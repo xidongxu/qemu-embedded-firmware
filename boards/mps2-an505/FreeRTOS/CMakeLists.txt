@@ -88,6 +88,10 @@ target_link_libraries(${TARGET} PRIVATE
     littlefs
     fatfs
     pjlib
+    pjlib-util
+    pjsip
+    pjsip-simple
+    pjsip-ua
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")
