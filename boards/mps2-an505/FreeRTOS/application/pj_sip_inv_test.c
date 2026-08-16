@@ -39,6 +39,7 @@
 #include <pjsip-ua/sip_timer.h>
 #include <pjmedia/sdp.h>
 #include <pjmedia/rtp.h>
+#include <pjmedia/jbuf.h>
 #include <pjmedia/alaw_ulaw.h>
 
 #include "mic.h"
@@ -295,6 +296,8 @@ typedef struct media_ep {
     pj_sock_t         rx, tx;
     pj_sockaddr_in    peer;
     pjmedia_rtp_session rtp;
+    pjmedia_jbuf     *jb;           /* receive jitter buffer       */
+    pj_bool_t         have_jb;
     const uint8_t    *cap;
     uint8_t          *play;
     pj_uint32_t       ssrc;
@@ -309,7 +312,8 @@ static uint8_t s_mplay_uas_u8[MEDIA_PCM_BYTES / 2] __attribute__((aligned(64)));
 
 static pj_status_t media_ep_open(media_ep *ep, const pj_sockaddr_in *peer_ip,
                                  pj_uint16_t rx_port, pj_uint16_t tx_port,
-                                 pj_uint32_t ssrc)
+                                 pj_uint32_t ssrc, pj_pool_t *pool,
+                                 const pj_str_t *name)
 {
     pj_sockaddr_in local;
     pj_status_t rc;
@@ -324,7 +328,18 @@ static pj_status_t media_ep_open(media_ep *ep, const pj_sockaddr_in *peer_ip,
     pj_sockaddr_in_init(&ep->peer, NULL, tx_port);
     ep->peer.sin_addr = peer_ip->sin_addr;
     ep->ssrc = ssrc;
-    return pjmedia_rtp_session_init(&ep->rtp, 0, ssrc);
+    rc = pjmedia_rtp_session_init(&ep->rtp, 0, ssrc);
+    if (rc != PJ_SUCCESS) return rc;
+
+    /* Receive jitter buffer: 10 ms S16 frames (160 bytes).  Depth must cover
+     * the whole 2 s capture (MEDIA_FRAMES frames) so no frames are dropped. */
+    rc = pjmedia_jbuf_create(pool, name, MFRAME_BYTES, 10, MEDIA_FRAMES + 10,
+                             &ep->jb);
+    if (rc == PJ_SUCCESS) {
+        ep->have_jb = PJ_TRUE;
+        pjmedia_jbuf_set_fixed(ep->jb, 3);   /* 3-frame prefetch delay */
+    }
+    return rc;
 }
 
 static pj_status_t media_ep_send(media_ep *ep, int frame)
@@ -351,7 +366,9 @@ static pj_status_t media_ep_send(media_ep *ep, int frame)
     }
 }
 
-static int media_ep_recv(media_ep *ep, int frame)
+/* Receive one RTP frame, PCMU-decode it and put it into the jitter buffer
+ * (ordered by RTP sequence number). Returns 0 on success. */
+static int media_ep_put(media_ep *ep, int *out_seq)
 {
     pj_uint8_t buf[256];
     pj_ssize_t len = (pj_ssize_t)sizeof(buf);
@@ -360,15 +377,16 @@ static int media_ep_recv(media_ep *ep, int frame)
     unsigned plen = 0;
     pjmedia_rtp_status seq_st;
     const pj_uint8_t *ul;
-    uint8_t *out = ep->play + frame * MFRAME_BYTES;
+    pj_uint8_t pcm[MFRAME_SAMPLES * 2];
+    pj_bool_t discarded = PJ_FALSE;
     pj_fd_set_t rfds;
     pj_time_val stmo;
-    int k;
+    int k, seq;
     pj_status_t rc;
 
     PJ_FD_ZERO(&rfds);
     PJ_FD_SET(ep->rx, &rfds);
-    stmo.sec = 2; stmo.msec = 0;
+    stmo.sec = 1; stmo.msec = 0;
     if (pj_sock_select((int)ep->rx + 1, &rfds, NULL, NULL, &stmo) <= 0 ||
         !PJ_FD_ISSET(ep->rx, &rfds))
         return -1;
@@ -378,14 +396,20 @@ static int media_ep_recv(media_ep *ep, int frame)
     if (rc != PJ_SUCCESS) return -1;
     pjmedia_rtp_session_update(&ep->rtp, hdr, &seq_st);
     if (seq_st.status.flag.bad) return -1;
+
+    seq = (int)pj_ntohs(hdr->seq);
     ul = (const pj_uint8_t*)payload;
     if (plen > MFRAME_SAMPLES) plen = MFRAME_SAMPLES;
     for (k = 0; k < (int)plen; ++k) {
         pj_int16_t s = (pj_int16_t)pjmedia_ulaw2linear(ul[k]);
-        out[k * 2]     = (uint8_t)(s & 0xFF);
-        out[k * 2 + 1] = (uint8_t)((s >> 8) & 0xFF);
+        pcm[k * 2]     = (uint8_t)(s & 0xFF);
+        pcm[k * 2 + 1] = (uint8_t)((s >> 8) & 0xFF);
     }
-    return 0;
+    if (ep->have_jb)
+        pjmedia_jbuf_put_frame2(ep->jb, pcm, sizeof(pcm), 0, seq, &discarded);
+    if (out_seq)
+        *out_seq = seq;
+    return discarded ? 1 : 0;
 }
 
 static void media_pcm_to_u8(const uint8_t *s16, uint8_t *u8, int bytes)
@@ -413,11 +437,15 @@ static long media_peak(const uint8_t *pcm, int bytes)
 
 /* Run media on the negotiated RTP ports. uac_rx / uas_rx are the RTP ports
  * from SDP offer/answer; uac sends to uas_rx, uas sends to uac_rx. */
-static int run_confirmed_media(const pj_sockaddr_in *host_ip,
+static int run_confirmed_media(pj_pool_t *pool,
+                               const pj_sockaddr_in *host_ip,
                                pj_uint16_t uac_rx, pj_uint16_t uas_rx)
 {
     media_ep epU, epS;
-    int i, okU = 0, okS = 0, badU = 0, badS = 0;
+    pj_str_t nmU, nmS;
+    int i, nrmU = 0, nrmS = 0, misU = 0, misS = 0, zroU = 0, zroS = 0;
+    int gotU = 0, gotS = 0;
+    char ftype;
 
     memset(&epU, 0, sizeof(epU));
     memset(&epS, 0, sizeof(epS));
@@ -427,8 +455,8 @@ static int run_confirmed_media(const pj_sockaddr_in *host_ip,
     printf("pj_sip_inv: media phase on RTP ports uac=%u uas=%u\r\n",
            (unsigned)uac_rx, (unsigned)uas_rx);
 
-    if (media_ep_open(&epU, host_ip, uac_rx, uas_rx, 0xAAA00002) != PJ_SUCCESS ||
-        media_ep_open(&epS, host_ip, uas_rx, uac_rx, 0xBBB00002) != PJ_SUCCESS) {
+    if (media_ep_open(&epU, host_ip, uac_rx, uas_rx, 0xAAA00002, pool, pj_cstr(&nmU, "jb-uac")) != PJ_SUCCESS ||
+        media_ep_open(&epS, host_ip, uas_rx, uac_rx, 0xBBB00002, pool, pj_cstr(&nmS, "jb-uas")) != PJ_SUCCESS) {
         printf("pj_sip_inv: media socket open failed\r\n");
         return -1;
     }
@@ -448,21 +476,42 @@ static int run_confirmed_media(const pj_sockaddr_in *host_ip,
            media_peak(s_mcap_uac, MEDIA_PCM_BYTES),
            media_peak(s_mcap_uas, MEDIA_PCM_BYTES));
 
-    /* Full-duplex: UAC and UAS exchange PCMU RTP frames. */
+    /* Phase 1 - transport: interleave sends (lwIP loopback needs pacing) and
+     * receive into each endpoint's jitter buffer (ordered by RTP seq). */
     for (i = 0; i < MEDIA_FRAMES; ++i) {
-        if (media_ep_send(&epU, i) == PJ_SUCCESS &&
-            media_ep_send(&epS, i) == PJ_SUCCESS) {
-            pj_thread_sleep(3);
-            if (media_ep_recv(&epU, i) == 0) okU++; else badU++;
-            if (media_ep_recv(&epS, i) == 0) okS++; else badS++;
-        } else {
+        if (media_ep_send(&epU, i) != PJ_SUCCESS ||
+            media_ep_send(&epS, i) != PJ_SUCCESS) {
             printf("pj_sip_inv: media send failed at %d\r\n", i);
             break;
         }
+        pj_thread_sleep(3);
+        if (media_ep_put(&epU, NULL) == 0) gotU++;
+        if (media_ep_put(&epS, NULL) == 0) gotS++;
     }
+    printf("pj_sip_inv: media transported uac_rev=%d uas_rev=%d\r\n",
+           gotU, gotS);
 
-    printf("pj_sip_inv: media UAS->UAC ok=%d bad=%d, UAC->UAS ok=%d bad=%d\r\n",
-           okU, badU, okS, badS);
+    /* Phase 2 - playback: pull frames at a real-time 10 ms pace through the
+     * jitter buffer (jitter smoothing / reordering). */
+    for (i = 0; i < MEDIA_FRAMES; ++i) {
+        pj_thread_sleep(10);
+        pjmedia_jbuf_get_frame(epU.jb, s_mplay_uac + i * MFRAME_BYTES, &ftype);
+        if (ftype == PJMEDIA_JB_NORMAL_FRAME) nrmU++;
+        else if (ftype == PJMEDIA_JB_MISSING_FRAME) { misU++; memset(s_mplay_uac + i * MFRAME_BYTES, 0, MFRAME_BYTES); }
+        else { zroU++; memset(s_mplay_uac + i * MFRAME_BYTES, 0, MFRAME_BYTES); }
+
+        pjmedia_jbuf_get_frame(epS.jb, s_mplay_uas + i * MFRAME_BYTES, &ftype);
+        if (ftype == PJMEDIA_JB_NORMAL_FRAME) nrmS++;
+        else if (ftype == PJMEDIA_JB_MISSING_FRAME) { misS++; memset(s_mplay_uas + i * MFRAME_BYTES, 0, MFRAME_BYTES); }
+        else { zroS++; memset(s_mplay_uas + i * MFRAME_BYTES, 0, MFRAME_BYTES); }
+    }
+    pjmedia_jbuf_destroy(epU.jb);
+    pjmedia_jbuf_destroy(epS.jb);
+
+    printf("pj_sip_inv: media UAS->UAC normal=%d missing=%d zero=%d\r\n",
+           nrmU, misU, zroU);
+    printf("pj_sip_inv: media UAC->UAS normal=%d missing=%d zero=%d\r\n",
+           nrmS, misS, zroS);
     printf("pj_sip_inv: media playback peaks uac=%ld uas=%ld\r\n",
            media_peak(s_mplay_uac, MEDIA_PCM_BYTES),
            media_peak(s_mplay_uas, MEDIA_PCM_BYTES));
@@ -483,7 +532,11 @@ static int run_confirmed_media(const pj_sockaddr_in *host_ip,
     if (epS.rx != PJ_INVALID_SOCKET) pj_sock_close(epS.rx);
     if (epS.tx != PJ_INVALID_SOCKET) pj_sock_close(epS.tx);
 
-    if (okU == MEDIA_FRAMES && okS == MEDIA_FRAMES && badU == 0 && badS == 0)
+    /* All transported frames must come out as normal (reordered) frames,
+     * with the fixed 3-frame prefetch accounting for the leading zeros. */
+    if (gotU == MEDIA_FRAMES && gotS == MEDIA_FRAMES &&
+        nrmU >= MEDIA_FRAMES - 3 && nrmS >= MEDIA_FRAMES - 3 &&
+        misU == 0 && misS == 0)
         return 0;
     return -1;
 }
@@ -594,7 +647,7 @@ int pj_sip_inv_test_run(void)
                      g_offer_sdp->media[0]->desc.port : 4000;
             uas_rx = (g_ans_sdp && g_ans_sdp->media_count > 0) ?
                      g_ans_sdp->media[0]->desc.port : 4002;
-            media_pass = run_confirmed_media(&host.ipv4, uac_rx, uas_rx);
+            media_pass = run_confirmed_media(pool, &host.ipv4, uac_rx, uas_rx);
             if (media_pass != 0) {
                 printf("pj_sip_inv: media phase FAILED\r\n");
                 pass = 0;
