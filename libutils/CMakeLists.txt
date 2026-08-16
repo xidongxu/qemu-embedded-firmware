@@ -62,4 +62,6 @@ endif()
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     add_subdirectory(littlefs)
     add_subdirectory(fatfs)
+    # PJLIB (SIP/RTP stack) FreeRTOS port - stage 1: pjlib core only.
+    add_subdirectory(pjprojec/ports/freertos)
 endif()

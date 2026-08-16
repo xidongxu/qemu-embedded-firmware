@@ -8,6 +8,7 @@
 #include "spi_flash.h"
 #include "fatfs_test.h"
 #include "mic_test.h"
+#include "pj_test.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -97,6 +98,9 @@ static void main_task_entry(void *parameters) {
     mic_init();
     mic_test();
 
+    /* PJLIB (pjsip stack foundation) FreeRTOS port self-test. */
+    pj_test_run();
+
     /* SPI NOR flash (w25q02jvm) - probe and report geometry */
     rc = spi_flash_init(NULL);
     if (rc == SPI_FLASH_OK) {
@@ -127,7 +131,7 @@ static void main_task_entry(void *parameters) {
 static void main_task_init(void) {
     static TaskHandle_t main_task = NULL;
     BaseType_t xReturn = pdPASS;
-    xReturn = xTaskCreate(main_task_entry, "main_task", 2048, NULL, 1U, &main_task);
+    xReturn = xTaskCreate(main_task_entry, "main_task", 4096, NULL, 1U, &main_task);
     if (xReturn == pdPASS) {
         vTaskStartScheduler();
     } else {

@@ -72,7 +72,7 @@
 
 #define configSUPPORT_STATIC_ALLOCATION              1
 #define configSUPPORT_DYNAMIC_ALLOCATION             1
-#define configTOTAL_HEAP_SIZE                        (1024 * 128)
+#define configTOTAL_HEAP_SIZE                        (1024 * 256)
 #define configAPPLICATION_ALLOCATED_HEAP             1
 #define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    0
 #define configUSE_MINI_LIST_ITEM                     0

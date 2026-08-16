@@ -51,7 +51,9 @@ __RAM_SIZE = 0x00FFFFF0;
   </h>
   -----------------------------------------------------------------------------*/
 __STACK_SIZE = 0x00001000;
-__HEAP_SIZE  = 0x00001000;
+/* libc heap (used by pjlib pools via malloc/_sbrk). QEMU AN505 has 16 MB
+   RAM, so give the heap 4 MB; the stack lives at the top of RAM. */
+__HEAP_SIZE  = 0x00400000;
 
 /* Used by sysmem.c (_sbrk) and the C library heap. */
 PROVIDE(_Min_Stack_Size = __STACK_SIZE);
