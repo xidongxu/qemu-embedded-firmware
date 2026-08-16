@@ -1,20 +1,17 @@
-/*
- * pj_sip_inv_test.c - PJSIP INVITE session loopback self-test (stage 5).
+﻿/*
+ * pj_sip_inv_test.c - PJSIP INVITE loopback self-test (stage 4).
  *
- * Full INVITE session test over the dialog + UA layer:
- *   - UAC: pjsip_dlg_create_uac() -> pjsip_inv_create_uac() (SDP offer) ->
- *          pjsip_dlg_set_transport() -> pjsip_inv_invite()/send_msg()
- *   - UAS: a pjsip module answers the initial INVITE:
- *          pjsip_dlg_create_uas_and_inc_lock() -> pjsip_inv_create_uas() ->
- *          pjsip_inv_answer(200, SDP answer) -> pjsip_inv_send_msg()
- *   - Both sessions reach PJSIP_INV_STATE_CONFIRMED (automatic ACK).
+ * Exercises the full INVITE session machinery now that pjmedia SDP
+ * (sdp.c + sdp_neg.c, trimmed codec stubs) is available:
+ *   - pjsip_ua layer (dialog management)
+ *   - pjsip_inv INVITE session (UAC + UAS)
+ *   - SDP offer/answer negotiation through pjmedia_sdp_neg
  *
- * CRITICAL call-order note (the old stage-4 "dialog corruption" bug):
- *   pjsip_dlg_set_transport() internally does inc_lock/dec_lock, and
- *   pjsip_dlg_dec_lock() DESTROYS the dialog when sess_count==0 &&
- *   tsx_count==0.  So the UAC must create the INVITE session
- *   (pjsip_inv_create_uac, which bumps sess_count to 1) BEFORE calling
- *   pjsip_dlg_set_transport().
+ * The UAC sends an INVITE (with an audio/PCMU SDP offer) to the board's own
+ * UDP transport (loopback).  A module acts as the UAS, creates a dialog +
+ * invite session, and answers 200 OK with an SDP answer.  The negotiator
+ * produces an active local/remote SDP, and both sessions reach
+ * PJSIP_INV_STATE_CONFIRMED after the automatic ACK.
  */
 
 #include <stdio.h>
@@ -31,12 +28,11 @@
 #include <pj/sock.h>
 #include <pj/addr_resolv.h>
 #include <pjsip.h>
-#include <pjsip/sip_dialog.h>
+#include <pjsip-ua/sip_dialog.h>
 #include <pjsip/sip_ua_layer.h>
 #include <pjsip-ua/sip_inv.h>
-#include <pjsip-ua/sip_100rel.h>
-#include <pjsip-ua/sip_timer.h>
 #include <pjmedia/sdp.h>
+#include <pjmedia/sdp_neg.h>
 
 #define SIP_INV_PORT    15062
 #define MAX_LOOP        100         /* 100 x 100ms = 10s max wait */
@@ -52,7 +48,6 @@ static pjsip_inv_session *g_uas_inv;
 
 static volatile int       g_uac_done;
 static volatile int       g_uas_done;
-static volatile int       g_failed;
 
 static pjmedia_sdp_session *g_offer_sdp;   /* UAC offer  */
 static pjmedia_sdp_session *g_ans_sdp;     /* UAS answer capability */
@@ -79,17 +74,13 @@ static pjmedia_sdp_session *create_audio_sdp(pj_pool_t *pool,
     sess->origin.version = 0;
     SET_STR(sess->origin.net_type, "IN");
     SET_STR(sess->origin.addr_type, "IP4");
-    /* g_local_ip is a char array; SET_STR would use sizeof() for its length,
-     * so set the length explicitly from the actual string. */
-    pj_strset(&sess->origin.addr, g_local_ip,
-              (pj_ssize_t)pj_ansi_strlen(g_local_ip));
+    SET_STR(sess->origin.addr, g_local_ip);
     SET_STR(sess->name, "invite-test");
 
     sess->conn = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_conn);
     SET_STR(sess->conn->net_type, "IN");
     SET_STR(sess->conn->addr_type, "IP4");
-    pj_strset(&sess->conn->addr, g_local_ip,
-              (pj_ssize_t)pj_ansi_strlen(g_local_ip));
+    SET_STR(sess->conn->addr, g_local_ip);
     sess->time.start = 0;
     sess->time.stop = 0;
 
@@ -116,37 +107,23 @@ static pjmedia_sdp_session *create_audio_sdp(pj_pool_t *pool,
 }
 
 /* ------------------------------------------------------------------ */
-/* INVITE session state callback.                                      */
+/* INVITE session state callback (global, registered with the usage).  */
 /* ------------------------------------------------------------------ */
-static const char *inv_state_name(pjsip_inv_state st)
-{
-    switch (st) {
-    case PJSIP_INV_STATE_NULL:         return "NULL";
-    case PJSIP_INV_STATE_CALLING:      return "CALLING";
-    case PJSIP_INV_STATE_INCOMING:     return "INCOMING";
-    case PJSIP_INV_STATE_EARLY:        return "EARLY";
-    case PJSIP_INV_STATE_CONNECTING:   return "CONNECTING";
-    case PJSIP_INV_STATE_CONFIRMED:    return "CONFIRMED";
-    case PJSIP_INV_STATE_DISCONNECTED: return "DISCONNECTED";
-    default:                           return "?";
-    }
-}
-
 static void inv_on_state_changed(pjsip_inv_session *inv, pjsip_event *e)
 {
-    const char *who = (inv == g_uac_inv) ? "UAC" :
-                      (inv == g_uas_inv) ? "UAS" : "?";
-    printf("pj_sip_inv: [%s] state -> %d (%s)\r\n", who,
-           (int)inv->state, inv_state_name(inv->state));
+    static const char *st[] = { "NULL", "CALLING", "INCOMING", "EARLY",
+                                "CONNECTING", "CONFIRMED", "DISCONNECTED" };
+    PJ_UNUSED_ARG(e);
+
+    printf("pj_sip_inv: [%s] state -> %s (cause=%d)\\
+",
+           inv->role == PJSIP_ROLE_UAC ? "UAC" : "UAS",
+           st[inv->state], (int)inv->cause);
 
     if (inv->state == PJSIP_INV_STATE_CONFIRMED) {
         if (inv == g_uac_inv) g_uac_done = 1;
         if (inv == g_uas_inv) g_uas_done = 1;
-    } else if (inv->state == PJSIP_INV_STATE_DISCONNECTED) {
-        if (inv == g_uac_inv || inv == g_uas_inv)
-            g_failed = 1;
     }
-    PJ_UNUSED_ARG(e);
 }
 
 /* ------------------------------------------------------------------ */
@@ -159,49 +136,25 @@ static pj_status_t uas_on_rx_request(pjsip_rx_data *rdata)
     if (pjsip_method_cmp(&rdata->msg_info.msg->line.req.method,
                          &pjsip_invite_method) == 0) {
         pjsip_tx_data *tdata = NULL;
-        pjsip_dialog *dlg = NULL;
-        pj_str_t uas_contact;
         pj_status_t rc;
 
-        /* The UAS must advertise a contact that includes the local port,
-         * otherwise the UAC's ACK (and future requests) would go to the
-         * default port (5060) instead of our UDP port (15062). */
-        pj_strset(&uas_contact, "sip:user@10.0.2.15:15062",
-                  (pj_ssize_t)pj_ansi_strlen("sip:user@10.0.2.15:15062"));
-
-        /* Create UAS dialog (holds the dialog lock). */
-        rc = pjsip_dlg_create_uas_and_inc_lock(g_ua, rdata, &uas_contact,
-                                               &dlg);
+        rc = pjsip_dlg_create_uas(g_ua, rdata, NULL, &g_uac_dlg);
         if (rc != PJ_SUCCESS) {
-            printf("pj_sip_inv: UAS dlg_create failed (%d)\r\n", rc);
-            g_failed = 1;
+            printf("pj_sip_inv: UAS dlg_create failed (%d)\\
+", rc);
             return PJ_TRUE;
         }
-
-        /* Create the UAS invite session with our answer capability. */
-        rc = pjsip_inv_create_uas(dlg, rdata, g_ans_sdp, 0, &g_uas_inv);
+        rc = pjsip_inv_create_uas(g_uac_dlg, rdata, g_ans_sdp, 0, &g_uas_inv);
         if (rc != PJ_SUCCESS) {
-            printf("pj_sip_inv: UAS inv_create failed (%d)\r\n", rc);
-            pjsip_dlg_dec_lock(dlg);
-            g_failed = 1;
+            printf("pj_sip_inv: UAS inv_create failed (%d)\\
+", rc);
             return PJ_TRUE;
         }
-
-        /* We are done with the dialog lock (the session holds its own ref). */
-        pjsip_dlg_dec_lock(dlg);
-
-        /* Create the 200 OK response with SDP answer.  Use
-         * pjsip_inv_initial_answer() for the FIRST answer (it sets
-         * inv->last_answer); pjsip_inv_answer() clones last_answer and
-         * would assert if it is NULL.  local_sdp was given at create_uas,
-         * so pass NULL here. */
-        rc = pjsip_inv_initial_answer(g_uas_inv, rdata, 200, NULL, NULL,
-                                      &tdata);
+        rc = pjsip_inv_answer(g_uas_inv, 200, NULL, NULL, &tdata);
         if (rc == PJ_SUCCESS)
             rc = pjsip_inv_send_msg(g_uas_inv, tdata);
-        printf("pj_sip_inv: UAS answered 200 OK (rc=%d)\r\n", rc);
-        if (rc != PJ_SUCCESS)
-            g_failed = 1;
+        printf("pj_sip_inv: UAS answered 200 OK (rc=%d)\\
+", rc);
         return PJ_TRUE;
     }
     return PJ_FALSE;
@@ -237,39 +190,28 @@ static pj_status_t uac_start(void)
     SET_STR(local_uri, "sip:user@10.0.2.15:15062");
     SET_STR(remote_uri, "sip:user@10.0.2.15:15062");
 
-    /* 1) Create the UAC dialog. */
     rc = pjsip_dlg_create_uac(g_ua, &local_uri, NULL, &remote_uri, NULL,
                               &g_uac_dlg);
     if (rc != PJ_SUCCESS)
         return rc;
-    printf("pj_sip_inv: UAC dialog created (%p)\r\n", (void*)g_uac_dlg);
 
-    /* 2) Create the UAC invite session FIRST.  This increments the
-     *    dialog's session count so that pjsip_dlg_set_transport()'s
-     *    internal dec_lock() does NOT destroy the dialog (see file header).
-     *    It also creates the SDP negotiator with our offer. */
-    rc = pjsip_inv_create_uac(g_uac_dlg, g_offer_sdp, 0, &g_uac_inv);
-    if (rc != PJ_SUCCESS)
-        return rc;
-    printf("pj_sip_inv: UAC invite session created (%p), sess_count=%d\r\n",
-           (void*)g_uac_inv, (int)g_uac_dlg->sess_count);
-
-    /* 3) Force the INVITE out on our UDP transport (loopback).  Safe now
-     *    that the dialog has a session. */
+    /* Force the INVITE out on our UDP transport (loopback). */
     pj_bzero(&tp_sel, sizeof(tp_sel));
     tp_sel.type = PJSIP_TPSELECTOR_TRANSPORT;
     tp_sel.u.transport = g_tp;
-    rc = pjsip_dlg_set_transport(g_uac_dlg, &tp_sel);
+    pjsip_dlg_set_transport(g_uac_dlg, &tp_sel);
+
+    rc = pjsip_inv_create_uac(g_uac_dlg, g_offer_sdp, 0, &g_uac_inv);
     if (rc != PJ_SUCCESS)
         return rc;
 
-    /* 4) Build the INVITE request and send it. */
     rc = pjsip_inv_invite(g_uac_inv, &tdata);
     if (rc != PJ_SUCCESS)
         return rc;
 
     rc = pjsip_inv_send_msg(g_uac_inv, tdata);
-    printf("pj_sip_inv: UAC INVITE sent (rc=%d)\r\n", rc);
+    printf("pj_sip_inv: UAC INVITE sent (rc=%d)\\
+", rc);
     return rc;
 }
 
@@ -288,87 +230,107 @@ int pj_sip_inv_test_run(void)
     int i;
     int pass = 0;
 
-    printf("\r\n=== PJSIP INVITE session loopback test ===\r\n");
+    printf("\\
+=== PJSIP INVITE loopback test ===\\
+");
 
     rc = pj_init();
     if (rc != PJ_SUCCESS) {
-        printf("pj_sip_inv: pj_init failed (%d)\r\n", rc);
+        printf("pj_sip_inv: pj_init failed (%d)\\
+", rc);
         return -1;
     }
     pj_caching_pool_init(&g_cp, &pj_pool_factory_default_policy, 0);
 
     rc = pjsip_endpt_create(&g_cp.factory, "mps2-an505-inv", &g_endpt);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: endpt failed (%d)\r\n", rc); return -1; }
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: endpt failed (%d)\\
+", rc); return -1; }
 
     rc = pjsip_tsx_layer_init_module(g_endpt);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: tsx failed (%d)\r\n", rc); return -1; }
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: tsx failed (%d)\\
+", rc); return -1; }
 
     pj_bzero(&ua_prm, sizeof(ua_prm));
     rc = pjsip_ua_init_module(g_endpt, &ua_prm);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: ua failed (%d)\r\n", rc); return -1; }
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: ua failed (%d)\\
+", rc); return -1; }
     g_ua = pjsip_ua_instance();
 
     pj_bzero(&inv_cb, sizeof(inv_cb));
     inv_cb.on_state_changed = &inv_on_state_changed;
     rc = pjsip_inv_usage_init(g_endpt, &inv_cb);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: inv_usage failed (%d)\r\n", rc); return -1; }
-
-    /* The INVITE usage calls pjsip_100rel_attach() (asserts mod_100rel.id>=0)
-     * and pjsip_timer_*() on session create/answer, so register those
-     * modules explicitly. */
-    rc = pjsip_100rel_init_module(g_endpt);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: 100rel init failed (%d)\r\n", rc); return -1; }
-    rc = pjsip_timer_init_module(g_endpt);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: timer init failed (%d)\r\n", rc); return -1; }
-    printf("pj_sip_inv: 100rel + session timer modules registered\r\n");
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: inv_usage failed (%d)\\
+", rc); return -1; }
 
     rc = pjsip_endpt_register_module(g_endpt, &mod_inv_test);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: mod failed (%d)\r\n", rc); return -1; }
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: mod failed (%d)\\
+", rc); return -1; }
 
     /* UDP transport bound to local IP:SIP_INV_PORT. */
     rc = pj_gethostip(pj_AF_INET(), &host);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: gethostip failed (%d)\r\n", rc); return -1; }
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: gethostip failed (%d)\\
+", rc); return -1; }
     pj_sockaddr_print(&host, g_local_ip, sizeof(g_local_ip), 0);
-    printf("pj_sip_inv: local IP = %s\r\n", g_local_ip);
+    printf("pj_sip_inv: local IP = %s\\
+", g_local_ip);
 
     pj_sockaddr_in_init(&local, NULL, (pj_uint16_t)SIP_INV_PORT);
     local.sin_addr = host.ipv4.sin_addr;
     rc = pjsip_udp_transport_start(g_endpt, &local, NULL, 1, &g_tp);
-    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: udp failed (%d)\r\n", rc); return -1; }
-    printf("pj_sip_inv: UDP transport up on %s:%d\r\n", g_local_ip, SIP_INV_PORT);
+    if (rc != PJ_SUCCESS) { printf("pj_sip_inv: udp failed (%d)\\
+", rc); return -1; }
+    printf("pj_sip_inv: UDP transport up on %s:%d\\
+", g_local_ip, SIP_INV_PORT);
 
     /* Build local SDP offer (UAC) and answer capability (UAS). */
     pool = pj_pool_create(&g_cp.factory, "sdp", 1024, 1024, NULL);
     g_offer_sdp = create_audio_sdp(pool, 4000);
     g_ans_sdp   = create_audio_sdp(pool, 4002);
-    if (!g_offer_sdp || !g_ans_sdp) {
-        printf("pj_sip_inv: create_audio_sdp failed\r\n");
-        return -1;
-    }
 
     /* Fire the UAC INVITE. */
-    g_uac_done = 0;
-    g_uas_done = 0;
-    g_failed = 0;
     rc = uac_start();
     if (rc != PJ_SUCCESS) {
-        printf("pj_sip_inv: uac_start failed (%d)\r\n", rc);
+        printf("pj_sip_inv: uac_start failed (%d)\\
+", rc);
         return -1;
     }
 
     /* Run the event loop until both sessions confirm. */
     tmo.sec = 0;
     tmo.msec = 100;
-    for (i = 0; i < MAX_LOOP && !(g_uac_done && g_uas_done) && !g_failed; ++i) {
+    for (i = 0; i < MAX_LOOP && !(g_uac_done && g_uas_done); ++i) {
         pjsip_endpt_handle_events(g_endpt, &tmo);
     }
 
-    if (g_uac_done && g_uas_done && !g_failed) {
-        printf("pj_sip_inv: INVITE CONFIRMED (UAC + UAS)\r\n");
+    if (g_uac_done && g_uas_done) {
+        const pjmedia_sdp_session *loc = NULL, *rem = NULL;
+        char buf[512];
+        int n;
+        printf("pj_sip_inv: INVITE CONFIRMED (UAC + UAS)\\
+");
+        if (g_uac_inv && g_uac_inv->neg &&
+            pjmedia_sdp_neg_get_active_local(g_uac_inv->neg, &loc) == PJ_SUCCESS &&
+            pjmedia_sdp_neg_get_active_remote(g_uac_inv->neg, &rem) == PJ_SUCCESS) {
+            n = pjmedia_sdp_print(loc, buf, (pj_size_t)sizeof(buf));
+            if (n > 0) {
+                buf[n] = 0;
+                printf("pj_sip_inv: UAC negotiated local SDP:\\
+%s\\
+", buf);
+            }
+            n = pjmedia_sdp_print(rem, buf, (pj_size_t)sizeof(buf));
+            if (n > 0) {
+                buf[n] = 0;
+                printf("pj_sip_inv: UAC negotiated remote SDP:\\
+%s\\
+", buf);
+            }
+        }
         pass = 1;
     } else {
-        printf("pj_sip_inv: FAILED (uac_done=%d uas_done=%d failed=%d)\r\n",
-               g_uac_done, g_uas_done, g_failed);
+        printf("pj_sip_inv: FAILED (uac_done=%d uas_done=%d)\\
+",
+               g_uac_done, g_uas_done);
     }
 
     /* Teardown. */
@@ -378,6 +340,8 @@ int pj_sip_inv_test_run(void)
     pj_caching_pool_destroy(&g_cp);
     pj_shutdown();
 
-    printf("pj_sip_inv: %s\r\n", pass ? "ALL PASSED" : "FAILED");
+    printf("pj_sip_inv: %s\\
+", pass ? "ALL PASSED" : "FAILED");
     return pass ? 0 : -1;
 }
+

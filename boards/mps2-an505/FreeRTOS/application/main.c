@@ -133,7 +133,7 @@ static void main_task_entry(void *parameters) {
     /* PJSIP REGISTER loopback self-test (stage 3). */
     pj_sip_test_run();
 
-    /* PJSIP INVITE loopback self-test (stage 4, SDP negotiation). */
+    /* PJSIP INVITE loopback self-test (stage 4/5, INVITE session + SDP). */
     pj_sip_inv_test_run();
 
     while(1) {
