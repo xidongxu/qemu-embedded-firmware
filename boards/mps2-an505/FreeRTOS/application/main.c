@@ -14,6 +14,7 @@
 #include "pj_sip_inv_test.h"
 #include "pj_sip_dual_test.h"
 #include "pj_media_full_test.h"
+#include "pj_media_dsp_test.h"
 #include "pj_rtp_test.h"
 #include "pj_call_test.h"
 #include "uart.h"
@@ -150,6 +151,10 @@ static void main_task_entry(void *parameters) {
     /* Full-pjmedia framework self-test (stage 14): endpoint / codec mgr /
      * G.711 encode-decode / event mgr / RTCP session. */
     pj_media_full_test_run();
+
+    /* PJMEDIA DSP self-test (stage 16): AEC echo suppression + conference
+     * multi-port mixing. */
+    pj_media_dsp_test_run();
 
     /* PJSIP INVITE loopback self-test (stage 4/5, INVITE session + SDP). */
     pj_sip_inv_test_run();

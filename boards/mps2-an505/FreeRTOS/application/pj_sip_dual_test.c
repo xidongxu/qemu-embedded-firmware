@@ -52,6 +52,7 @@
 #include <pjmedia/sdp.h>
 #include <pjmedia/rtp.h>
 #include <pjmedia/jbuf.h>
+#include <pjmedia/plc.h>
 #include <pjmedia/alaw_ulaw.h>
 
 #include "mic.h"
@@ -317,6 +318,10 @@ typedef struct media_ep {
 static volatile char g_dtmf_seq[16];
 static volatile int  g_dtmf_idx, g_dtmf_count, g_dtmf_ok;
 
+/* Packet Loss Concealment (pjmedia PLC) for lost-frame playback. */
+static pjmedia_plc *g_plc;
+static volatile int  g_play_plc;
+
 static uint8_t s_mcap[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
 static uint8_t s_mplay[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
 static uint8_t s_mplay_u8[MEDIA_PCM_BYTES / 2] __attribute__((aligned(64)));
@@ -567,12 +572,22 @@ static void play_thread(void *arg)
         pjmedia_jbuf_get_frame(g_ep.jb, s_mplay + i * MFRAME_BYTES, &ftype);
         if (ftype == PJMEDIA_JB_NORMAL_FRAME) {
             g_play_normal++;
-        } else if (ftype == PJMEDIA_JB_MISSING_FRAME) {
-            g_play_missing++;
-            memset(s_mplay + i * MFRAME_BYTES, 0, MFRAME_BYTES);
+            /* keep the good frame as the PLC reference for losses. */
+            if (g_plc)
+                pjmedia_plc_save(g_plc,
+                                 (pj_int16_t*)(s_mplay + i * MFRAME_BYTES));
         } else {
-            g_play_zero++;
-            memset(s_mplay + i * MFRAME_BYTES, 0, MFRAME_BYTES);
+            /* lost / empty frame: conceal it with the PLC instead of
+             * inserting silence, so the audio stays continuous. */
+            if (ftype == PJMEDIA_JB_MISSING_FRAME) g_play_missing++;
+            else g_play_zero++;
+            if (g_plc) {
+                pjmedia_plc_generate(g_plc,
+                                     (pj_int16_t*)(s_mplay + i * MFRAME_BYTES));
+                g_play_plc++;
+            } else {
+                memset(s_mplay + i * MFRAME_BYTES, 0, MFRAME_BYTES);
+            }
         }
     }
     pj_gettimeofday(&t1);
@@ -644,6 +659,14 @@ static int run_dual_media(pj_pool_t *pool)
     g_tx_ms = g_play_ms = 0;
     g_dtmf_idx = 0; g_dtmf_count = 0;
     g_dtmf_seq[0] = 0;
+    g_play_plc = 0;
+    g_plc = NULL;
+    if (pjmedia_plc_create(pool, MEDIA_RATE, MFRAME_SAMPLES, 0, &g_plc) !=
+        PJ_SUCCESS)
+        printf("pj_sip_dual[%s]: PLC create FAILED (will use silence)\r\n",
+               ROLE_NAME);
+    else
+        printf("pj_sip_dual[%s]: PLC enabled\r\n", ROLE_NAME);
     xTaskCreate(sender_thread, "pjdual-tx",  2048, NULL, 3, NULL);
     xTaskCreate(rx_thread,     "pjdual-rx",  2048, NULL, 3, NULL);
 
@@ -696,9 +719,10 @@ static int run_dual_media(pj_pool_t *pool)
            ROLE_NAME, g_tx_ok, MEDIA_FRAMES, g_tx_ms);
     printf("pj_sip_dual[%s]:   rx   %d frames, discard=%d poll-timeout=%d\r\n",
            ROLE_NAME, g_rx_got, g_rx_discard, g_rx_bad);
-    printf("pj_sip_dual[%s]:   play normal=%d missing=%d zero=%d in %ld ms, "
-           "peak=%ld\r\n", ROLE_NAME, g_play_normal, g_play_missing,
-           g_play_zero, g_play_ms, media_peak(s_mplay, MEDIA_PCM_BYTES));
+    printf("pj_sip_dual[%s]:   play normal=%d missing=%d zero=%d plc_fill=%d "
+           "in %ld ms, peak=%ld\r\n", ROLE_NAME, g_play_normal, g_play_missing,
+           g_play_zero, g_play_plc, g_play_ms,
+           media_peak(s_mplay, MEDIA_PCM_BYTES));
     {
         pj_uint32_t exp = rtcp_expected(&g_ep.rtcps);
         pj_uint32_t got = g_ep.rtcps.rx.received;
