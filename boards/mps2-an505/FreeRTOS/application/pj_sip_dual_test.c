@@ -56,6 +56,7 @@
 
 #include "mic.h"
 #include "audio.h"
+#include "pj_rtcp_engine.h"
 
 #if defined(PJ_DUAL_ROLE_CALLER) && defined(PJ_DUAL_ROLE_CALLEE)
 #error "define exactly one of PJ_DUAL_ROLE_CALLER / PJ_DUAL_ROLE_CALLEE"
@@ -79,13 +80,19 @@
 #  define MY_RTP_PORT    CALLER_RTP
 #  define PEER_RTP_PORT  CALLEE_RTP
 #  define MY_SSRC        0xAAA00003
+#  define PEER_SSRC      0xBBB00003
 #else
 #  define ROLE_NAME      "callee"
 #  define MY_EXT_SIP     CALLEE_EXT_SIP
 #  define MY_RTP_PORT    CALLEE_RTP
 #  define PEER_RTP_PORT  CALLER_RTP
 #  define MY_SSRC        0xBBB00003
+#  define PEER_SSRC      0xAAA00003
 #endif
+
+/* RTCP rides the RTP port + 1 (RFC 3550); forwarded via hostfwd too. */
+#define MY_RTCP_PORT    (MY_RTP_PORT + 1)
+#define PEER_RTCP_PORT  (PEER_RTP_PORT + 1)
 
 static pj_caching_pool    g_cp;
 static pjsip_endpoint    *g_endpt;
@@ -292,6 +299,9 @@ typedef struct media_ep {
     pjmedia_rtp_session rtp;
     pjmedia_jbuf      *jb;
     pj_bool_t          have_jb;
+    pj_sock_t          rtcp;          /* RTCP socket (bound, rx+tx)   */
+    pj_sockaddr_in     peer_rtcp;     /* peer RTCP address            */
+    rtcp_session       rtcps;         /* RTCP session (stats/RTT)     */
     const uint8_t     *cap;
     uint8_t           *play;
     pj_uint32_t        ssrc;
@@ -338,6 +348,24 @@ static pj_status_t media_ep_open(media_ep *ep, pj_uint16_t rx_port,
          * a few frames before play_thread starts (see run_dual_media). */
         pjmedia_jbuf_set_fixed(ep->jb, 1);
     }
+
+    /* RTCP socket: bound to our RTCP port (RTP+1); SR/RR go to the peer's
+     * RTCP port through the same hostfwd path as RTP. */
+    ep->rtcp = PJ_INVALID_SOCKET;
+    rc = pj_sock_socket(PJ_AF_INET, PJ_SOCK_DGRAM, 0, &ep->rtcp);
+    if (rc != PJ_SUCCESS) return rc;
+    pj_sockaddr_in_init(&local, NULL, MY_RTCP_PORT);
+    rc = pj_sock_bind(ep->rtcp, &local, sizeof(local));
+    if (rc != PJ_SUCCESS) return rc;
+    pj_sockaddr_in_init(&ep->peer_rtcp, NULL, PEER_RTCP_PORT);
+    {
+        pj_str_t ip_str;
+        pj_strset(&ip_str, (char*)peer_ip,
+                  (pj_ssize_t)pj_ansi_strlen(peer_ip));
+        rc = pj_inet_pton(pj_AF_INET(), &ip_str, &ep->peer_rtcp.sin_addr);
+    }
+    if (rc != PJ_SUCCESS) return rc;
+    rtcp_init(&ep->rtcps, ssrc, MEDIA_RATE, PEER_SSRC, ROLE_NAME);
     return rc;
 }
 
@@ -363,6 +391,16 @@ static pj_status_t media_ep_send(media_ep *ep, int frame)
     memcpy(pkt + hdrlen, ulaw, sizeof(ulaw));
     len = hdrlen + (int)sizeof(ulaw);
     return pj_sock_sendto(ep->tx, pkt, &len, 0, &ep->peer, sizeof(ep->peer));
+}
+
+/* Send the current RTCP report (SR + reception report + SDES CNAME). */
+static void media_ep_send_rtcp(media_ep *ep)
+{
+    pj_uint8_t pkt[128];
+    unsigned len = rtcp_build_report(&ep->rtcps, pkt, sizeof(pkt));
+    pj_ssize_t slen = (pj_ssize_t)len;
+    pj_sock_sendto(ep->rtcp, pkt, &slen, 0, &ep->peer_rtcp,
+                   sizeof(ep->peer_rtcp));
 }
 
 static int media_ep_put(media_ep *ep, int tmo_ms)
@@ -404,6 +442,8 @@ static int media_ep_put(media_ep *ep, int tmo_ms)
     }
     if (ep->have_jb)
         pjmedia_jbuf_put_frame2(ep->jb, pcm, sizeof(pcm), 0, seq, &discarded);
+    /* feed RTCP receive statistics (seq + RTP timestamp for jitter). */
+    rtcp_rx_rtp(&ep->rtcps, (unsigned)seq, pj_ntohl(hdr->ts));
     return discarded ? 1 : 0;
 }
 
@@ -495,9 +535,15 @@ static void sender_thread(void *arg)
     PJ_UNUSED_ARG(arg);
     pj_gettimeofday(&t0);
     for (i = 0; i < MEDIA_FRAMES; ++i) {
-        if (media_ep_send(&g_ep, i) == PJ_SUCCESS) g_tx_ok++;
+        if (media_ep_send(&g_ep, i) == PJ_SUCCESS) {
+            g_tx_ok++;
+            rtcp_tx_rtp(&g_ep.rtcps, MFRAME_SAMPLES);
+        }
+        if ((i % 50) == 49)                 /* every 500 ms: SR */
+            media_ep_send_rtcp(&g_ep);
         vTaskDelay(pdMS_TO_TICKS(10));      /* 10 ms real-time pace */
     }
+    media_ep_send_rtcp(&g_ep);              /* final SR with full stats */
     pj_gettimeofday(&t1);
     g_tx_ms = (t1.sec - t0.sec) * 1000 + (t1.msec - t0.msec);
     g_sender_done = 1;
@@ -510,7 +556,7 @@ static int run_dual_media(pj_pool_t *pool)
     int wait_ms;
 
     memset(&g_ep, 0, sizeof(g_ep));
-    g_ep.rx = g_ep.tx = PJ_INVALID_SOCKET;
+    g_ep.rx = g_ep.tx = g_ep.rtcp = PJ_INVALID_SOCKET;
 
     printf("pj_sip_dual[%s]: REAL-TIME media rx=%u tx=%s:%u\r\n",
            ROLE_NAME, (unsigned)MY_RTP_PORT, GW_IP, (unsigned)PEER_RTP_PORT);
@@ -549,9 +595,24 @@ static int run_dual_media(pj_pool_t *pool)
     xTaskCreate(play_thread,   "pjdual-play", 2048, NULL, 2, NULL);
 
     /* The three threads run the 2 s call concurrently.  Wait for playback
-     * to finish, then give the rx thread a moment to drain the peer's tail
-     * frames before tearing the jbuf down. */
-    while (!g_play_done) vTaskDelay(pdMS_TO_TICKS(5));
+     * to finish; while waiting, non-blocking drain the RTCP socket so we
+     * parse the peer's SR/RR (loss/jitter/RTT). */
+    while (!g_play_done) {
+        pj_fd_set_t rfds;
+        pj_time_val stmo;
+        PJ_FD_ZERO(&rfds);
+        PJ_FD_SET(g_ep.rtcp, &rfds);
+        stmo.sec = 0; stmo.msec = 0;
+        if (pj_sock_select((int)g_ep.rtcp + 1, &rfds, NULL, NULL, &stmo) > 0 &&
+            PJ_FD_ISSET(g_ep.rtcp, &rfds)) {
+            pj_uint8_t rbuf[256];
+            pj_ssize_t rlen = (pj_ssize_t)sizeof(rbuf);
+            if (pj_sock_recvfrom(g_ep.rtcp, rbuf, &rlen, 0, NULL, NULL) ==
+                PJ_SUCCESS)
+                rtcp_parse(&g_ep.rtcps, rbuf, (unsigned)rlen);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
     wait_ms = 0;
     while (!g_rx_done && wait_ms < 3000) { vTaskDelay(pdMS_TO_TICKS(5)); wait_ms += 5; }
 
@@ -576,6 +637,20 @@ static int run_dual_media(pj_pool_t *pool)
     printf("pj_sip_dual[%s]:   play normal=%d missing=%d zero=%d in %ld ms, "
            "peak=%ld\r\n", ROLE_NAME, g_play_normal, g_play_missing,
            g_play_zero, g_play_ms, media_peak(s_mplay, MEDIA_PCM_BYTES));
+    {
+        pj_uint32_t exp = rtcp_expected(&g_ep.rtcps);
+        pj_uint32_t got = g_ep.rtcps.rx.received;
+        pj_uint32_t lost = (exp > got) ? exp - got : 0;
+        pj_uint32_t frac = exp ? (lost * 100) / exp : 0;
+        pj_uint32_t pfrac = (g_ep.rtcps.peer_fraction_lost * 100) / 256;
+        printf("pj_sip_dual[%s]:   rtcp tx_pkt=%u tx_oct=%u | "
+               "rx exp=%u got=%u lost=%u frac=%u%% jitter=%u | "
+               "peer-lost=%u peer-frac=%u%% rtt=%u us\r\n",
+               ROLE_NAME, g_ep.rtcps.tx.pkt_count, g_ep.rtcps.tx.octet_count,
+               exp, got, lost, frac, g_ep.rtcps.rx.jitter >> 4,
+               g_ep.rtcps.peer_cum_lost, pfrac,
+               rtcp_rtt_us(&g_ep.rtcps));
+    }
 
     media_pcm_to_u8(s_mplay, s_mplay_u8, MEDIA_PCM_BYTES);
     printf("pj_sip_dual[%s]: playing peer -> speaker\r\n", ROLE_NAME);
@@ -585,6 +660,7 @@ static int run_dual_media(pj_pool_t *pool)
 
     if (g_ep.rx != PJ_INVALID_SOCKET) pj_sock_close(g_ep.rx);
     if (g_ep.tx != PJ_INVALID_SOCKET) pj_sock_close(g_ep.tx);
+    if (g_ep.rtcp != PJ_INVALID_SOCKET) pj_sock_close(g_ep.rtcp);
 
     /* Real UDP path over slirp/hostfwd can drop ~5-10% of frames; accept
      * >= 85% delivery (a normal VoIP call stays usable at that level). */

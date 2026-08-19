@@ -2,8 +2,8 @@
 #
 # Two patched QEMU mps2-an505 instances, both with guest IP 10.0.2.15, talk
 # THROUGH the slirp host gateway 10.0.2.2 using UDP hostfwd port forwards:
-#   caller (UAC): hostfwd udp::16062-:15062, udp::4000-:4000
-#   callee (UAS): hostfwd udp::15062-:15062, udp::4002-:4002
+#   caller (UAC): hostfwd udp::16062-:15062, udp::4000-:4000, udp::4001-:4001
+#   callee (UAS): hostfwd udp::15062-:15062, udp::4002-:4002, udp::4003-:4003
 #
 # The caller's elf must be built with -DPJ_DUAL_ROLE=caller, the callee's
 # with -DPJ_DUAL_ROLE=callee (see works/logs/WORKLOG-2026-08-17-pjsip-call.md).
@@ -37,7 +37,7 @@ $pB = Start-Process -FilePath $Qemu -ArgumentList @(
     '-machine', 'mps2-an505,audiodev=b0',
     '-audiodev', "wav,path=$TestCase\out_callee.wav,id=b0",
     '-cpu', 'cortex-m33', '-m', '16M', '-display', 'none', '-serial', 'stdio',
-    '-nic', 'user,model=lan9118,hostfwd=udp::15062-:15062,hostfwd=udp::4002-:4002',
+    '-nic', 'user,model=lan9118,hostfwd=udp::15062-:15062,hostfwd=udp::4002-:4002,hostfwd=udp::4003-:4003',
     '-global', "mpsx-simple-mic.infile=$TestCase\$CalleeWav",
     '-kernel', $elfC
 ) -RedirectStandardOutput "$TestCase\callee.log" -RedirectStandardError "$TestCase\callee.err" -NoNewWindow -PassThru
@@ -49,7 +49,7 @@ $pA = Start-Process -FilePath $Qemu -ArgumentList @(
     '-machine', 'mps2-an505,audiodev=a0',
     '-audiodev', "wav,path=$TestCase\out_caller.wav,id=a0",
     '-cpu', 'cortex-m33', '-m', '16M', '-display', 'none', '-serial', 'stdio',
-    '-nic', 'user,model=lan9118,hostfwd=udp::16062-:15062,hostfwd=udp::4000-:4000',
+    '-nic', 'user,model=lan9118,hostfwd=udp::16062-:15062,hostfwd=udp::4000-:4000,hostfwd=udp::4001-:4001',
     '-global', "mpsx-simple-mic.infile=$TestCase\$CallerWav",
     '-kernel', $elfA
 ) -RedirectStandardOutput "$TestCase\caller.log" -RedirectStandardError "$TestCase\caller.err" -NoNewWindow -PassThru
