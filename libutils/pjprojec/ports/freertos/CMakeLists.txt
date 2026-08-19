@@ -165,7 +165,7 @@ target_include_directories(pjsip-simple PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
 target_link_libraries(pjsip-simple PUBLIC pjlib pjsip PRIVATE pjlib-util)
 
 # ##############################################################################
-# pjmedia (SDP + RTP packetization + G.711 tables + jitter buffer)
+# pjmedia (full framework trial: SDP + RTP + RTCP + event + codec mgr...)
 # ##############################################################################
 add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sdp.c
@@ -175,6 +175,47 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/rtp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/jbuf.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/alaw_ulaw_table.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/errno.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/format.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/event.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/rtcp.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/rtcp_fb.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/rtcp_xr.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stream_info.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/endpoint.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/codec.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/g711.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stream_common.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/master_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/null_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/session.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stream.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_udp.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_loop.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/silencedet.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/tonegen.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/clock_thread.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/conference.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/conf_switch.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/splitcomb.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/bidirectional.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/mem_capture.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/mem_player.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/delaybuf.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_common.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_suppress.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/plc_common.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/resample_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/resample_resample.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wav_player.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wav_writer.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wave.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stereo_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wsola.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/audiodev.c
+  src/audiodev_stub.c
   src/codec_stub.c
 )
 target_include_directories(pjmedia PUBLIC ${PJPROJECT_ROOT}/pjmedia/include)

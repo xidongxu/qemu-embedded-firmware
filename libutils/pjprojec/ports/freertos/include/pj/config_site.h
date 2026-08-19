@@ -66,8 +66,37 @@
 #ifndef PJSIP_MAX_TRANSPORTS
 #   define PJSIP_MAX_TRANSPORTS         4
 #endif
-
-/* No TLS/SRTP on this bare-metal target. */
 #define PJSIP_HAS_TLS_TRANSPORT         0
+
+/* ---- PJMEDIA (full-framework trial, stage 14) ----------------------- */
+/* No external media backends / codecs on this embedded target; keep only
+ * the built-in G.711 (PCMU/PCMA) codec.  pjmedia/config.h uses #ifndef so
+ * defining these here (config_site.h is included first) overrides defaults. */
+#define PJMEDIA_HAS_VIDEO               0
+#define PJMEDIA_HAS_SRTP                0
+#define PJMEDIA_HAS_FFMPEG              0
+#define PJMEDIA_HAS_LIBYUV              0
+#define PJMEDIA_HAS_SPEEX_AEC           0
+#define PJMEDIA_HAS_WEBRTC_AEC          0
+#define PJMEDIA_HAS_WEBRTC_AEC3         0
+#define PJMEDIA_RESAMPLE_IMP            PJMEDIA_RESAMPLE_NONE
+#define PJMEDIA_HAS_G711_CODEC          1
+#define PJMEDIA_HAS_G722_CODEC          0
+#define PJMEDIA_HAS_G7221_CODEC         0
+#define PJMEDIA_HAS_L16_CODEC           0
+#define PJMEDIA_HAS_ILBC_CODEC          0
+#define PJMEDIA_HAS_GSM_CODEC           0
+#define PJMEDIA_HAS_SPEEX_CODEC         0
+#define PJMEDIA_HAS_OPUS_CODEC          0
+#define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 0
+#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 0
+#define PJMEDIA_HAS_SILK_CODEC          0
+#define PJMEDIA_HAS_VPX_CODEC           0
+#define PJMEDIA_HAS_OPENH264_CODEC      0
+#define PJMEDIA_HAS_BCG729              0
+#define PJMEDIA_HAS_LYRA_CODEC          0
+#define PJMEDIA_HAS_AUDIODEV            0
+#define PJMEDIA_HAS_VIDEODEV            0
+#define PJMEDIA_HAS_LEGACY_SOUND_API    0
 
 #endif  /* PJ_CONFIG_SITE_H */
