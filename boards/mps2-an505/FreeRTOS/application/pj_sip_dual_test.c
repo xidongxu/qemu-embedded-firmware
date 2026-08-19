@@ -94,6 +94,10 @@
 #define MY_RTCP_PORT    (MY_RTP_PORT + 1)
 #define PEER_RTCP_PORT  (PEER_RTP_PORT + 1)
 
+/* RFC 4733 telephone-event payload type (not negotiated; fixed here). */
+#define DTMF_PT         101
+#define DTMF_SEQ        "5#"          /* caller dials, callee must hear */
+
 static pj_caching_pool    g_cp;
 static pjsip_endpoint    *g_endpt;
 static pjsip_transport   *g_tp;
@@ -302,10 +306,16 @@ typedef struct media_ep {
     pj_sock_t          rtcp;          /* RTCP socket (bound, rx+tx)   */
     pj_sockaddr_in     peer_rtcp;     /* peer RTCP address            */
     rtcp_session       rtcps;         /* RTCP session (stats/RTT)     */
+    pj_uint16_t        dtmf_seq;      /* DTMF event seq (independent) */
+    pj_uint32_t        dtmf_ts;       /* DTMF event timestamp         */
     const uint8_t     *cap;
     uint8_t           *play;
     pj_uint32_t        ssrc;
 } media_ep;
+
+/* DTMF (RFC 4733 telephone-event) state shared with media_ep_put(). */
+static volatile char g_dtmf_seq[16];
+static volatile int  g_dtmf_idx, g_dtmf_count, g_dtmf_ok;
 
 static uint8_t s_mcap[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
 static uint8_t s_mplay[MEDIA_PCM_BYTES] __attribute__((aligned(64)));
@@ -337,6 +347,8 @@ static pj_status_t media_ep_open(media_ep *ep, pj_uint16_t rx_port,
     ep->ssrc = ssrc;
     rc = pjmedia_rtp_session_init(&ep->rtp, 0, ssrc);
     if (rc != PJ_SUCCESS) return rc;
+    ep->dtmf_seq = 1000;
+    ep->dtmf_ts = 0;
 
     rc = pjmedia_jbuf_create(pool, name, MFRAME_BYTES, 10, MEDIA_FRAMES + 10,
                              &ep->jb);
@@ -403,6 +415,29 @@ static void media_ep_send_rtcp(media_ep *ep)
                    sizeof(ep->peer_rtcp));
 }
 
+/* Send one RFC 4733 telephone-event RTP packet.  It uses its own sequence
+ * /timestamp space so the voice stream's seq/jitter stats stay clean. */
+static void media_ep_send_dtmf(media_ep *ep, int digit, pj_bool_t end,
+                               int dur)
+{
+    pj_uint8_t pkt[32];
+    pjmedia_rtp_hdr *h = (pjmedia_rtp_hdr*)pkt;
+    pjmedia_rtp_dtmf_event *ev;
+    pj_ssize_t len = 16;
+
+    h->v = 2; h->p = 0; h->x = 0; h->cc = 0;
+    h->m = 0; h->pt = (pj_uint8_t)DTMF_PT;
+    h->seq = pj_htons(ep->dtmf_seq++);
+    h->ts = pj_htonl(ep->dtmf_ts);
+    ep->dtmf_ts += 80;                   /* 10 ms @ 8 kHz */
+    h->ssrc = pj_htonl(ep->ssrc);
+    ev = (pjmedia_rtp_dtmf_event*)(pkt + sizeof(pjmedia_rtp_hdr));
+    ev->event = (pj_uint8_t)digit;
+    ev->e_vol = (pj_uint8_t)((end ? PJMEDIA_RTP_DTMF_EVENT_END_MASK : 0) | 10);
+    ev->duration = pj_htons((pj_uint16_t)dur);
+    pj_sock_sendto(ep->tx, pkt, &len, 0, &ep->peer, sizeof(ep->peer));
+}
+
 static int media_ep_put(media_ep *ep, int tmo_ms)
 {
     pj_uint8_t buf[256];
@@ -429,6 +464,23 @@ static int media_ep_put(media_ep *ep, int tmo_ms)
     if (rc != PJ_SUCCESS) return -1;
     rc = pjmedia_rtp_decode_rtp(&ep->rtp, buf, (int)len, &hdr, &payload, &plen);
     if (rc != PJ_SUCCESS) return -1;
+
+    /* RFC 4733 telephone-event: separate seq/timestamp space, never enters
+     * the jitter buffer; on the end flag, record the dialled digit. */
+    if (hdr->pt == DTMF_PT && plen >= 4) {
+        const pjmedia_rtp_dtmf_event *ev =
+            (const pjmedia_rtp_dtmf_event*)payload;
+        int d = ev->event;
+        int end = (ev->e_vol & PJMEDIA_RTP_DTMF_EVENT_END_MASK) ? 1 : 0;
+        char ch = (d <= 9) ? (char)('0' + d) :
+                  (d == 10 ? '*' : (d == 11 ? '#' : '?'));
+        if (end && g_dtmf_idx < 15) {
+            g_dtmf_seq[g_dtmf_idx++] = ch;
+            g_dtmf_seq[g_dtmf_idx] = 0;
+        }
+        return 2;                       /* DTMF event consumed */
+    }
+
     pjmedia_rtp_session_update(&ep->rtp, hdr, &seq_st);
     if (seq_st.status.flag.bad) return -1;
 
@@ -496,6 +548,7 @@ static void rx_thread(void *arg)
         int rc = media_ep_put(&g_ep, 50);   /* 50 ms poll */
         if (rc == 0) { g_rx_got++; to = 0; }
         else if (rc == 1) { g_rx_discard++; to = 0; }
+        else if (rc == 2) { g_dtmf_count++; to = 0; }
         else { g_rx_bad++; to++; }          /* timeout */
     }
     g_rx_done = 1;
@@ -541,6 +594,13 @@ static void sender_thread(void *arg)
         }
         if ((i % 50) == 49)                 /* every 500 ms: SR */
             media_ep_send_rtcp(&g_ep);
+        /* caller dials DTMF "5#" mid-call (RFC 4733 events). */
+#if defined(PJ_DUAL_ROLE_CALLER)
+        if (i == 100) media_ep_send_dtmf(&g_ep, 5, PJ_FALSE, 400);
+        else if (i == 101) media_ep_send_dtmf(&g_ep, 5, PJ_TRUE, 800);
+        else if (i == 102) media_ep_send_dtmf(&g_ep, 11, PJ_FALSE, 400);
+        else if (i == 103) media_ep_send_dtmf(&g_ep, 11, PJ_TRUE, 800);
+#endif
         vTaskDelay(pdMS_TO_TICKS(10));      /* 10 ms real-time pace */
     }
     media_ep_send_rtcp(&g_ep);              /* final SR with full stats */
@@ -582,6 +642,8 @@ static int run_dual_media(pj_pool_t *pool)
     g_play_normal = g_play_missing = g_play_zero = 0;
     g_tx_ok = 0;
     g_tx_ms = g_play_ms = 0;
+    g_dtmf_idx = 0; g_dtmf_count = 0;
+    g_dtmf_seq[0] = 0;
     xTaskCreate(sender_thread, "pjdual-tx",  2048, NULL, 3, NULL);
     xTaskCreate(rx_thread,     "pjdual-rx",  2048, NULL, 3, NULL);
 
@@ -651,6 +713,18 @@ static int run_dual_media(pj_pool_t *pool)
                g_ep.rtcps.peer_cum_lost, pfrac,
                rtcp_rtt_us(&g_ep.rtcps));
     }
+    {
+        int dtmf_ok = 1;
+#if !defined(PJ_DUAL_ROLE_CALLER)
+        /* callee must hear the caller's DTMF "5#". */
+        dtmf_ok = (g_dtmf_seq[0] == '5' && g_dtmf_seq[1] == '#' &&
+                   g_dtmf_idx == 2);
+#endif
+        printf("pj_sip_dual[%s]:   dtmf tx=\"%s\" rx=\"%s\" count=%d -> %s\r\n",
+               ROLE_NAME, DTMF_SEQ, (const char*)g_dtmf_seq, g_dtmf_count,
+               dtmf_ok ? "OK" : "MISS");
+        g_dtmf_ok = dtmf_ok;
+    }
 
     media_pcm_to_u8(s_mplay, s_mplay_u8, MEDIA_PCM_BYTES);
     printf("pj_sip_dual[%s]: playing peer -> speaker\r\n", ROLE_NAME);
@@ -663,9 +737,10 @@ static int run_dual_media(pj_pool_t *pool)
     if (g_ep.rtcp != PJ_INVALID_SOCKET) pj_sock_close(g_ep.rtcp);
 
     /* Real UDP path over slirp/hostfwd can drop ~5-10% of frames; accept
-     * >= 85% delivery (a normal VoIP call stays usable at that level). */
+     * >= 85% delivery.  The callee must also have heard the DTMF digits. */
     if (g_rx_got >= (MEDIA_FRAMES * 85) / 100 &&
-        g_play_normal >= (MEDIA_FRAMES * 85) / 100)
+        g_play_normal >= (MEDIA_FRAMES * 85) / 100 &&
+        g_dtmf_ok)
         return 0;
     return -1;
 }
