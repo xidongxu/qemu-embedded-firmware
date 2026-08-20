@@ -305,6 +305,17 @@ static void lwip_os_task_entry(void *parameters) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+    /* Dual-QEMU call mode: keep the network up (tcpip + eth_rx) but skip the
+     * HTTP-to-internet / ping self-tests.  A/B test (2026-08-20) showed they
+     * WORSEN the slirp forwarding loss (with them ON, 2/6 directions dropped
+     * 64/142 of 200 frames vs near-zero with them OFF), so keep them off
+     * during the dual call regression. */
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+#endif
+
 #if LWIP_OS_TEST_HTTP_SOCKET
     os_http_test();
 #endif

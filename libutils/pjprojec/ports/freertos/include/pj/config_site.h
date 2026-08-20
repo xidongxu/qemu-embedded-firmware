@@ -99,4 +99,15 @@
 #define PJMEDIA_HAS_VIDEODEV            0
 #define PJMEDIA_HAS_LEGACY_SOUND_API    0
 
+/* Fixed hostfwd/slirp topology: the RTP source address seen by the stream
+ * (slirp's forwarding port) differs from the SDP-negotiated address, and the
+ * source port can vary per packet.  With probation count 0 the stream never
+ * drops RTP based on source-address changes (no NAT detection needed).
+ * A/B test (2026-08-20): CNT=10 vs CNT=0 show nearly identical empty/missing
+ * stats (not the empty-frame cause; jbuf min_pre=0/min_delay=1 is), but CNT=0
+ * removes the theoretical risk of dropping opening frames when slirp's
+ * forwarding source port differs from the SDP address.  Keep as a sane
+ * configuration for this fixed hostfwd topology. */
+#define PJMEDIA_RTP_NAT_PROBATION_CNT   0
+
 #endif  /* PJ_CONFIG_SITE_H */

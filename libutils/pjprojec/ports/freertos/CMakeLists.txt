@@ -191,6 +191,7 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/null_port.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/session.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stream.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/av_sync.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_udp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_loop.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/silencedet.c
