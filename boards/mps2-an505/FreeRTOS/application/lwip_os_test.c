@@ -49,6 +49,9 @@
 #define LWIP_OS_TASK_STACK             (4096U)
 #define LWIP_OS_TASK_PRIO              (2U)
 #define NETIF_THREAD_STACK             (1024U)
+/* A/B test (2026-08-20): raising eth_rx above the media tasks (prio 5) did
+ * NOT reduce dual-QEMU burst loss - it made it worse (steady 40-44/200 on
+ * the peer side) by pre-empting tcpip_thread/media.  prio 3 is optimal. */
 #define NETIF_THREAD_PRIO              (3U)
 
 #if LWIP_OS_TEST_ICMP_PING
@@ -248,7 +251,8 @@ static void tcpip_init_done(void *arg) {
     ip4_addr_t ipaddr = { 0 }, netmask = { 0 }, gw = { 0 };
     uint8_t mac[6] = { 0 };
 
-    /* Static IP in the QEMU user-mode subnet 10.0.2.0/24. */
+    /* slirp: each instance is its own NAT; hostfwd injects to 10.0.2.15,
+     * so both guests must use .15 (see WORKLOG-2026-08-20-netdev-socket.md). */
     IP4_ADDR(&ipaddr, 10, 0, 2, 15);
     IP4_ADDR(&netmask, 255, 255, 255, 0);
     IP4_ADDR(&gw, 10, 0, 2, 2);

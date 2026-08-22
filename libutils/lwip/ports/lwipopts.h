@@ -176,7 +176,12 @@ void sys_unlock_tcpip_core(void);
 
 /* MEM_SIZE: the size of the heap memory. If the application will send
 a lot of data that needs to be copied, this should be set high. */
-#define MEM_SIZE               20480
+/* 2026-08-21: was 20480 (20 KB) - too small.  The UDP receive buffers
+   (pjmedia recvfrom pbufs, PBUF_RAM from this heap) exceeded it when the
+   dual-QEMU netdev delivers RTP in bursts -> pbuf alloc failed -> lwIP
+   DROPPED UDP packets (rstat.rx.pkt 167/200 while the NIC received all).
+   Raised to 64 KB to absorb the burst. */
+#define MEM_SIZE               65536
 
 /* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
    sends a lot of data out of ROM (or other static memory), this
@@ -204,7 +209,11 @@ a lot of data that needs to be copied, this should be set high. */
 /* The following four are used only with the sequential API and can be
    set to 0 if the application only will use the raw API. */
 /* MEMP_NUM_NETBUF: the number of struct netbufs. */
-#define MEMP_NUM_NETBUF         2
+/* 2026-08-21: was 2 - too small for the socket-API UDP receive path
+   (pjmedia recvfrom).  When RTP frames queue up beyond 2 netbufs (the
+   media ioqueue has not drained them yet), lwIP drops the UDP packet.
+   Raised to 32 to absorb the burst. */
+#define MEMP_NUM_NETBUF         32
 /* MEMP_NUM_NETCONN: the number of struct netconns. */
 #define MEMP_NUM_NETCONN        12
 /* MEMP_NUM_TCPIP_MSG_*: the number of struct tcpip_msg, which is used
@@ -216,7 +225,7 @@ a lot of data that needs to be copied, this should be set high. */
 
 /* ---------- Pbuf options ---------- */
 /* PBUF_POOL_SIZE: the number of buffers in the pbuf pool. */
-#define PBUF_POOL_SIZE          120
+#define PBUF_POOL_SIZE          256
 
 /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
 #define PBUF_POOL_BUFSIZE       256
@@ -312,6 +321,11 @@ a lot of data that needs to be copied, this should be set high. */
 #define LWIP_UDP                1
 #define LWIP_UDPLITE            LWIP_UDP
 #define UDP_TTL                 255
+/* UDP receive buffer per PCB.  Default is 20*(1500-28) ~ 29 KB; make it
+   explicit and generous so a burst of RTP frames (QEMU netdev delivers
+   several at once) is buffered instead of dropped while the media ioqueue
+   drains.  Backed by MEM_SIZE (PBUF_RAM). */
+#define UDP_RECV_BUFSIZE        (60 * 1500)
 
 
 /* ---------- RAW options ---------- */
@@ -382,3 +396,5 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 #endif
 
 #endif /* LWIP_LWIPOPTS_H */
+
+/* force-rebuild marker 2026-08-21 */

@@ -1,32 +1,35 @@
 /*
  * pj_sip_dual_test.c - dual QEMU inter-instance SIP call test (stage 11).
  *
- * Two patched QEMU instances (mps2-an505) each run on their own user-mode
- * (slirp) network and both have guest IP 10.0.2.15.  To let them talk we
- * route ALL SIP + RTP through the slirp host gateway 10.0.2.2 using UDP
- * hostfwd port forwards on each instance.
+ * The two QEMU instances (mps2-an505) each run their OWN slirp user-mode NAT
+ * (guest static IP 10.0.2.15, gateway 10.0.2.2) and reach each other through
+ * hostfwd port forwards on the shared host (2026-08-22: reverted from the
+ * socket-netdev direct topology - A/B proved slirp was never the loss cause):
  *
- *   Caller instance (UAC):
- *     QEMU:  -nic user,model=lan9118,hostfwd=udp::16062-:15062,hostfwd=udp::4000-:4000
- *     guest SIP  : bind  0.0.0.0:15062, published 10.0.2.2:16062
- *     dial target: sip:user@10.0.2.2:15062
+ *   Caller instance (UAC):  hostfwd udp::16062-:15062 (SIP), udp::4000-:4000 (RTP),
+ *                           udp::4001-:4001 (RTCP), udp::20003-:20003 (media SYNC)
+ *     guest SIP  : bind 0.0.0.0:15062 (Via/Contact = 10.0.2.2:16062)
+ *     dial target: sip:user@10.0.2.2:15062  (callee hostfwd)
  *     SDP offer  : c=IN IP4 10.0.2.2  m=audio 4000
- *     RTP        : rx bind 0.0.0.0:4000, tx -> 10.0.2.2:4002
+ *     RTP        : rx bind 0.0.0.0:4000, tx -> 10.0.2.2:4002 (callee hostfwd)
  *
- *   Callee instance (UAS):
- *     QEMU:  -nic user,model=lan9118,hostfwd=udp::15062-:15062,hostfwd=udp::4002-:4002
- *     guest SIP  : bind  0.0.0.0:15062, published 10.0.2.2:15062
- *     contact    : sip:user@10.0.2.2:15062
+ *   Callee instance (UAS):  hostfwd udp::15062-:15062 (SIP), udp::4002-:4002 (RTP),
+ *                           udp::4003-:4003 (RTCP), udp::20013-:20003 (media SYNC)
+ *     guest SIP  : bind 0.0.0.0:15062 (contact = 10.0.2.2:15062)
  *     SDP answer : c=IN IP4 10.0.2.2  m=audio 4002
- *     RTP        : rx bind 0.0.0.0:4002, tx -> 10.0.2.2:4000
+ *     RTP        : rx bind 0.0.0.0:4002, tx -> 10.0.2.2:4000 (caller hostfwd)
  *
- * Path A->B: A dials 10.0.2.2:15062 (hostfwd on B) and sends RTP to
- *            10.0.2.2:4002 (hostfwd on B).
- * Path B->A: B replies/ACKs to 10.0.2.2:16062 (hostfwd on A) and sends RTP
- *            to 10.0.2.2:4000 (hostfwd on A).
+ * Path A->B: A dials 10.0.2.2:15062 and sends RTP to 10.0.2.2:4002.
+ * Path B->A: B replies/ACKs to 10.0.2.2:16062 and sends RTP to 10.0.2.2:4000.
  *
- * Media runs on the negotiated RTP port through a pjmedia jitter buffer
- * (same as the stage-10 loopback test) with a 10 ms playback pace.
+ * Media runs on the negotiated RTP port through a pjmedia_stream jitter
+ * buffer (clock-driven, stage 17) with a 10 ms playback pace.  Three
+ * test-side fixes make the 200/200 loss-free result reproducible:
+ *   1. media-start handshake (SYNC port, hostfwd'd) - both transports are up
+ *      before the first RTP frame is sent;
+ *   2. SDP a=ptime:10 - G.711 encoder frame size matches the 10 ms clock;
+ *   3. VAD disabled (si.param->setting.vad=0) - the silence detector would
+ *      mis-detected the pure tone once VAD re-enables 600 ms in.
  */
 
 #include <stdio.h>
@@ -58,9 +61,12 @@
 #include <pjmedia/transport_udp.h>
 #include <pjmedia/stream.h>
 #include <pjmedia/clock.h>
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
 
 #include "mic.h"
 #include "audio.h"
+#include "lan9118.h"
 
 #if defined(PJ_DUAL_ROLE_CALLER) && defined(PJ_DUAL_ROLE_CALLEE)
 #error "define exactly one of PJ_DUAL_ROLE_CALLER / PJ_DUAL_ROLE_CALLEE"
@@ -69,32 +75,44 @@
 #error "define PJ_DUAL_ROLE_CALLER or PJ_DUAL_ROLE_CALLEE"
 #endif
 
-/* ---- role-independent constants ---- */
-#define GW_IP          "10.0.2.2"   /* slirp host gateway, both roles */
-#define SIP_PORT       15062        /* guest-bound SIP port, both roles */
-#define CALLEE_EXT_SIP 15062        /* callee published SIP port (hostfwd) */
-#define CALLEE_RTP     4002         /* callee RTP port (hostfwd) */
-#define CALLER_EXT_SIP 16062        /* caller published SIP port (hostfwd) */
-#define CALLER_RTP     4000         /* caller RTP port (hostfwd) */
+/* ---- role-independent constants (slirp / user-net hostfwd topology) ---- */
+#define GW_IP           "10.0.2.2"   /* slirp host gateway, both roles */
+#define SIP_PORT        15062        /* guest-bound SIP port, both roles */
+#define CALLEE_EXT_SIP  15062        /* callee published SIP port (hostfwd) */
+#define CALLER_EXT_SIP  16062        /* caller published SIP port (hostfwd) */
+#define CALLEE_RTP      4002         /* callee RTP port (hostfwd) */
+#define CALLER_RTP      4000         /* caller RTP port (hostfwd) */
+#define SYNC_PORT       20003        /* guest-bound media-start handshake port */
+/* SYNC handshake hostfwd ports: each instance exposes its guest 20003 on a
+ * distinct host port (caller 20003, callee 20013) so the two QEMUs do not
+ * clash on the shared host. */
+#define CALLER_SYNC_HOST 20003
+#define CALLEE_SYNC_HOST 20013
 #define MAX_LOOP       600          /* 600 x 100ms = 60s max wait */
 
 #if defined(PJ_DUAL_ROLE_CALLER)
 #  define ROLE_NAME      "caller"
 #  define MY_EXT_SIP     CALLER_EXT_SIP
+#  define PEER_EXT_SIP   CALLEE_EXT_SIP
 #  define MY_RTP_PORT    CALLER_RTP
 #  define PEER_RTP_PORT  CALLEE_RTP
+#  define MY_SYNC_HOST   CALLER_SYNC_HOST
+#  define PEER_SYNC_HOST CALLEE_SYNC_HOST
 #  define MY_SSRC        0xAAA00003
 #  define PEER_SSRC      0xBBB00003
 #else
 #  define ROLE_NAME      "callee"
 #  define MY_EXT_SIP     CALLEE_EXT_SIP
+#  define PEER_EXT_SIP   CALLER_EXT_SIP
 #  define MY_RTP_PORT    CALLEE_RTP
 #  define PEER_RTP_PORT  CALLER_RTP
+#  define MY_SYNC_HOST   CALLEE_SYNC_HOST
+#  define PEER_SYNC_HOST CALLER_SYNC_HOST
 #  define MY_SSRC        0xBBB00003
 #  define PEER_SSRC      0xAAA00003
 #endif
 
-/* RTCP rides the RTP port + 1 (RFC 3550); forwarded via hostfwd too. */
+/* RTCP rides the RTP port + 1 (RFC 3550). */
 #define MY_RTCP_PORT    (MY_RTP_PORT + 1)
 #define PEER_RTCP_PORT  (PEER_RTP_PORT + 1)
 
@@ -186,6 +204,19 @@ static pjmedia_sdp_session *create_audio_sdp(pj_pool_t *pool,
     rtpmap.param.slen = 0;
     if (pjmedia_sdp_rtpmap_to_attr(pool, &rtpmap, &a) == PJ_SUCCESS)
         pjmedia_sdp_media_add_attr(m, a);
+
+    /* Force 10 ms packetisation so the codec encoder frame size (80 samples
+     * @8kHz) matches the media-clock frame fed into put_frame().  Without
+     * this, G.711 defaults to 20 ms; the 10 ms clock frames then go through
+     * the rebuffer path and ~30% of them come out as empty
+     * (frame_out.size==0), which are silently not transmitted - the peer
+     * receives fewer RTP packets than the 200 that put_frame() accepted. */
+    {
+        pj_str_t v10 = pj_str("10");
+        a = pjmedia_sdp_attr_create(pool, "ptime", &v10);
+        if (a)
+            pjmedia_sdp_media_add_attr(m, a);
+    }
 
     return sess;
 }
@@ -281,7 +312,7 @@ static pj_status_t uac_dial(void)
     pj_ansi_snprintf(local_uri, sizeof(local_uri),
                      "sip:user@%s:%d", GW_IP, MY_EXT_SIP);
     pj_ansi_snprintf(remote_uri, sizeof(remote_uri),
-                     "sip:user@%s:%d", GW_IP, CALLEE_EXT_SIP);
+                     "sip:user@%s:%d", GW_IP, PEER_EXT_SIP);
     SET_STR(luri, ""); SET_STR(ruri, "");
     pj_strset(&luri, local_uri, (pj_ssize_t)pj_ansi_strlen(local_uri));
     pj_strset(&ruri, remote_uri, (pj_ssize_t)pj_ansi_strlen(remote_uri));
@@ -379,6 +410,82 @@ static volatile int  g_dtmf_count, g_dtmf_ok;
 static int           g_media_ix;      /* frame index, advanced in clock cb */
 static pj_time_val   g_play_t0;       /* clock-driven play start time */
 static pjmedia_clock *g_clock;        /* NO_ASYNC 10ms media clock */
+/* TX-pacing diagnostics (2026-08-20): ACTUAL interval between consecutive
+ * media_clock callbacks via the high-res SysTick timestamp.  Under QEMU TCG
+ * the virtual clock bursts, so we expect min~0 (burst: several frames fired
+ * together) and max >> 10ms (stall) instead of a clean 10ms cadence. */
+static pj_timestamp  g_clk_prev;
+static int           g_clk_cnt;
+static long long     g_clk_min_us, g_clk_max_us, g_clk_sum_us;
+static int           g_clk_burst, g_clk_gap;
+static unsigned long long g_clk_freq;
+
+/* UDP handshake so both instances start their media clock together (after
+ * both transports are up).  Same idea as net_burst_test's READY sync:
+ * without it, the first instance sends its opening RTP frames before the
+ * second's transport exists, which shows up as RTCP loss even though the
+ * base network is loss-free. */
+static void media_sync_handshake(void)
+{
+    int fd;
+    struct sockaddr_in local, peer;
+    const uint32_t MAGIC = 0x53594E43u;  /* "SYNC" */
+    uint32_t buf;
+    int tries = 0, peer_seen = -1;
+    int on = 1;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        printf("pj_sip_dual[%s]: sync socket failed\r\n", ROLE_NAME);
+        return;
+    }
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_port = htons((u16_t)SYNC_PORT);
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0) {
+        printf("pj_sip_dual[%s]: sync bind failed\r\n", ROLE_NAME);
+        lwip_close(fd);
+        return;
+    }
+    /* Poll with non-blocking recvfrom + task delay: on this lwIP port a
+     * blocking recvfrom with SO_RCVTIMEO can hang forever, which dead-locked
+     * the callee.  Non-blocking also lets both sides keep re-sending SYNC so
+     * the peer that reached the handshake later still gets ours. */
+    ioctl(fd, FIONBIO, &on);
+
+    memset(&peer, 0, sizeof(peer));
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons((u16_t)PEER_SYNC_HOST);
+    peer.sin_addr.s_addr = inet_addr(GW_IP);
+
+    /* Both sides keep sending SYNC every 10 ms until they have seen the
+     * peer's SYNC, then keep sending 5 more so the peer is guaranteed to see
+     * ours too (fixes the "caller sends once then exits, callee never hears
+     * it" race), then finish. */
+    while (tries < 200) {
+        buf = MAGIC;
+        sendto(fd, &buf, sizeof(buf), 0,
+               (struct sockaddr *)&peer, sizeof(peer));
+        buf = 0;
+        if (recvfrom(fd, &buf, sizeof(buf), 0, NULL, NULL) ==
+            (int)sizeof(buf) && buf == MAGIC) {
+            if (peer_seen < 0) {
+                peer_seen = tries;
+                printf("pj_sip_dual[%s]: peer SYNC seen at try=%d\r\n",
+                       ROLE_NAME, tries);
+            }
+            if (tries - peer_seen >= 5) {
+                break;
+            }
+        }
+        tries++;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    lwip_close(fd);
+    printf("pj_sip_dual[%s]: media sync done (tries=%d peer_seen=%d)\r\n",
+           ROLE_NAME, tries, peer_seen);
+}
 
 /* Poll the media endpoint ioqueue so transport_udp's async RTP/RTCP
  * recvfrom completes and the stream's on_rx_rtp / on_rx_rtcp run.
@@ -401,7 +508,7 @@ static void ioq_thread(void *arg)
             n = pj_ioqueue_poll(pjmedia_endpt_get_ioqueue(g_mep), &tv);
             if (++cnt >= 32) break;
         } while (n > 0);
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     vTaskDelete(NULL);
 }
@@ -426,6 +533,29 @@ static void media_clock_cb(const pj_timestamp *ts, void *user_data)
 
     if (i >= MEDIA_FRAMES)
         return;
+
+    /* Measure the actual inter-callback interval (SysTick high-res). */
+    {
+        pj_timestamp now;
+        pj_get_timestamp(&now);
+        if (g_clk_freq == 0) {
+            pj_timestamp f;
+            pj_get_timestamp_freq(&f);
+            g_clk_freq = f.u64;
+        }
+        if (g_clk_cnt > 0) {
+            long long us = (long long)((now.u64 - g_clk_prev.u64) *
+                                       1000000ULL / g_clk_freq);
+            if (us < 0) us = 0;
+            if (g_clk_cnt == 1 || us < g_clk_min_us) g_clk_min_us = us;
+            if (us > g_clk_max_us) g_clk_max_us = us;
+            g_clk_sum_us += us;
+            if (us < 8000) g_clk_burst++;
+            if (us > 15000) g_clk_gap++;
+        }
+        g_clk_prev = now;
+        g_clk_cnt++;
+    }
 
     /* --- TX: one 10ms frame (codec encode + RTP send + RTCP SR) --- */
     f.type = PJMEDIA_FRAME_TYPE_AUDIO;
@@ -525,6 +655,24 @@ static int run_dual_media(pj_pool_t *pool)
                ROLE_NAME, rc);
         return -1;
     }
+    /* Disable VAD (2026-08-22): G.711's silence detector mis-detects the
+     * pure test tone as silence once the stream re-enables VAD ~600 ms in
+     * (PJMEDIA_STREAM_VAD_SUSPEND_MSEC), silently dropping ~30% of the
+     * frames (they never reach the transport, so the peer counts them as
+     * lost).  Feed the stream a codec param with VAD off so every 10 ms
+     * frame is actually transmitted.  This is a test-side configuration, no
+     * pjproject source change. */
+    {
+        pjmedia_codec_param *param;
+        param = PJ_POOL_ZALLOC_T(pool, pjmedia_codec_param);
+        if (pjmedia_codec_mgr_get_default_param(
+                pjmedia_endpt_get_codec_mgr(g_mep), &si.fmt, param) ==
+            PJ_SUCCESS)
+        {
+            param->setting.vad = 0;
+            si.param = param;
+        }
+    }
     /* Jitter-buffer parameters.  NOTE: pjproject source is NOT modified;
      * with the default min_pre the empty jitter buffer yields an EMPTY
      * frame which stream.c conceals with PLC (synthesise/repeat last frame)
@@ -576,12 +724,22 @@ static int run_dual_media(pj_pool_t *pool)
     }
     printf("pj_sip_dual[%s]: stream up (transport started)\r\n", ROLE_NAME);
 
+    /* Media-start sync (2026-08-22): both transports are up now; exchange a
+     * handshake packet so neither instance starts sending before the other
+     * can receive.  Without this, the first instance sends its opening RTP
+     * frames before the second's transport exists, which showed up as RTCP
+     * loss even though net_burst proved the base network is loss-free. */
+    media_sync_handshake();
+
     /* Reset stats, then start the ioq task and the 10ms media clock. */
     g_media_stop = 0;
     g_play_normal = g_play_missing = g_play_zero = 0;
     g_tx_ok = 0;
     g_tx_ms = g_play_ms = 0;
     g_media_ix = 0;
+    g_clk_cnt = 0; g_clk_burst = 0; g_clk_gap = 0;
+    g_clk_min_us = g_clk_max_us = g_clk_sum_us = 0;
+    g_clk_freq = 0;
     g_dtmf_count = 0;
     g_dtmf_rx[0] = 0;
     g_dtmf_ok = 0;
@@ -602,6 +760,12 @@ static int run_dual_media(pj_pool_t *pool)
     /* Let the clock + ioq run the 2 s call. */
     wait_ms = 0;
     while (g_play_ms == 0 && wait_ms < 10000) { vTaskDelay(pdMS_TO_TICKS(5)); wait_ms += 5; }
+    /* Hypothesis test (2026-08-21): much of the "RTCP loss" is NOT real
+     * network loss - RTP frames arrive (lwIP udp.drop=0, NIC rx_drop=0) but
+     * the media ioqueue hasn't drained them from the lwIP socket buffer by
+     * the time the 200-frame playback finishes, so RTCP counts them as lost
+     * and the jitter buffer runs empty (PLC).  Drain the tail before stats. */
+    vTaskDelay(pdMS_TO_TICKS(500));
     g_media_stop = 1;
 
     /* Stream RTCP + jitter-buffer report. */
@@ -623,6 +787,34 @@ static int run_dual_media(pj_pool_t *pool)
     printf("pj_sip_dual[%s]:   play normal=%d missing=%d zero=%d "
            "in %ld ms, peak=%ld\r\n", ROLE_NAME, g_play_normal, g_play_missing,
            g_play_zero, g_play_ms, media_peak(s_mplay, MEDIA_PCM_BYTES));
+    if (g_clk_cnt > 1) {
+        printf("pj_sip_dual[%s]:   clock cb n=%d min=%lld max=%lld avg=%lld us "
+               "burst(<8ms)=%d gap(>15ms)=%d\r\n", ROLE_NAME, g_clk_cnt,
+               g_clk_min_us, g_clk_max_us,
+               (long long)(g_clk_sum_us / g_clk_cnt), g_clk_burst, g_clk_gap);
+    }
+    /* RX-drop diagnostics: QEMU lan9118 increments RX_DROP (0xA0) when its
+     * RX FIFO overflows because the guest did not drain it in time.  If this
+     * tracks the RTCP-reported loss, the drops are at the RECEIVER's NIC
+     * FIFO (QEMU main-loop burst-fills it), not at the sender. */
+    {
+        const lan9118_stats_t *lst = lan9118_get_stats();
+        printf("pj_sip_dual[%s]:   lan9118 rx_pkt=%u rx_overruns=%u "
+               "qemu_rx_drop=%lu irq=%u\r\n", ROLE_NAME,
+               lst->rx_packets, lst->rx_overruns,
+               (unsigned long)(*(volatile uint32_t *)0x420000A0u),
+               lst->irq_count);
+    }
+    /* lwIP layer drop counters: where is the RTP actually lost?  If
+     * udp.drop tracks the RTCP loss, it is the lwIP UDP receive path
+     * (socket/netconn recv queue full because the media ioqueue was not
+     * drained in time under QEMU TCG). */
+    {
+        extern struct stats_ lwip_stats;
+        printf("pj_sip_dual[%s]:   lwip link.drop=%u ip.drop=%u udp.drop=%u\r\n",
+               ROLE_NAME, (unsigned)lwip_stats.link.drop,
+               (unsigned)lwip_stats.ip.drop, (unsigned)lwip_stats.udp.drop);
+    }
     printf("pj_sip_dual[%s]:   rtcp tx pkt=%u bytes=%u loss=%u | "
            "rtt(avg)=%d us\r\n", ROLE_NAME, rstat.tx.pkt, rstat.tx.bytes,
            rstat.tx.loss, rstat.rtt.mean);
@@ -748,7 +940,7 @@ int pj_sip_dual_test_run(void)
     g_failed = 0;
 
 #if defined(PJ_DUAL_ROLE_CALLER)
-    printf("pj_sip_dual[caller]: dialing %s:%d\r\n", GW_IP, CALLEE_EXT_SIP);
+    printf("pj_sip_dual[caller]: dialing %s:%d\r\n", GW_IP, PEER_EXT_SIP);
     rc = uac_dial();
     if (rc != PJ_SUCCESS) { printf("pj_sip_dual[caller]: dial failed (%d)\r\n", rc); return -1; }
 #else

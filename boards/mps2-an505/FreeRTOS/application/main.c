@@ -96,8 +96,6 @@ extern void lwip_os_task_init(void);
 extern void lwip_task_init(void);
 #endif
 static void main_task_entry(void *parameters) {
-    spi_flash_err_t rc;
-    spi_flash_info_t fi = { 0 };
 
     lcd_init();
     touch_init();
@@ -109,7 +107,15 @@ static void main_task_entry(void *parameters) {
     /* PJLIB (pjsip stack foundation) FreeRTOS port self-test. */
     pj_test_run();
 
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+    /* Dual-QEMU mode: SKIP the SPI-flash + FatFS self-test.  fatfs_test()
+     * formats the file system and blocks for a long time; running it before
+     * the dual media test would leave the peer waiting at the media
+     * handshake while this instance is stuck formatting (2026-08-22). */
+#else
     /* SPI NOR flash (w25q02jvm) - probe and report geometry */
+    spi_flash_err_t rc;
+    spi_flash_info_t fi = { 0 };
     rc = spi_flash_init(NULL);
     if (rc == SPI_FLASH_OK) {
         spi_flash_get_info(&fi);
@@ -124,17 +130,26 @@ static void main_task_entry(void *parameters) {
 
     /* FatFS over the SPI NOR flash - mount/format, write/read a file. */
     fatfs_test();
+#endif
 
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+    /* Dual-QEMU call mode: SKIP the LVGL task + benchmark so the guest CPU
+     * is free for the SIP/RTP media path.  Hypothesis (2026-08-20): the LVGL
+     * benchmark saturates CPU, worsening QEMU TCG virtual-clock bursts and
+     * amplifying RTP loss.  Controlled A/B: compare dual-call loss with
+     * LVGL on (default build) vs off (dual build). */
+#else
     lv_task_init();
+#endif
 #ifdef LWIP_USE_FREERTOS
     lwip_os_task_init();
 #else
     lwip_task_init();
 #endif
 
-    /* Dual-QEMU inter-instance call mode: this build is configured as
-     * either the caller (UAC) or the callee (UAS); run ONLY that test and
-     * skip the single-instance loopback suite. */
+    /* Dual-QEMU inter-instance call mode: run the pjmedia SIP call test.
+     * (net_burst_test.c proved the base network is loss-free on 2026-08-22,
+     * so any pjmedia loss is an integration/ioqueue issue, not the network.) */
 #if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
     pj_sip_dual_test_run();
     while (1) {
