@@ -369,7 +369,101 @@ RUN3: callee tx=1000 loss=0 | caller tx=1000 loss=0 | 双 ALL PASSED
   40ms 自适应足够，empty 会很低**。empty 帧经 PLC 填充，音频连续（FFT 验证）。
 - 自适应基于 burst level，持续 empty 时不会进一步涨 prefetch（`prefetch=4` 停在 min）——pjmedia 设计。
 
+## 大规模回归（2026-08-22，20 轮 10s 长通话）
+
+**配置**：slirp 拓扑 + 3 修复（握手/ptime/VAD）+ `jb_init=40`，10s / 1000 帧。
+
+```
+RUN 1-10 : 10/10 PASS   RUN 11-20: 10/10 PASS
+总计 20/20 PASS（40 个方向），双向 tx 全 1000、loss 全 0（total_tx_loss=0）
+指标稳定：empty 547-589（55-59%）、play normal 411-453（41-45%）
+```
+
+**结论**：10s 长通话大规模回归**全部通过、双向零丢、指标高度稳定**。长通话稳定性验证完成
+（网络零丢 + 时钟 avg 稳定 + 音频连续 + jbuf 自适应配置修复）。QEMU 下 55-59% empty 是
+slirp RTT 波动特性（PLC 填充，音频连续）；真实网络 RTT 稳定时 empty 会显著更低。
+
+## 音频质量深度分析（2026-08-22，量化 PLC 占比对听感的影响）
+
+**工具**：`works/tools/analyze_audio_deep.py`（新增）——逐 20ms 帧 RMS/主频/频谱质心，
+检测静音段（PLC 超限→零填充）与 PLC 重复（谐波）。
+
+**数据**（out.wav 立体声 3.83s；callee 听 1kHz、caller 听 440Hz）：
+
+```
+callee (1kHz): silence 39.3%  max_gap=0.42s  tone 60.7%  peak_med=1001Hz
+               target_hit=100%  centroid=1004Hz（≈基频，谐波少）
+caller (440Hz): silence 21.1%  max_gap=0.04s  tone 78.9%  peak_med=463Hz
+               target_hit=73.3% centroid=674Hz（>基频，PLC 重复产生谐波）
+```
+
+**量化结论（PLC 对听感）**：
+1. **断续（主要影响）**：empty 帧连续超过 `max_plc_cnt`（PLC 最大时长）后**零填充→静音**。
+   callee 39% 静音、最长 **420ms 连续静音**（明显断续）；caller 21%、最长 40ms（轻中度）。
+   callee 更严重 = 其 RTT 波动更大（0-218ms）→ 连续 empty 多。
+2. **机械/嗡嗡（次要）**：PLC=重复上一帧，**主频保持**（callee 100% hit）但**谐波增加**
+   （caller centroid 674Hz > 基频 463Hz）→ 轻微机械感。
+3. **听感总体**：QEMU 下"断续 + 轻微机械"；**真实网络 RTT 稳定时 empty 低、静音少、听感正常**。
+
+**改善建议（QEMU 场景，可选）**：增大 `PJMEDIA_MAX_PLC_DURATION_MSEC`（更多 PLC 填充、
+少静音）；或增大 `jb_init`（如 80-100ms，减少 empty）。真实网络下 40ms 自适应已足够。
+
+## ⭐ 音频优化：找到 empty/静音的真正根因（2026-08-22 深夜，决定性）
+
+**背景**：深度分析发现 empty（56%）但 `plc call=0`（PLC 从未工作）、静音 50%——即使
+`setting.plc=1`。加诊断（get_frame frame_type / synthesize_samples 入口）定位。
+
+**根因**：**G.711 默认 `setting.frm_per_pkt=2`（每包 2 帧 = 20ms）** →
+stream 的播放帧 `samples_required=PJMEDIA_PIA_SPF=160`（20ms），而**媒体时钟喂 80 样本（10ms）**
+（`MFRAME_SAMPLES=80`）→ `get_frame` 每次要 2 帧 → **jbuf 消耗快 2 倍 → empty → 静音**。
+synthesize_samples 里 `req(160) > out_buf_len(80)` → 走"参数错误"分支只零填 80 → 静音。
+**jb_init/PLC 时长都只是缓解，非根因。**
+
+**修复**：测试代码设 `param->setting.frm_per_pkt = 1`（10ms/包，匹配 10ms 媒体时钟）。
+
+**效果（决定性，干净状态 3 轮）**：
+```
+empty   : 547-589 (55-59%)  -> 36.2  (3.6%)   ↓94%
+normal  : 411-449 (43%)     -> 951.7 (95.2%)  ↑122%
+音频静音 : callee 50% / caller 37% -> 12% / 1.5%
+plc call: 0（从未工作）     -> 58/19（真正工作，missing≈10 被 PLC 处理）
+```
+
+**保留的优化（与根因修复一起生效）**：
+1. `frm_per_pkt=1`（根因，pj_sip_dual_test.c）
+2. `jb_init=80 / jb_min_pre=80`（吸收单向 RTT，减少 empty）
+3. `PJMEDIA_MAX_PLC_DURATION_MSEC` 240→**1000**（config.h：更长 PLC 保护，missing 分散时用）
+4. `SDP a=ptime:10`、`VAD 禁用`（之前修复）
+
+**已清理**：stream.c 诊断（ft/synth/plc 打印与计数）全部还原，pjproject 仅剩 config.h 配置改动。
+**提交项**：pj_sip_dual_test.c、config.h、run_dual_slirp.ps1、analyze_audio_deep.py（新增）、worklog。
 
 
 
 
+
+
+
+
+
+---
+
+## config.h A/B 验证（PJMEDIA_MAX_PLC_DURATION_MSEC 240 vs 1000）
+
+**结论：修改不必要，已还原 config.h（240ms 默认）。pjproject 完全干净（config.h + stream.c 均无改动）。**
+
+A/B 实测（frm_per_pkt=1 保留，10s 长通话 x3 轮，6/6 PASS）：
+| 指标 | PLC 1000ms | PLC 240ms（默认） |
+|---|---|---|
+| empty avg | 36 | 33 |
+| normal avg | 951.7 (95.2%) | 957.3 (95.7%) |
+| missing avg | ~10 (1%) | 9.7 (1%) |
+
+**为什么 240ms 足够**：根因修复是 frm_per_pkt=1，修复后 missing 仅 1% 且分散，每次 PLC 只填补几帧（<10ms 连续丢失），远在 240ms 上限内。PLC 时长上限只在长连续丢包时才有意义。
+
+**若未来要调 PLC（不改 pjproject 源码的两种方式）**：
+1. CMake 编译参数：PJMEDIA_MAX_PLC_DURATION_MSEC 是 #ifndef 保护的宏，可在项目 CMakeLists/工具链对 pjmedia 目标加 -DPJMEDIA_MAX_PLC_DURATION_MSEC=1000（config.h 的 #ifndef 自动跳过）。
+2. ports 配置头：在 libutils/pjprojec/ports/ 放配置头（如 ports/config_extra.h），用 -include 强制包含同样 #ifndef 覆盖。ports 目录本就是"配置/移植"层，不算改源码逻辑。
+3. 当前不需要：240ms 已验证足够。
+
+**提交清单（更新）**：pj_sip_dual_test.c、run_dual_slirp.ps1、analyze_audio_deep.py（新增）、WORKLOG。config.h 不含（已还原，pjproject 干净）。

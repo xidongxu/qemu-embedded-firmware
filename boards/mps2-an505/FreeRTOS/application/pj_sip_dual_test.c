@@ -670,6 +670,10 @@ static int run_dual_media(pj_pool_t *pool)
             PJ_SUCCESS)
         {
             param->setting.vad = 0;
+            param->setting.frm_per_pkt = 1;  /* 10ms/pkt: G.711 default is 2
+             * (20ms) which makes the stream's play frame 160 samples while the
+             * media clock feeds 80 -> get_frame needs 2 frames/jbuf drains fast
+             * -> empty -> silence. 1 frame/pkt = 10ms matches the 10ms clock. */
             si.param = param;
         }
     }
@@ -681,13 +685,14 @@ static int run_dual_media(pj_pool_t *pool)
      * between bursts (high empty count) even though the AUDIO is continuous
      * (verified by wav FFT: 439/1001 Hz tone heard end-to-end).  This is an
      * emulator/network characteristic, not a pjproject defect. */
-    si.jb_init = 40;      /* initial prefetch 40 ms (4 frames).  MUST be >0:
+    si.jb_init = 80;      /* initial prefetch 80 ms (8 frames).  MUST be >0:
                            * jbuf adaptive only updates prefetch when
                            * jb_init_prefetch != 0 (jbuf.c); with 0 it stays 0
                            * -> get_frame empties once one-way delay > 10 ms.
                            * 10s call: empty dropped 97%->56%, normal 3%->43%. */
-    si.jb_min_pre = 40;   /* min prefetch 40 ms (4 frames) */
-    si.jb_max_pre = 100;  /* adaptive up to 100 ms (10 frames) */
+    si.jb_min_pre = 80;   /* min prefetch 80 ms (8 frames): absorbs larger
+                           * one-way RTT (10s RTT fluctuated up to ~218 ms) */
+    si.jb_max_pre = 150;  /* adaptive up to 150 ms (15 frames) */
     si.jb_max = 250;      /* max depth 250 ms (25 frames) */
     printf("pj_sip_dual[%s]: codec=%s/%u ch=%u dir=%d tx_pt=%d rx_pt=%d "
            "tx_evt=%d rx_evt=%d\r\n", ROLE_NAME,
