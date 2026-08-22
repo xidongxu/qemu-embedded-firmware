@@ -2,11 +2,11 @@
  * audio.c - driver for the QEMU mpsx-simple-audio device (mps2-an505)
  *
  * The QEMU device streams PCM data out of a guest RAM buffer configured via
- * MMIO.  After one full buffer round it sets STATUS.DONE and keeps looping
- * the buffer, so the driver renders a waveform into a static buffer and lets
- * the hardware loop it.  The interrupt path (NVIC IRQ 49) is optional; the
- * current startup vector table has slot 49 reserved as zero, so the built-in
- * test uses the interrupt-free looping path.
+ * MMIO.  After one full buffer round it sets STATUS.DONE and (if INT_EN.DONE
+ * is set) raises NVIC IRQ 49, then keeps looping the buffer.  The FreeRTOS
+ * startup wires slot 49 to Interrupt49_Handler; call audio_irq_enable() to
+ * use the interrupt path.  BareMetal/threadx leave slot 49 as zero, so those
+ * projects stay on the interrupt-free looping path.
  */
 
 #include "ARMCM33_DSP_FP.h"
@@ -14,6 +14,9 @@
 
 /* PCM buffer played by the device; the physical address is handed to BUF_ADDR. */
 static uint8_t s_pcm[AUDIO_PCM_SIZE] __attribute__((aligned(64)));
+
+/* incremented by Interrupt49_Handler on each DONE interrupt */
+static volatile uint32_t s_audio_irq_done = 0;
 
 /*
  * 64-point sine lookup table, values are round(127 * sin(2*pi*k/64)).
@@ -81,6 +84,19 @@ void audio_init(void) {
     printf("audio: reset done, status=0x%08lx\n", (unsigned long)AUDIO_STATUS);
 }
 
+/*
+ * Enable the DONE interrupt (NVIC IRQ 49).  Only call this on targets whose
+ * startup vector table wires slot 49 to Interrupt49_Handler (the FreeRTOS gcc
+ * startup does; BareMetal/threadx leave it zero and must NOT call this).
+ */
+void audio_irq_enable(void) {
+    AUDIO_INT_STATUS = AUDIO_INT_DONE;      /* clear any pending status */
+    AUDIO_INT_EN = AUDIO_INT_DONE;          /* device-side DONE interrupt */
+    NVIC_ClearPendingIRQ((IRQn_Type)AUDIO_IRQ);
+    NVIC_EnableIRQ((IRQn_Type)AUDIO_IRQ);
+    printf("audio: IRQ %d enabled\n", (int)AUDIO_IRQ);
+}
+
 void audio_play(const void *pcm, uint32_t len, uint32_t rate, uint32_t fmt) {
     if (pcm == NULL || len == 0) {
         printf("audio: invalid play args (pcm=%p len=%lu)\n", pcm, (unsigned long)len);
@@ -118,7 +134,12 @@ uint32_t audio_play_pos(void) {
 
 bool audio_wait_done(uint32_t timeout) {
     uint32_t t = 0;
-    while (!(AUDIO_STATUS & AUDIO_STATUS_DONE)) {
+    uint32_t irq_before = s_audio_irq_done;
+    /* one full buffer round: primary = DONE interrupt, fallback = STATUS */
+    while (s_audio_irq_done == irq_before) {
+        if (AUDIO_STATUS & AUDIO_STATUS_DONE) {
+            break;   /* polled path (interrupt not enabled) */
+        }
         if (++t >= timeout) {
             return false;
         }
@@ -167,18 +188,26 @@ void audio_test(void) {
     }
     printf("audio: test melody %lu ms, looping...\n", (unsigned long)((uint64_t)pos * 1000UL / rate));
     audio_play(s_pcm, pos, rate, AUDIO_FORMAT_U8);
+    /* wait one full buffer round: primary = DONE interrupt (IRQ 49), so the
+     * handler's irq_done counter proves the interrupt really fires; targets
+     * without slot 49 fall back to polling STATUS.DONE. */
+    if (audio_wait_done(20000000UL)) {
+        printf("audio: first buffer round done (irq_done=%lu)\n",
+               (unsigned long)s_audio_irq_done);
+    }
 }
 
 /*
- * Optional IRQ handler for the audio device (NVIC IRQ 49).
- * NOTE: it only fires if the startup vector table is patched to install
- * Interrupt49_Handler (currently slot 49 is reserved as zero).  The built-in
- * test does not depend on this.
+ * IRQ handler for the audio device (NVIC IRQ 49).
+ * Requires the startup vector table to install Interrupt49_Handler (wired up
+ * in the FreeRTOS startup_ARMCM33.s).  Only touches the flag + MMIO, so it
+ * is safe to call from an interrupt context.
  */
 void Interrupt49_Handler(void) {
     uint32_t st = AUDIO_INT_STATUS;
     if (st & AUDIO_INT_DONE) {
         /* write-1-to-clear */
         AUDIO_INT_STATUS = AUDIO_INT_DONE;
+        s_audio_irq_done++;
     }
 }

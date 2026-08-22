@@ -100,6 +100,7 @@ static void main_task_entry(void *parameters) {
     lcd_init();
     touch_init();
     audio_init();
+    audio_irq_enable();
     audio_test();
     mic_init();
     mic_test();

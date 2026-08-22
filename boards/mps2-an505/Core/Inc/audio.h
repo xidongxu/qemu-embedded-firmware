@@ -10,11 +10,11 @@
  * looping the same buffer, so playback is continuous until CTRL.ENABLE is
  * cleared.
  *
- * NOTE on IRQ 49: the current startup_ARMCM33.s reserves vector slots
- * 49..480 as zeros, so the interrupt will NOT fire unless a
- * Interrupt49_Handler entry is added to the vector table first.  The
- * built-in test (audio_test) therefore uses the looping path and needs no
- * interrupt at all.
+ * NOTE on IRQ 49: the FreeRTOS startup_ARMCM33.s wires slot 49 to
+ * Interrupt49_Handler; call audio_irq_enable() to use the interrupt path.
+ * BareMetal/threadx startups still reserve slots 49..480 as zeros, so those
+ * projects must stay on the interrupt-free looping path.  The built-in test
+ * (audio_test) plays via the hardware loop and works either way.
  *
  * QEMU command line (host-side) for a headless wav capture:
  *   -audiodev wav,path=out.wav,id=audio0 -machine mps2-an505,audiodev=audio0
@@ -78,6 +78,8 @@
 
 /* reset device + print info */
 void audio_init(void);
+/* enable DONE interrupt (NVIC IRQ 49); only on targets with slot 49 wired */
+void audio_irq_enable(void);
 /* start looping playback */
 void audio_play(const void *pcm, uint32_t len, uint32_t rate, uint32_t fmt);
 /* disable playback */
