@@ -325,6 +325,51 @@ SIP/SYNC/RTP 全部投到 `.15`，callee 收不到任何转发流量 → 通话�
 10. **部署形态**：真实是两台独立设备（各有公网/内网地址），建议用 pjsua 标准流程
     （STUN/TURN/ICE）而非手工 hostfwd。
 
+---
+
+# WORKLOG 补记（2026-08-22 深夜）— 长通话测试（10s / 1000 帧）
+
+## 目标
+验证长时间稳定性：>10s、非固定 200 帧。关注时钟漂移、jbuf 自适应、音频连续性。
+
+## 改动
+- `pj_sip_dual_test.c`：`MEDIA_FRAMES` 200→**1000**（10s）；mic 捕获超时 20M→200M；
+  媒体等待超时 10s→20s；**jbuf 配置**（见下）。
+- WAV 源：新增 `sine_1k_8k_10s.wav` / `sine_440_8k_10s.wav`（10s，QEMU mic 设备读完即停无循环，
+  必须给足时长）。
+- `run_dual_slirp.ps1`：换 10s WAV，`$Wait` 45→60。
+
+## 结果（10s / 1000 帧，slirp + 3 修复 + jb_init=40，3 轮）
+
+```
+RUN1: callee tx=1000 loss=0 | caller tx=1000 loss=0 | 双 ALL PASSED
+RUN2: callee tx=1000 loss=0 | caller tx=1000 loss=0 | 双 ALL PASSED
+RUN3: callee tx=1000 loss=0 | caller tx=1000 loss=0 | 双 ALL PASSED
+```
+
+- **网络 10s 稳定零丢**：双向 `rx rtcp pkt=1000 loss=0 discard=0`，`rtcp tx=1000 loss=0`。
+- **音频连续**（analyze_call_audio FFT）：callee 听到 1001Hz（caller 1kHz）、caller 听到 ~474Hz
+  （callee 440Hz，FFT bin 分辨率），`loud=35-38/38` → **empty 帧被 PLC 填充，音频不中断**。
+- **时钟 avg 稳定**：`clock cb n=1000 avg=9987-9988us`（无大步漂移）。
+
+## 重要发现：jbuf 自适应配置（真实固件问题，长通话才暴露）
+
+- 原配置 `si.jb_init = 0` → **10s 通话 `empty=957-980`（97% 播放是 empty），`play normal` 仅 3%**。
+  网络零丢但播放几乎全是空帧（get_frame 时 jbuf 无当前帧）。
+- **根因（jbuf.c）**：自适应只在 `jb->jb_init_prefetch != 0` 时更新 prefetch（`if (jb->jb_init_prefetch)`）。
+  `jb_init=0` → **自适应完全禁用**，prefetch 恒 0 → jbuf 不缓存 → 单向延迟 > 10ms（一帧）时
+  get_frame 即空。2s 短通话 RTT 3-8ms（单向 < 一帧）未暴露；10s 通话 RTT 波动 0-218ms 暴露。
+- **修复**：`si.jb_init = 40`（初始 prefetch 40ms=4 帧，**必须 >0 才启用自适应**）。
+  → `prefetch=4`、`delay avg 26ms`、**`empty` 97%→56%、`play normal` 3%→43%**。
+- **单位备忘**：`si.jb_*` 参数（jb_init/jb_min_pre/jb_max_pre）单位是 **ms**（stream.c 按 frm_ptime 换算成帧）。
+
+## 仍存在的特性（非缺陷）
+- **QEMU RTT 波动大**（callee 侧 0-218ms，单向可达 ~100ms > 40ms prefetch）→ 部分 empty（56%）。
+  这是 QEMU slirp 长时间运行的延迟波动特性；**真实网络 RTT 稳定（<50ms 单向 <25ms）时
+  40ms 自适应足够，empty 会很低**。empty 帧经 PLC 填充，音频连续（FFT 验证）。
+- 自适应基于 burst level，持续 empty 时不会进一步涨 prefetch（`prefetch=4` 停在 min）——pjmedia 设计。
+
+
 
 
 

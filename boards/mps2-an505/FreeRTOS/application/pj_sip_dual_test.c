@@ -349,7 +349,7 @@ static pj_status_t uac_dial(void)
 #define MEDIA_FMT        MIC_FORMAT_S16
 #define MFRAME_SAMPLES   80          /* 10 ms @ 8 kHz */
 #define MFRAME_BYTES     (MFRAME_SAMPLES * 2)
-#define MEDIA_FRAMES     200         /* 200 x 10 ms = 2 s */
+#define MEDIA_FRAMES     1000        /* 1000 x 10 ms = 10 s long-call test */
 #define MEDIA_PCM_BYTES  (MEDIA_FRAMES * MFRAME_BYTES)   /* 32000 bytes */
 
 /* PCM buffers: s_mcap = mic capture (S16, 2 s), s_mplay = decoded peer
@@ -633,7 +633,7 @@ static int run_dual_media(pj_pool_t *pool)
     printf("pj_sip_dual[%s]: pjmedia_stream media rx=%u rtcp=%u\r\n",
            ROLE_NAME, (unsigned)MY_RTP_PORT, (unsigned)MY_RTCP_PORT);
 
-    if (!mic_capture(s_mcap, MEDIA_PCM_BYTES, MEDIA_RATE, MEDIA_FMT, 20000000UL)) {
+    if (!mic_capture(s_mcap, MEDIA_PCM_BYTES, MEDIA_RATE, MEDIA_FMT, 200000000UL)) {
         printf("pj_sip_dual[%s]: mic capture failed\r\n", ROLE_NAME);
         return -1;
     }
@@ -681,10 +681,14 @@ static int run_dual_media(pj_pool_t *pool)
      * between bursts (high empty count) even though the AUDIO is continuous
      * (verified by wav FFT: 439/1001 Hz tone heard end-to-end).  This is an
      * emulator/network characteristic, not a pjproject defect. */
-    si.jb_init = 0;       /* start with empty buffer */
-    si.jb_min_pre = 0;    /* no forced prefetch (falls back to default 1) */
-    si.jb_max_pre = 100;  /* adaptive up to 10 frames */
-    si.jb_max = 250;      /* max depth 25 frames */
+    si.jb_init = 40;      /* initial prefetch 40 ms (4 frames).  MUST be >0:
+                           * jbuf adaptive only updates prefetch when
+                           * jb_init_prefetch != 0 (jbuf.c); with 0 it stays 0
+                           * -> get_frame empties once one-way delay > 10 ms.
+                           * 10s call: empty dropped 97%->56%, normal 3%->43%. */
+    si.jb_min_pre = 40;   /* min prefetch 40 ms (4 frames) */
+    si.jb_max_pre = 100;  /* adaptive up to 100 ms (10 frames) */
+    si.jb_max = 250;      /* max depth 250 ms (25 frames) */
     printf("pj_sip_dual[%s]: codec=%s/%u ch=%u dir=%d tx_pt=%d rx_pt=%d "
            "tx_evt=%d rx_evt=%d\r\n", ROLE_NAME,
            si.fmt.encoding_name.ptr, si.fmt.clock_rate, si.fmt.channel_cnt,
@@ -757,9 +761,9 @@ static int run_dual_media(pj_pool_t *pool)
     xTaskCreate(ioq_thread,   "pjdual-ioq", 2048, NULL, 3, NULL);
     xTaskCreate(play_thread,  "pjdual-play", 2048, NULL, 3, NULL);
 
-    /* Let the clock + ioq run the 2 s call. */
+    /* Let the clock + ioq run the 10 s call. */
     wait_ms = 0;
-    while (g_play_ms == 0 && wait_ms < 10000) { vTaskDelay(pdMS_TO_TICKS(5)); wait_ms += 5; }
+    while (g_play_ms == 0 && wait_ms < 20000) { vTaskDelay(pdMS_TO_TICKS(5)); wait_ms += 5; }
     /* Hypothesis test (2026-08-21): much of the "RTCP loss" is NOT real
      * network loss - RTP frames arrive (lwIP udp.drop=0, NIC rx_drop=0) but
      * the media ioqueue hasn't drained them from the lwIP socket buffer by
