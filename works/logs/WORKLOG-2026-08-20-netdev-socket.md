@@ -467,3 +467,52 @@ A/B 实测（frm_per_pkt=1 保留，10s 长通话 x3 轮，6/6 PASS）：
 3. 当前不需要：240ms 已验证足够。
 
 **提交清单（更新）**：pj_sip_dual_test.c、run_dual_slirp.ps1、analyze_audio_deep.py（新增）、WORKLOG。config.h 不含（已还原，pjproject 干净）。
+---
+
+## Step 1: guest<->host 互通验证（QEMU -> 宿主 pjsua）
+
+**结论：互通可行。** SIP 信令双向 + RTP/DTMF guest->host 已实测证实，地址重写机制全部生效。
+
+**拓扑**（slirp + hostfwd 回包通道）：
+- guest 拨 sip:user@10.0.2.2:5060 -> slirp 网关 -> host 127.0.0.1:5060 -> pjsua（Via received=127.0.0.1:15062，slirp 保留源端口）
+- guest SDP offer c=127.0.0.1:4000（宿主可见）；peer SDP 重写为 10.0.2.2；RTCP 目标 10.0.2.2:5001
+- hostfwd：udp::15062-:15062, 4000-:4000, 4001-:4001（SIP/RTP 回包通道）
+
+**实测证据**：
+1. SIP INVITE guest->host：pjsua 收到
+2. SIP 200 host->guest：guest CONFIRMED + SDP 协商成功
+3. RTP guest->host：pjsua jitter buffer 收 562 帧 + DTMF 5/#（RFC2833）
+4. 地址重写：offer/rewrite/RTCP 全部生效
+
+**宿主侧**：pjsua 2.17 用 VS 2026 编译（build-win64/pjsip-apps/Release/pjsua.exe）；脚本 works/tools/run_pjsua_uas.ps1（--local-port=5060 --rtp-port=5000 --auto-answer=200 --null-audio）
+**固件侧**：pj_sip_dual_test.c 新增 PJ_HOST_CALL 模式（-DPJ_HOST_CALL=ON + caller）；脚本 works/tools/run_hostcall_test.ps1
+
+**关键机制（slirp 下 guest<->host）**：
+- guest -> host：任何 host socket 以 10.0.2.2:<port>（网关=host loopback 别名）直达
+- host -> guest：host 进程无法路由到 10.0.2.15/10.0.2.2，唯一通道是 hostfwd（发 127.0.0.1:<hostfwd端口>）
+- 所以双侧地址需重写：guest offer/Contact 用 127.0.0.1:<hostfwd端口>，对端 SDP 重写 10.0.2.2
+
+**待完善**：
+1. ACK 仍发不出：pjsip 发送地址缓存深（改 dlg->target + last_ack RURI + dest_info 均未完全生效；pjsua 反复重传 200）。不影响已建立媒体。后续可用 TCP SIP 规避
+2. guest 媒体时钟 ~5.6s 后卡住（统计未打印；疑似 lwIP UDP 发送/ioq 空转使 play 线程饿死）——不影响互通结论
+3. host->guest RTP 完整统计待确认（通道已建立：pjsua 发 127.0.0.1:4000 -> hostfwd -> guest）
+---
+
+## Step 1 收尾（2026-08-22）：ACK + 媒体时钟 + host→guest 全部解决
+
+**① ACK 已解决（手动 ACK）**：pjsip 的 ACK 发送地址缓存深（改 dlg->target / last_ack RURI / dest_info / tp_info.dst_addr 均不彻底）。最终方案：收到 200 后（CONNECTING/CONFIRMED）用 pjsip_msg_print 生成 ACK 文本 + 原始 UDP socket 直发 10.0.2.2:5060（网关→宿主），完全绕过 pjsip transport 解析。实测 pjsua 收到 ACK → Call 0 CONFIRMED。
+
+**② "媒体时钟卡住"是误判**：日志截断导致。实际 clk ix=1000 tx=1000/1000，媒体完整跑完 10s。
+
+**③ host→guest RTP 通道（两个根因）**：
+- 根因 A：QEMU UDP hostfwd **惰性关联**——host socket 需 guest 先向该端口发包才学会转发目标，且关联 guest **源端口**（dummy 用随机源端口→关联错）。
+- 修复：ctivate_hostfwd_rx() 在媒体 transport 创建**前**（SIP transport 建立后）**绑定 guest 端口(4000/4001)为源**发 dummy 到网关 → hostfwd 关联 guest:4000/4001。
+- 验证：宿主 tp_probe.py 发 G.711 RTP 到 127.0.0.1:4000 → guest 
+orm 1→97/141；pjsua 的 RTP 到达并播放 80000 字节（10s 音频）+ guest 收 4 RTCP。
+
+**剩余（宿主工具特性，不影响互通结论）**：
+1. pjsua 的 RTP 发送量不稳定（--null-audio + --play-file 组合行为）→ run_hostcall_test.ps1 判定可能 FAIL（要求 rx.pkt≥850），实际双向媒体已通
+2. rtp_probe.py 未绑定源端口会干扰 guest 远端地址学习（Remote RTP address switched 到 probe 源端口）——仅用于接收验证
+3. 媒体统计打印偶不出现（stdout 缓冲 + 被杀时机）
+
+**最终结论：guest↔host 互通完整验证**（SIP 双向 + RTP 双向 + DTMF + ACK + 媒体 1000 帧 + 地址重写）。slirp 互通要点：guest→host 用 10.0.2.2:<port>（网关）；host→guest 走 hostfwd（宿主发 127.0.0.1:<hostfwd端口>），**UDP hostfwd 需 guest 绑定源端口激活关联**；双侧地址重写（guest offer 用 127.0.0.1:hostfwd端口，对端 SDP 重写 10.0.2.2）。

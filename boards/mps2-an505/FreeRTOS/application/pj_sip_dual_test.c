@@ -90,6 +90,27 @@
 #define CALLEE_SYNC_HOST 20013
 #define MAX_LOOP       600          /* 600 x 100ms = 60s max wait */
 
+/* Host-call mode (-DPJ_HOST_CALL=1, caller role): dial a SIP UA running on
+ * the HOST (e.g. pjsua) instead of a peer QEMU.  slirp reachability:
+ *   guest -> host : any host socket is reached as 10.0.2.2:<port> (gateway
+ *                   = host loopback alias); SIP out to the host is direct.
+ *   host -> guest : the host can only reach the guest through hostfwd, so
+ *                   the SDP/Contact addresses we publish must be the
+ *                   host-visible 127.0.0.1:<hostfwd port>, and the peer's
+ *                   SDP address must be rewritten to 10.0.2.2 for RTP tx.
+ * hostfwd (guest SIP 15062, RTP 4000/4001 exposed as themselves):
+ *   udp::15062-:15062, udp::4000-:4000, udp::4001-:4001
+ * Guest dials: sip:user@10.0.2.2:<HOST_SIP_PORT> (host pjsua --local-port). */
+#if defined(PJ_HOST_CALL)
+#  if !defined(PJ_DUAL_ROLE_CALLER)
+#    error "PJ_HOST_CALL requires PJ_DUAL_ROLE_CALLER"
+#  endif
+#  ifndef HOST_SIP_PORT
+#    define HOST_SIP_PORT  5060   /* host pjsua --local-port */
+#  endif
+#  define HOST_SDP_IP     "127.0.0.1" /* host-visible media/contact addr */
+#endif
+
 #if defined(PJ_DUAL_ROLE_CALLER)
 #  define ROLE_NAME      "caller"
 #  define MY_EXT_SIP     CALLER_EXT_SIP
@@ -226,12 +247,105 @@ static pjmedia_sdp_session *create_audio_sdp(pj_pool_t *pool,
 /* ------------------------------------------------------------------ */
 static void inv_on_state_changed(pjsip_inv_session *inv, pjsip_event *e)
 {
+    static int g_ack_manual = 0;   /* raw-socket ACK sent (host-call) */
     printf("pj_sip_dual[%s]: state -> %d\r\n", ROLE_NAME, (int)inv->state);
     if (inv->state == PJSIP_INV_STATE_CONFIRMED) {
         g_confirmed = 1;
     } else if (inv->state == PJSIP_INV_STATE_DISCONNECTED) {
         g_failed = 1;
     }
+#if defined(PJ_HOST_CALL)
+    if ((inv->state == PJSIP_INV_STATE_CONNECTING ||
+         inv->state == PJSIP_INV_STATE_CONFIRMED) && inv->dlg) {
+        /* The host UA advertises its LAN/loopback address, which the guest
+         * cannot route to, so the UAC's ACK fails.  Rewrite the dialog
+         * remote target AND the already-cached ACK tdata (created before
+         * this callback) to the slirp gateway, so the ACK retransmission
+         * (triggered by the peer's 200 retransmit) goes out via
+         * 10.0.2.2:<HOST_SIP_PORT>.  An application on_rx_response module
+         * cannot do this - the UA layer consumes responses first. */
+        pj_str_t *h = (pj_str_t *)pj_pool_alloc(inv->dlg->pool,
+                                                sizeof(pj_str_t));
+        if (h) {
+            pjsip_sip_uri *tu;
+            pj_strset2(h, (char *)GW_IP);
+            tu = (pjsip_sip_uri *)inv->dlg->target;
+            if (tu && PJSIP_URI_SCHEME_IS_SIP(tu)) {
+                tu->host = *h;
+                tu->port = HOST_SIP_PORT;
+            }
+            if (inv->last_ack) {
+                pjsip_msg *am = inv->last_ack->msg;
+                if (am->type == PJSIP_REQUEST_MSG &&
+                    pjsip_method_cmp(&am->line.req.method,
+                                     &pjsip_ack_method) == 0)
+                {
+                    pjsip_sip_uri *ru = (pjsip_sip_uri *)
+                        pjsip_uri_get_uri(am->line.req.uri);
+                    if (ru && PJSIP_URI_SCHEME_IS_SIP(ru)) {
+                        ru->host = *h;
+                        ru->port = HOST_SIP_PORT;
+                    }
+                }
+                /* Reset cached destination AND the resolved sockaddr so the
+                 * ACK retransmission goes to the gateway (10.0.2.2) instead
+                 * of the host UA's LAN address. */
+                inv->last_ack->dest_info.name = *h;
+                inv->last_ack->dest_info.addr.count = 0;
+                inv->last_ack->tp_info.dst_addr.ipv4.sin_family =
+                    pj_AF_INET();
+                inv->last_ack->tp_info.dst_addr.ipv4.sin_port =
+                    pj_htons((pj_uint16_t)HOST_SIP_PORT);
+                inv->last_ack->tp_info.dst_addr.ipv4.sin_addr.s_addr =
+                    inet_addr(GW_IP);
+                inv->last_ack->tp_info.dst_addr_len = sizeof(pj_sockaddr_in);
+                inv->last_ack->tp_info.dst_port = HOST_SIP_PORT;
+                printf("pj_sip_dual[%s]: ACK RURI+dest rewritten to "
+                       "%s:%d\r\n", ROLE_NAME, GW_IP, HOST_SIP_PORT);
+            }
+            /* Belt-and-braces: also send the ACK ourselves over a raw UDP
+             * socket to 10.0.2.2:5060 (gateway -> host), completely
+             * bypassing pjsip's transport address resolution.  pjsip may
+             * still retransmit its own (now rewritten) ACK; the peer
+             * ignores duplicates. */
+            if (inv->last_ack && !g_ack_manual) {
+                char abuf[1024];
+                int fd;
+                struct sockaddr_in peer;
+                pjsip_sip_uri *ru = (pjsip_sip_uri *)
+                    pjsip_uri_get_uri(inv->last_ack->msg->line.req.uri);
+                if (ru && PJSIP_URI_SCHEME_IS_SIP(ru)) {
+                    ru->host = *h;
+                    ru->port = HOST_SIP_PORT;
+                }
+                {
+                    pj_ssize_t plen =
+                        pjsip_msg_print(inv->last_ack->msg, abuf,
+                                        (pj_size_t)sizeof(abuf));
+                    if (plen > 0) {
+                        fd = socket(AF_INET, SOCK_DGRAM, 0);
+                        if (fd >= 0) {
+                            memset(&peer, 0, sizeof(peer));
+                            peer.sin_family = AF_INET;
+                            peer.sin_port = htons((u16_t)HOST_SIP_PORT);
+                            peer.sin_addr.s_addr = inet_addr(GW_IP);
+                            sendto(fd, abuf, (size_t)plen, 0,
+                                   (struct sockaddr *)&peer, sizeof(peer));
+                            lwip_close(fd);
+                            g_ack_manual = 1;
+                            printf("pj_sip_dual[%s]: manual ACK sent to "
+                                   "%s:%d (%d bytes)\r\n",
+                                   ROLE_NAME, GW_IP, HOST_SIP_PORT,
+                                   (int)plen);
+                        }
+                    }
+                }
+            }
+            printf("pj_sip_dual[%s]: dialog+ACK target rewritten to "
+                   "%s:%d\r\n", ROLE_NAME, GW_IP, HOST_SIP_PORT);
+        }
+    }
+#endif
     PJ_UNUSED_ARG(e);
 }
 
@@ -309,10 +423,18 @@ static pj_status_t uac_dial(void)
     pjsip_tpselector tp_sel;
     pj_status_t rc;
 
+#if defined(PJ_HOST_CALL)
+    /* Local (Contact) must be host-visible; remote is the host UA. */
+    pj_ansi_snprintf(local_uri, sizeof(local_uri),
+                     "sip:user@%s:%d", HOST_SDP_IP, MY_EXT_SIP);
+    pj_ansi_snprintf(remote_uri, sizeof(remote_uri),
+                     "sip:user@%s:%d", GW_IP, HOST_SIP_PORT);
+#else
     pj_ansi_snprintf(local_uri, sizeof(local_uri),
                      "sip:user@%s:%d", GW_IP, MY_EXT_SIP);
     pj_ansi_snprintf(remote_uri, sizeof(remote_uri),
                      "sip:user@%s:%d", GW_IP, PEER_EXT_SIP);
+#endif
     SET_STR(luri, ""); SET_STR(ruri, "");
     pj_strset(&luri, local_uri, (pj_ssize_t)pj_ansi_strlen(local_uri));
     pj_strset(&ruri, remote_uri, (pj_ssize_t)pj_ansi_strlen(remote_uri));
@@ -425,6 +547,7 @@ static unsigned long long g_clk_freq;
  * without it, the first instance sends its opening RTP frames before the
  * second's transport exists, which shows up as RTCP loss even though the
  * base network is loss-free. */
+#if !defined(PJ_HOST_CALL)
 static void media_sync_handshake(void)
 {
     int fd;
@@ -486,6 +609,48 @@ static void media_sync_handshake(void)
     printf("pj_sip_dual[%s]: media sync done (tries=%d peer_seen=%d)\r\n",
            ROLE_NAME, tries, peer_seen);
 }
+#endif /* !PJ_HOST_CALL */
+
+#if defined(PJ_HOST_CALL)
+/* QEMU's UDP hostfwd sockets are LAZILY associated: the host-side socket
+ * only learns the guest endpoint when the guest sends a packet to that
+ * hostfwd port (via the gateway), and it associates with the guest's SOURCE
+ * address/port.  We must therefore bind our own media rx port and send from
+ * it, so the association is guest:4000/4001 (not a random ephemeral port),
+ * otherwise the host UA's RTP/RTCP is forwarded to the wrong port and RX
+ * stays empty.  Must run BEFORE the media transport grabs the ports. */
+static void activate_hostfwd_rx(void)
+{
+    int n;
+    u16_t ports[2];
+    ports[0] = (u16_t)MY_RTP_PORT;
+    ports[1] = (u16_t)MY_RTCP_PORT;
+    for (n = 0; n < 2; ++n) {
+        int fd;
+        struct sockaddr_in local, peer;
+        char c = 0;
+        fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0)
+            continue;
+        memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port = htons(ports[n]);
+        if (bind(fd, (struct sockaddr *)&local, sizeof(local)) != 0) {
+            lwip_close(fd);
+            continue;   /* port already taken (media transport) */
+        }
+        memset(&peer, 0, sizeof(peer));
+        peer.sin_family = AF_INET;
+        peer.sin_addr.s_addr = inet_addr(GW_IP);
+        peer.sin_port = htons(ports[n]);
+        sendto(fd, &c, 1, 0, (struct sockaddr *)&peer, sizeof(peer));
+        lwip_close(fd);
+        printf("pj_sip_dual[%s]: hostfwd rx port %u associated\r\n",
+               ROLE_NAME, (unsigned)ports[n]);
+    }
+}
+#endif /* PJ_HOST_CALL */
 
 /* Poll the media endpoint ioqueue so transport_udp's async RTP/RTCP
  * recvfrom completes and the stream's on_rx_rtp / on_rx_rtcp run.
@@ -649,6 +814,29 @@ static int run_dual_media(pj_pool_t *pool)
                ROLE_NAME, rc);
         return -1;
     }
+#if defined(PJ_HOST_CALL)
+    /* The host UA (pjsua) advertises its own loopback/LAN address, which is
+     * not reachable from the guest.  Rewrite every media connection address
+     * to the slirp gateway (10.0.2.2): the guest reaches any host socket via
+     * 10.0.2.2:<port> -> host 127.0.0.1:<port>.  Ports are preserved. */
+    {
+        int j;
+        pjmedia_sdp_conn *rcn = (pjmedia_sdp_conn *)rem_sdp->conn;
+        if (rcn)
+            pj_strset(&rcn->addr, GW_IP, (pj_ssize_t)pj_ansi_strlen(GW_IP));
+        for (j = 0; j < (int)rem_sdp->media_count; ++j) {
+            pjmedia_sdp_media *rm = (pjmedia_sdp_media *)rem_sdp->media[j];
+            pjmedia_sdp_conn *mcn = rm->conn ? rm->conn : rcn;
+            if (mcn)
+                pj_strset(&mcn->addr, GW_IP,
+                          (pj_ssize_t)pj_ansi_strlen(GW_IP));
+        }
+        pj_strset((pj_str_t *)&rem_sdp->origin.addr, GW_IP,
+                  (pj_ssize_t)pj_ansi_strlen(GW_IP));
+        printf("pj_sip_dual[%s]: peer SDP addr rewritten to %s\r\n",
+               ROLE_NAME, GW_IP);
+    }
+#endif
     rc = pjmedia_stream_info_from_sdp(&si, pool, g_mep, loc_sdp, rem_sdp, 0);
     if (rc != PJ_SUCCESS) {
         printf("pj_sip_dual[%s]: stream_info_from_sdp FAILED (%d)\r\n",
@@ -738,7 +926,9 @@ static int run_dual_media(pj_pool_t *pool)
      * can receive.  Without this, the first instance sends its opening RTP
      * frames before the second's transport exists, which showed up as RTCP
      * loss even though net_burst proved the base network is loss-free. */
+#if !defined(PJ_HOST_CALL)
     media_sync_handshake();
+#endif
 
     /* Reset stats, then start the ioq task and the 10ms media clock. */
     g_media_stop = 0;
@@ -768,7 +958,10 @@ static int run_dual_media(pj_pool_t *pool)
 
     /* Let the clock + ioq run the 10 s call. */
     wait_ms = 0;
-    while (g_play_ms == 0 && wait_ms < 20000) { vTaskDelay(pdMS_TO_TICKS(5)); wait_ms += 5; }
+    while (g_play_ms == 0 && wait_ms < 20000) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        wait_ms += 5;
+    }
     /* Hypothesis test (2026-08-21): much of the "RTCP loss" is NOT real
      * network loss - RTP frames arrive (lwIP udp.drop=0, NIC rx_drop=0) but
      * the media ioqueue hasn't drained them from the lwIP socket buffer by
@@ -931,25 +1124,47 @@ int pj_sip_dual_test_run(void)
 
     pj_sockaddr_in_init(&local, NULL, (pj_uint16_t)SIP_PORT);
     local.sin_addr = host.ipv4.sin_addr;
+#if defined(PJ_HOST_CALL)
+    pj_ansi_snprintf(pub_ip, sizeof(pub_ip), "%s:%d", HOST_SDP_IP, MY_EXT_SIP);
+    pj_strset(&pub.host, HOST_SDP_IP,
+              (pj_ssize_t)pj_ansi_strlen(HOST_SDP_IP));
+#else
     pj_ansi_snprintf(pub_ip, sizeof(pub_ip), "%s:%d", GW_IP, MY_EXT_SIP);
-    SET_STR(pub.host, "");
     pj_strset(&pub.host, GW_IP, (pj_ssize_t)pj_ansi_strlen(GW_IP));
+#endif
     pub.port = (pj_uint16_t)MY_EXT_SIP;
     rc = pjsip_udp_transport_start(g_endpt, &local, &pub, 1, &g_tp);
     if (rc != PJ_SUCCESS) { printf("pj_sip_dual[%s]: udp failed (%d)\r\n", ROLE_NAME, rc); return -1; }
     printf("pj_sip_dual[%s]: UDP transport up guest=%s:%d published=%s\r\n",
            ROLE_NAME, g_local_ip, SIP_PORT, pub_ip);
 
+#if defined(PJ_HOST_CALL)
+    /* Activate the hostfwd associations as soon as the SIP transport is up,
+     * so the host UA's responses (and later media) can reach us.  QEMU UDP
+     * hostfwd is lazily bound to the guest endpoint until the guest sends a
+     * packet to that port via the gateway. */
+    activate_hostfwd_rx();
+#endif
+
     /* SDP with the host-forwarded IP + our RTP port. */
     pool = pj_pool_create(&g_cp.factory, "sdp", 1024, 1024, NULL);
+#if defined(PJ_HOST_CALL)
+    g_sdp = create_audio_sdp(pool, HOST_SDP_IP, MY_RTP_PORT);
+#else
     g_sdp = create_audio_sdp(pool, GW_IP, MY_RTP_PORT);
+#endif
     if (!g_sdp) { printf("pj_sip_dual[%s]: create_audio_sdp failed\r\n", ROLE_NAME); return -1; }
 
     g_confirmed = 0;
     g_failed = 0;
 
 #if defined(PJ_DUAL_ROLE_CALLER)
+#if defined(PJ_HOST_CALL)
+    printf("pj_sip_dual[caller]: dialing %s:%d (host pjsua)\r\n",
+           GW_IP, HOST_SIP_PORT);
+#else
     printf("pj_sip_dual[caller]: dialing %s:%d\r\n", GW_IP, PEER_EXT_SIP);
+#endif
     rc = uac_dial();
     if (rc != PJ_SUCCESS) { printf("pj_sip_dual[caller]: dial failed (%d)\r\n", rc); return -1; }
 #else

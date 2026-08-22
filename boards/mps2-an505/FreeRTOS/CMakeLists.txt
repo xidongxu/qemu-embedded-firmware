@@ -5,6 +5,7 @@ set(TARGET an505-qemu)
 # "callee" builds the UAS that answers.  Caller/callee elf files are built
 # into separate build trees (e.g. build-caller / build-callee).
 set(PJ_DUAL_ROLE "none" CACHE STRING "Dual-QEMU role: none|caller|callee")
+set(PJ_HOST_CALL OFF CACHE BOOL "Caller dials a HOST SIP UA (pjsua) instead of a peer QEMU")
 
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
@@ -69,6 +70,12 @@ target_compile_definitions(${TARGET} PRIVATE
 )
 if(PJ_DUAL_ROLE STREQUAL "caller")
     target_compile_definitions(${TARGET} PRIVATE PJ_DUAL_ROLE_CALLER=1)
+    if(PJ_HOST_CALL)
+        # PJ_HOST_CALL: dial a SIP UA on the HOST (e.g. pjsua) instead of a
+        # peer QEMU.  Requires the caller role; see pj_sip_dual_test.c for
+        # the slirp address-rewriting this implies.
+        target_compile_definitions(${TARGET} PRIVATE PJ_HOST_CALL=1)
+    endif()
 elseif(PJ_DUAL_ROLE STREQUAL "callee")
     target_compile_definitions(${TARGET} PRIVATE PJ_DUAL_ROLE_CALLEE=1)
 elseif(NOT PJ_DUAL_ROLE STREQUAL "none")
