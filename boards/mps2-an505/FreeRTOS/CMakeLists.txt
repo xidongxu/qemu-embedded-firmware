@@ -17,11 +17,14 @@ file(GLOB APP_SOURCES
     "application/*.c"
 )
 
-# pj_sip_dual_test.c is role-specific and #errors when neither role macro is
-# defined; only compile it in dual mode (main.c runs only that test then).
+# Dual-role-only tests (#error without PJ_DUAL_ROLE_*): exclude them in the
+# normal (non-dual) single-instance build, which runs the pjlab experiments
+# (pj_test..pj_call).  pj_sip_dual_test.c already lives in pjlab/ and is
+# excluded by pjlab/CMakeLists.txt; net_burst_test.c stays here in
+# application/ (bare-network burst test, no pjproject).
 if(PJ_DUAL_ROLE STREQUAL "none")
     list(REMOVE_ITEM APP_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/application/pj_sip_dual_test.c")
+        "${CMAKE_CURRENT_SOURCE_DIR}/application/net_burst_test.c")
 endif()
 
 # Only one lwIP demo app is built at a time: NO_SYS (raw API) vs OS mode.
@@ -45,6 +48,10 @@ target_sources(${TARGET} PRIVATE
     ${CORE_SOURCES}
     ${STARTUP_SOURCES}
 )
+
+# pjlab: pjproject learning experiments (real sources moved out of
+# application/; application/ is reserved for application development).
+add_subdirectory(pjlab)
 
 target_include_directories(${TARGET} PRIVATE
     application

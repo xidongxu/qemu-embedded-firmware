@@ -247,7 +247,9 @@ static pjmedia_sdp_session *create_audio_sdp(pj_pool_t *pool,
 /* ------------------------------------------------------------------ */
 static void inv_on_state_changed(pjsip_inv_session *inv, pjsip_event *e)
 {
+#if defined(PJ_HOST_CALL)
     static int g_ack_manual = 0;   /* raw-socket ACK sent (host-call) */
+#endif
     printf("pj_sip_dual[%s]: state -> %d\r\n", ROLE_NAME, (int)inv->state);
     if (inv->state == PJSIP_INV_STATE_CONFIRMED) {
         g_confirmed = 1;
