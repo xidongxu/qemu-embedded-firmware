@@ -4,10 +4,7 @@
 #ifndef PJ_PHONE_H
 #define PJ_PHONE_H
 
-/* Start the PJSUA phone: init, transport, account, then dial the host UA. */
+/* Start the PJSUA phone: init, transport, account, then dial the callee. */
 int pj_phone_start(void);
-
-/* Periodic call-control (auto hangup + redial).  Call from the main loop. */
-void pj_phone_control(void);
 
 #endif /* PJ_PHONE_H */

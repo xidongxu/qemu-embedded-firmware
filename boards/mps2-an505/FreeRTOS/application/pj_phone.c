@@ -32,20 +32,30 @@
 #include "mpsx_dev.h"
 
 #define HOST_GW        "10.0.2.2"   /* slirp gateway = host loopback alias */
-#define HOST_SIP_PORT  5060         /* host pjsua / SIP server UDP port */
+/* FreeSWITCH is configured to bind 0.0.0.0 (sip-ip/rtp-ip), so it is also
+ * reachable on host loopback => fixed 10.0.2.2 (no dependency on the host's
+ * DHCP-assigned LAN IP). */
+#define FS_HOST        "10.0.2.2"
+#define HOST_SIP_PORT  5060         /* FreeSWITCH SIP UDP port */
 #define GUEST_SIP_PORT 15062        /* guest SIP port (hostfwd'd as itself) */
-#define DIAL_TARGET    "sip:user@10.0.2.2:5060"
+#define REG_USER       "1000"       /* extension registered on FreeSWITCH */
+#define REG_PASSWORD   "1234"       /* FreeSWITCH default_password */
+/* Dial extension 1005 (Android phone registered on FreeSWITCH) once
+ * registered.  The phone registers on the FreeSWITCH DEFAULT profile
+ * (192.168.23.7 domain), NOT the internal-lo profile the guest registers
+ * on (10.0.2.2).  Dialing straight to the default-profile domain makes
+ * sofia_contact find 1005 inside its own domain -> the phone actually
+ * rings (EARLY) instead of the INVITE falling into voicemail.
+ * REGISTER above still goes to FS_HOST (internal-lo); only the dial
+ * target points at the phone's home domain. */
+#define DIAL_HOST      "192.168.23.7"
+#define DIAL_TARGET    "sip:1005@" DIAL_HOST ":5060"
 
 static pjsua_acc_id g_acc = PJSUA_INVALID_ID;
 static pjsua_call_id g_call_id = PJSUA_INVALID_ID;   /* active call for stats */
 
-/* ---- call-control state (auto hangup + redial) ---- */
-#define CALL_DURATION_MS    15000   /* auto-hangup after 15 s in a call  */
-#define REDIAL_DELAY_MS      5000   /* wait 5 s after hangup, then redial */
-static uint32_t    g_call_start_tick; /* tick when call media went ACTIVE  */
-static uint32_t    g_last_idle_tick;  /* tick when last call disconnected  */
-static int         g_call_state = PJSIP_INV_STATE_NULL;
-static pj_bool_t   g_auto_redial = PJ_TRUE;
+/* Single-call mode: dial once at startup, hold until the remote hangs up.
+ * No auto-hangup / auto-redial (that would re-ring the callee repeatedly). */
 
 /* High-priority watchdog: keeps reporting free heap / task stack high-water
  * even if the pjsua worker thread stalls (deadlock / stack-overflow debug). */
@@ -136,14 +146,11 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
     pjsua_call_info ci;
     PJ_UNUSED_ARG(e);
     if (pjsua_call_get_info(call_id, &ci) == PJ_SUCCESS) {
-        g_call_state = ci.state;
         printf("pj_phone: call %d state=%d (%.*s)\r\n", call_id,
                (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
         if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
-            printf("pj_phone: call %d disconnected, idle (redial in %u ms)\r\n",
-                   call_id, (unsigned)REDIAL_DELAY_MS);
+            printf("pj_phone: call %d disconnected\r\n", call_id);
             g_call_id = PJSUA_INVALID_ID;
-            g_last_idle_tick = xTaskGetTickCount();
         }
     }
 }
@@ -169,7 +176,6 @@ static void on_call_media_state(pjsua_call_id call_id)
             }
             pjsua_conf_connect(ci.conf_slot, 0);
             pjsua_conf_connect(0, ci.conf_slot);
-            g_call_start_tick = xTaskGetTickCount();
             printf("pj_phone: conf connected (call slot %d <-> snd 0)\r\n",
                    ci.conf_slot);
         }
@@ -190,45 +196,6 @@ static pj_status_t pj_phone_dial(void)
     if (st == PJ_SUCCESS)
         g_call_id = call_id;
     return st;
-}
-
-void pj_phone_control(void)
-{
-    uint32_t now;
-
-    if (!g_auto_redial)
-        return;
-
-    now = xTaskGetTickCount();
-    if (g_call_id != PJSUA_INVALID_ID) {
-        /* In a call: report echo-canceller convergence.  The simple echo
-         * suppressor exposes learning/stat_info; Speex AEC has no get_stat
-         * (PJ_ENOTSUP) so nothing is printed for it. */
-        {
-            pjmedia_echo_stat ecs;
-            if (pjsua_get_ec_stat(&ecs) == PJ_SUCCESS) {
-                printf("pj_phone: ec learn=%u tail=%u min=%u avg=%u | %.*s\r\n",
-                       ecs.learning, ecs.tail, ecs.min_factor, ecs.avg_factor,
-                       (int)ecs.stat_info.slen, (char*)ecs.stat_info.ptr);
-            }
-        }
-        /* in a call: auto-hangup once the call has lasted CALL_DURATION_MS */
-        if ((now - g_call_start_tick) >= pdMS_TO_TICKS(CALL_DURATION_MS)) {
-            printf("pj_phone: auto hangup after %u ms\r\n",
-                   (unsigned)CALL_DURATION_MS);
-            pjsua_call_hangup(g_call_id, 0, NULL, NULL);
-            /* g_call_id cleared on DISCONNECTED in on_call_state */
-        }
-    } else {
-        /* idle: redial once REDIAL_DELAY_MS has passed since disconnect */
-        if (g_last_idle_tick != 0 &&
-            (now - g_last_idle_tick) >= pdMS_TO_TICKS(REDIAL_DELAY_MS))
-        {
-            printf("pj_phone: redialing\r\n");
-            pj_phone_dial();
-            g_last_idle_tick = 0;   /* reset until the next disconnect */
-        }
-    }
 }
 
 /* --------------------------- entry ------------------------------- */
@@ -336,26 +303,34 @@ int pj_phone_start(void)
     }
     printf("pj_phone: pjsua_start OK\r\n");
 
-    /* Local account (no REGISTER for now; dial directly.  Set reg_uri to
-     * register to a host SIP server later). */
+    /* Register extension 1000 to the host FreeSWITCH (reached via the slirp
+     * gateway 10.0.2.2).  After REGISTER the guest is a real SIP endpoint:
+     * it can be called by other extensions and call them.  realm "*" matches
+     * FreeSWITCH's dynamic realm (host local_ip_v4). */
     pjsua_acc_config_default(&acc_cfg);
-    acc_cfg.id = pj_str("sip:phone@10.0.2.15");
+    acc_cfg.id = pj_str("sip:" REG_USER "@" FS_HOST);
+    acc_cfg.reg_uri = pj_str("sip:" FS_HOST ":5060");
+    acc_cfg.cred_count = 1;
+    acc_cfg.cred_info[0].realm = pj_str("*");
+    acc_cfg.cred_info[0].scheme = pj_str("digest");
+    acc_cfg.cred_info[0].username = pj_str(REG_USER);
+    acc_cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
+    acc_cfg.cred_info[0].data = pj_str(REG_PASSWORD);
     /* Advertise 127.0.0.1 as the media address in SDP so the host sends
      * RTP to the slirp hostfwd port (udp::4000-:4000 -> guest) instead of
      * an unreachable 10.0.2.15.  Binding stays 0.0.0.0. */
     acc_cfg.rtp_cfg.public_addr = pj_str("127.0.0.1");
-    st = pjsua_acc_add(&acc_cfg, PJ_FALSE, &g_acc);
+    st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
     if (st != PJ_SUCCESS) {
         printf("pj_phone: acc_add failed (%d)\r\n", st);
         return -1;
     }
     printf("pj_phone: account added id=%d\r\n", g_acc);
 
-    /* Dial the host UA. */
+    /* Dial the callee once (single-call mode). */
     st = pj_phone_dial();
     if (st != PJ_SUCCESS)
         return -1;
-    g_last_idle_tick = xTaskGetTickCount();
 
     return 0;
 }

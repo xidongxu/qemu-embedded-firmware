@@ -171,9 +171,10 @@ static void main_task_entry(void *parameters) {
         xTaskCreate(phone_watchdog, "wd", 2048, NULL, 5U, NULL);
     }
     pj_phone_start();
+    /* Single-call mode: keep this task suspended; pjsua threads + watchdog
+     * handle the call.  Hangup just clears state, no redial. */
     while (1) {
         vTaskDelay(1000);
-        pj_phone_control();
     }
 #endif
 

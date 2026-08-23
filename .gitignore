@@ -67,3 +67,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Test run logs (works/logs) - WORKLOG-*.md stays tracked
+works/logs/*.err
+works/logs/*.txt
