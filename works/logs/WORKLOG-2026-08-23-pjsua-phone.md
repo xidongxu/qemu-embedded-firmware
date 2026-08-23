@@ -62,7 +62,7 @@
   - **采集**：mic infile 1kHz WAV → mpsx cap 帧 zcr=40（≈1kHz）→ conf → **发送 tx=99**（有内容）
   - **播放**：guest 收到 host 1kHz → play_cb 帧 zcr=40（1kHz）→ conf rx=99（有内容）
   - RTP 双向稳定：rx_pkt 持续、tx_pkt 持续、rx_lost 小
-- **⚠ 剩余（QEMU 后端）**：QEMU `-audiodev wav` 录 guest 播放是 **500Hz**（应为 1kHz）——固件 play_cb 给 1kHz 正确，是 patched QEMU mpsx audio voice 采样率问题（疑 S16 voice 处理/采样率减半，U8 audio_test 播放 1kHz 正确）。需在 qemu-embedded-platform 仓库修。宿主 `--rec-file` 录 guest 为空：宿主 pjsua rec-file 连接未执行（宿主配置问题，非 guest——guest conf tx=99 证明在发）
+- **⚠ 已修复（QEMU 后端播放 500Hz，2026-08-23）**：QEMU `-audiodev wav` 录 guest 播放 500Hz 的根因 = `qemu-embedded-platform` 的 `hw/audio/mpsx_simple_audio.c` 自定义宏 `AUDIO_FORMAT_S16 (1)` 与 QEMU `AudioFormat` 枚举冲突（QEMU 里 `AUDIO_FORMAT_S16=3`）→ `as.fmt=1` 被音频引擎当作 **S8（8bit）** → 采样数翻倍 → 1kHz 播成 500Hz。**修复**：设备格式宏改名 `MPSX_FMT_*`、`mpsx_audio_fmt()` 返回 QEMU 枚举（S16=3/U8=0）、reset/FORMAT 校验用 `MPSX_FMT_*`。**验证**：播放录制中位 **1000Hz**。**注意**：QEMU 已用 mingw64 环境重编（`qemu-configure` ninja，PATH 加 `usr/bin`(sh)+`mingw64/bin`；`touch build.ninja` 可避免全量 regen），exe 拷到 `qemu-build`。宿主 `--rec-file` 录 guest 为空：宿主 pjsua rec-file 连接未执行（宿主配置问题，非 guest——guest conf tx=99 证明在发）
 
 ## 改动文件
 - `libutils/pjprojec/ports/freertos/CMakeLists.txt`：补编 pjnath/pjmedia-audiodev/pjsua-lib + 依赖源
