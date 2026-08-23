@@ -114,7 +114,7 @@ static void main_task_entry(void *parameters) {
     /* PJLIB (pjsip stack foundation) FreeRTOS port self-test. */
     pj_test_run();
 
-#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE) || defined(PJ_PHONE)
     /* Dual-QEMU mode: SKIP the SPI-flash + FatFS self-test.  fatfs_test()
      * formats the file system and blocks for a long time; running it before
      * the dual media test would leave the peer waiting at the media
@@ -139,7 +139,7 @@ static void main_task_entry(void *parameters) {
     fatfs_test();
 #endif
 
-#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE) || defined(PJ_PHONE)
     /* Dual-QEMU call mode: SKIP the LVGL task + benchmark so the guest CPU
      * is free for the SIP/RTP media path.  Hypothesis (2026-08-20): the LVGL
      * benchmark saturates CPU, worsening QEMU TCG virtual-clock bursts and

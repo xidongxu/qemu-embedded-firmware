@@ -28,7 +28,18 @@
 ### 4. 媒体 RTP（双向配置）
 - guest→host RTP：宿主 `--ip-addr=10.0.2.2`（宿主 SDP c= 对 guest 可达）→ 宿主收到（RX pt=0）
 - host→guest RTP：guest `rtp_cfg.public_addr=127.0.0.1`（guest SDP c=）→ 宿主发 RTP 到 127.0.0.1:4000（hostfwd udp::4000-:4000）→ guest
-- 注意：RTP 在 QEMU 虚拟时钟下不稳定（宿主 Jitter buffer empty/PLC）——环境固有限制
+
+### 5. A1：RTP 双向稳定收包（no_vad + snd_auto_close 修复）
+- **问题**：guest `tx_pkt=32` 停发 → 根因是 guest 的 null 音频设备空闲 1 秒被自动关闭（`snd_idle_timer`，`pjsua_media_config.snd_auto_close_time` 默认 1）→ 媒体时钟停 → stream 无音频源停发
+- **修复**（`pj_phone.c` 的 `media_cfg`）：
+  - `no_vad = PJ_TRUE`：禁用 VAD，null 静音源不被抑制，stream 持续编码/发送
+  - `snd_auto_close_time = -1`：禁用音频设备自动关闭（-1 = 永不自动关闭）
+- **验证**（60s，`--auto-play` 干净基线，`--jb-max-size=120`）：
+  - guest `rx_pkt` 142→2401 持续增长 → host→guest 稳定收包
+  - guest `tx_pkt` 70→1273 持续增长 → guest→host 稳定发包
+  - guest `rx_lost`=132（5.5%）稳定不失控
+  - 宿主 `Jitter buffer empty`=0 → 宿主持续解码 guest RTP
+- **附注**：`--auto-loop`（宿主回环远端音频到 TX）可使双向持续 60s，但宿主 jitter-empty ~900/次（auto-loop 处理干扰宿主 RX 时钟，非 guest 发包问题——auto-play 基线为 0）；`--auto-play` 为干净 A1 基线（宿主仅在 10s WAV 期间持续发，但已验证 host→guest 全程收包）
 
 ## 改动文件
 - `libutils/pjprojec/ports/freertos/CMakeLists.txt`：补编 pjnath/pjmedia-audiodev/pjsua-lib + 依赖源
@@ -37,11 +48,11 @@
 - `libutils/pjprojec/ports/freertos/src/os_core_freertos.c`：**pj_thread_this TLS 惰性修复（核心）**、find_current_thread 256 guard
 - `libutils/pjprojec/pjlib/src/pj/lock.c`：grp_lock_acquire 16 链表遍历 guard
 - `libutils/pjprojec/pjsip/include/pjsua-lib/pjsua_internal.h`：PJSUA_UNLOCK 防下溢、PJSUA_RELEASE_LOCK 32 上限
-- `boards/mps2-an505/FreeRTOS/application/pj_phone.c`：PJSUA 电话应用 + watchdog + rtp_cfg.public_addr
+- `boards/mps2-an505/FreeRTOS/application/pj_phone.c`：PJSUA 电话应用 + watchdog + rtp_cfg.public_addr + media_cfg.no_vad + snd_auto_close_time=-1（A1）
 - `boards/mps2-an505/FreeRTOS/application/main.c`：PJ_PHONE 分支（lwip 网络后）+ 栈溢出/malloc hooks
 - `boards/mps2-an505/FreeRTOS/application/FreeRTOSConfig.h`：configCHECK_FOR_STACK_OVERFLOW=2
 - `boards/mps2-an505/FreeRTOS/CMakeLists.txt`：PJ_PHONE 选项 + 链接 pjsua-lib 等
-- `works/tools/run_phone_test.ps1`：PJSUA 电话运行脚本（-Answer/-UseTimer/-IpAddr 参数 + RTP hostfwd）
+- `works/tools/run_phone_test.ps1`：PJSUA 电话运行脚本（-Answer/-UseTimer/-IpAddr 参数 + RTP hostfwd + --jb-max-size + --duration=60 + auto-loop 说明）
 
 ## 运行
 ```

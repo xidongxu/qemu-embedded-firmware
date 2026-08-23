@@ -34,6 +34,7 @@
 #define DIAL_TARGET    "sip:user@10.0.2.2:5060"
 
 static pjsua_acc_id g_acc = PJSUA_INVALID_ID;
+static pjsua_call_id g_call_id = PJSUA_INVALID_ID;   /* active call for stats */
 
 /* High-priority watchdog: keeps reporting free heap / task stack high-water
  * even if the pjsua worker thread stalls (deadlock / stack-overflow debug). */
@@ -53,6 +54,16 @@ void phone_watchdog(void *arg)
     (void)arg;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(3000));
+        /* RTP stream stat for audio media (index 0). */
+        if (g_call_id != PJSUA_INVALID_ID) {
+            pjsua_stream_stat ss;
+            if (pjsua_call_get_stream_stat(g_call_id, 0, &ss) == PJ_SUCCESS) {
+                printf("wd: rx_pkt=%lu tx_pkt=%lu rx_lost=%lu\r\n",
+                       (unsigned long)ss.rtcp.rx.pkt,
+                       (unsigned long)ss.rtcp.tx.pkt,
+                       (unsigned long)ss.rtcp.rx.loss);
+            }
+        }
         TaskHandle_t cur = xTaskGetCurrentTaskHandle();
         printf("wd: current=%s\r\n", pcTaskGetName(cur));
         UBaseType_t n = uxTaskGetNumberOfTasks();
@@ -146,6 +157,14 @@ int pj_phone_start(void)
     media_cfg.snd_clock_rate = 8000;
     media_cfg.channel_count = 1;
     media_cfg.ec_options = 0;
+    /* The audio source is null (silence) until a real mpsx backend is wired
+     * up; without this, VAD suppresses all TX packets.  Disable VAD so the
+     * guest keeps sending (silence) and the RTP path stays active. */
+    media_cfg.no_vad = PJ_TRUE;
+    /* Default snd_auto_close_time=1 closes the (null) sound device after
+     * 1s idle, which kills the media clock -> guest stops sending RTP.
+     * Disable the auto-close so the guest stream keeps running. */
+    media_cfg.snd_auto_close_time = -1;
 
     st = pjsua_init(&cfg, &log_cfg, &media_cfg);
     if (st != PJ_SUCCESS) {
@@ -198,6 +217,7 @@ int pj_phone_start(void)
            (int)st, (int)call_id);
     if (st != PJ_SUCCESS)
         return -1;
+    g_call_id = call_id;
 
     return 0;
 }

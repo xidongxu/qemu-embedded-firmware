@@ -25,6 +25,10 @@ New-Item -ItemType Directory -Force -Path $lg | Out-Null
 Remove-Item "$lg\phone_pjsua.log","$lg\phone_pjsua.err","$lg\phone_guest.log","$lg\phone_guest.err" -Force -ErrorAction SilentlyContinue
 
 # 1) host-side pjsua UAS (auto-answer, null audio)
+# NOTE: --auto-loop gives continuous bidirectional RTP but makes the host
+# jitter buffer empty ~900 times per run (auto-loop processing skews host
+# RX); --auto-play is the clean A1 baseline (host jitter-empty=0, but host
+# only transmits while the 10s WAV plays).
 $hostArgs = @(
     "--id=sip:phone@127.0.0.1:$SipPort",
     "--local-port=$SipPort",
@@ -34,9 +38,11 @@ $hostArgs = @(
     "--use-timer=$UseTimer",
     "--null-audio",
     "--play-file=$tc\sine_1k_8k_10s.wav",
+    "--auto-play",
+    "--jb-max-size=120",
     "--log-level=5",
     "--app-log-level=5",
-    "--duration=30"
+    "--duration=60"
 )
 if ($IpAddr -ne '') {
     $hostArgs += "--ip-addr=$IpAddr"
