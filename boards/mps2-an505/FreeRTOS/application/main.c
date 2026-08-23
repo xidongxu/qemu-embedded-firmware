@@ -17,6 +17,7 @@
 #include "pj_media_dsp_test.h"
 #include "pj_rtp_test.h"
 #include "pj_call_test.h"
+#include "pj_phone.h"
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
@@ -105,6 +106,11 @@ static void main_task_entry(void *parameters) {
     mic_init();
     mic_test();
 
+#if defined(PJ_PHONE)
+    /* PJSUA 高层电话应用：必须在 lwIP 网络（tcpip_thread）就绪后再启动，
+     * 见下方 lwip_os_task_init() 之后的 PJ_PHONE 分支。 */
+#endif
+
     /* PJLIB (pjsip stack foundation) FreeRTOS port self-test. */
     pj_test_run();
 
@@ -146,6 +152,21 @@ static void main_task_entry(void *parameters) {
     lwip_os_task_init();
 #else
     lwip_task_init();
+#endif
+
+#if defined(PJ_PHONE)
+    /* PJSUA 高层电话应用：lwIP/tcpip 已就绪，启动 pjsua 并拨号到宿主。
+     * 稍等让 tcpip_init 完成，再启动 pjsua。 */
+    vTaskDelay(1000);
+    {
+        /* High-prio watchdog to observe system state if pjsua stalls. */
+        extern void phone_watchdog(void *arg);
+        xTaskCreate(phone_watchdog, "wd", 512, NULL, 5U, NULL);
+    }
+    pj_phone_start();
+    while (1) {
+        vTaskDelay(1000);
+    }
 #endif
 
     /* Dual-QEMU inter-instance call mode: run the pjmedia SIP call test.
@@ -195,6 +216,22 @@ static void main_task_init(void) {
     } else {
         printf("main task create failed(%d).\r\n", (int)(xReturn));
     }
+}
+
+/* FreeRTOS failure hooks: surface stack overflow / heap exhaustion instead of
+ * silently corrupting memory (pjsua deep-call-chain debugging aid). */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;
+    printf("FATAL: stack overflow in task %s\r\n",
+           pcTaskName ? pcTaskName : "?");
+    while (1) { }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("FATAL: FreeRTOS heap exhausted\r\n");
+    while (1) { }
 }
 
 int main(void) {

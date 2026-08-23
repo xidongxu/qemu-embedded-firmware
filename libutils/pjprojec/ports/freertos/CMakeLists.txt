@@ -39,6 +39,7 @@ add_library(pjlib STATIC
   ${PJPROJECT_ROOT}/pjlib/src/pj/pool_dbg.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/pool_policy_malloc.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/rand.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/file_io_ansi.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/rbtree.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/string.c
   ${PJPROJECT_ROOT}/pjlib/src/pj/timer.c
@@ -105,6 +106,8 @@ add_library(pjlib-util STATIC
   ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/scanner.c
   ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/sha1.c
   ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/srv_resolver.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/stun_simple_client.c
+  ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/stun_simple.c
   ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/string.c
   ${PJPROJECT_ROOT}/pjlib-util/src/pjlib-util/xml.c
 )
@@ -218,8 +221,14 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/audiodev.c
   src/audiodev_stub.c
   src/codec_stub.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/txt_stream.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_ice.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/audio_codecs.c
 )
-target_include_directories(pjmedia PUBLIC ${PJPROJECT_ROOT}/pjmedia/include)
+target_include_directories(pjmedia PUBLIC
+  ${PJPROJECT_ROOT}/pjmedia/include
+  ${PJPROJECT_ROOT}/pjnath/include
+)
 target_link_libraries(pjmedia PUBLIC pjlib PRIVATE pjlib-util)
 
 # ##############################################################################
@@ -236,3 +245,59 @@ add_library(pjsip-ua STATIC
 )
 target_include_directories(pjsip-ua PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
 target_link_libraries(pjsip-ua PUBLIC pjlib pjsip pjsip-simple pjmedia PRIVATE pjlib-util)
+
+# ##############################################################################
+# pjnath (STUN/TURN/ICE - pjsua-lib references ice_strans unconditionally)
+# ##############################################################################
+add_library(pjnath STATIC
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/errno.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/ice_session.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/ice_strans.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/nat_detect.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_auth.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_msg.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_msg_dump.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_session.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_sock.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/stun_transaction.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/turn_session.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/turn_sock.c
+  ${PJPROJECT_ROOT}/pjnath/src/pjnath/upnp.c
+)
+target_include_directories(pjnath PUBLIC ${PJPROJECT_ROOT}/pjnath/include)
+target_link_libraries(pjnath PUBLIC pjlib pjlib-util)
+
+# ##############################################################################
+# pjmedia-audiodev (sound-device abstraction; null backend for embedded)
+# ##############################################################################
+add_library(pjmedia-audiodev STATIC
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-audiodev/audiodev.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-audiodev/null_dev.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-audiodev/errno.c
+)
+target_include_directories(pjmedia-audiodev PUBLIC ${PJPROJECT_ROOT}/pjmedia/include)
+target_link_libraries(pjmedia-audiodev PUBLIC pjlib PRIVATE pjmedia pjlib-util)
+
+# ##############################################################################
+# pjsua-lib (high-level PJSUA API)
+# ##############################################################################
+add_library(pjsua-lib STATIC
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_acc.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_aud.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_call.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_core.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_dump.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_im.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_media.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_pres.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_txt.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsua-lib/pjsua_vid.c
+)
+target_include_directories(pjsua-lib PUBLIC
+  ${PJPROJECT_ROOT}/pjsip/include
+  ${PJPROJECT_ROOT}/pjnath/include
+)
+target_link_libraries(pjsua-lib PUBLIC
+  pjlib pjlib-util pjnath pjmedia pjmedia-audiodev
+  pjsip pjsip-simple pjsip-ua
+)

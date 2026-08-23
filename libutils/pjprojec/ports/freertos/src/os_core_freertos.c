@@ -149,11 +149,28 @@ static pj_thread_t *find_current_thread(void)
 {
     TaskHandle_t self = xTaskGetCurrentTaskHandle();
     pj_thread_t *t;
+    unsigned guard = 0;
+    static unsigned not_reg_warn;
 
     thread_list_lock();
-    for (t = thread_list; t; t = t->next) {
+    /* Guard against a corrupted/looping thread list (pjsua creates several
+     * threads concurrently; a bad list makes this loop forever). */
+    for (t = thread_list; t && guard < 256; t = t->next, guard++) {
         if (t->task == self)
             break;
+    }
+    if (!t && not_reg_warn < 5) {
+        not_reg_warn++;
+        /* A task calling into pjlib (mutex/thread_this) without ever being
+         * registered: this makes pj_thread_this() return NULL and pjsua's
+         * PJSUA_LOCK_IS_LOCKED() misbehave. */
+        PJ_LOG(1, ("", "PJ THREAD NOT REGISTERED: task=%p name=%s",
+                   (void *)self, pcTaskGetName(self)));
+    }
+    if (guard >= 256) {
+        PJ_LOG(1, ("", "PJ THREAD LIST CORRUPT (loop?): t=%p task=%p self=%p",
+                   (void *)t, (void *)(t ? t->task : NULL), (void *)self));
+        t = NULL;
     }
     thread_list_unlock();
 
@@ -468,9 +485,13 @@ PJ_DEF(pj_status_t) pj_thread_create(pj_pool_t *pool,
 
     thread_list_add(rec);
 
-    /* NOTE: do NOT set the calling thread's TLS here. The new task
-     * registers itself (and thus its own TLS) inside the task wrapper.
-     */
+    /* Root fix: make the NEW thread's own TLS slot point at rec right now,
+     * so a find_current_thread() match never sees a NULL tls[] entry in
+     * the window before freertos_thread_main() runs pj_thread_register().
+     * This writes rec (the new thread's record), NOT the caller's TLS.
+     * pj_thread_register() in the wrapper re-sets the same value. */
+    if (thread_tls_id >= 0)
+        rec->tls[thread_tls_id] = rec;
 
     *thread = rec;
     (void)pool;

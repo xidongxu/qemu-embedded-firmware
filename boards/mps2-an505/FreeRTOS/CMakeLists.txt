@@ -6,6 +6,7 @@ set(TARGET an505-qemu)
 # into separate build trees (e.g. build-caller / build-callee).
 set(PJ_DUAL_ROLE "none" CACHE STRING "Dual-QEMU role: none|caller|callee")
 set(PJ_HOST_CALL OFF CACHE BOOL "Caller dials a HOST SIP UA (pjsua) instead of a peer QEMU")
+set(PJ_PHONE OFF CACHE BOOL "Build the PJSUA high-level phone app (pj_phone.c)")
 
 add_executable(${TARGET})
 set_target_properties(${TARGET} PROPERTIES
@@ -62,6 +63,7 @@ target_include_directories(${TARGET} PRIVATE
     ../Drivers/CMSIS_5/CMSIS/Core/Include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
+    ${CMAKE_SOURCE_DIR}/libutils/pjprojec/pjnath/include
 )
 if(LWIP_OS STREQUAL "FreeRTOS")
     # OS mode pulls in arch/sys_arch.h via lwip/sys.h (local port copy).
@@ -87,6 +89,9 @@ elseif(PJ_DUAL_ROLE STREQUAL "callee")
     target_compile_definitions(${TARGET} PRIVATE PJ_DUAL_ROLE_CALLEE=1)
 elseif(NOT PJ_DUAL_ROLE STREQUAL "none")
     message(FATAL_ERROR "PJ_DUAL_ROLE must be one of none|caller|callee")
+endif()
+if(PJ_PHONE)
+    target_compile_definitions(${TARGET} PRIVATE PJ_PHONE=1)
 endif()
 if(LWIP_OS STREQUAL "FreeRTOS")
     # Flip NO_SYS=0 for this target too so lan9118_netif.c (Core/Src) and
@@ -123,9 +128,13 @@ target_link_libraries(${TARGET} PRIVATE
     fatfs
     pjlib
     pjlib-util
+    pjnath
+    pjmedia
+    pjmedia-audiodev
     pjsip
     pjsip-simple
     pjsip-ua
+    pjsua-lib
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")

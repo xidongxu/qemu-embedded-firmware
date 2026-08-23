@@ -1,30 +1,22 @@
 /*
  * audiodev_stub.c - audio-device subsystem stubs.
  *
- * pjmedia_endpt_create() is an inline that unconditionally calls
- * pjmedia_aud_subsys_init()/shutdown() (kept inline so pjmedia core does
- * not depend on the pjmedia-audiodev library).  This embedded target has
- * PJMEDIA_HAS_AUDIODEV=0 (no pjmedia-audiodev), so both are no-ops; the
- * board's own mpsx-mic/mpsx-audio drivers are used instead.
+ * The real pjmedia_aud_subsys_init()/shutdown() now come from the
+ * pjmedia-audiodev library (PJMEDIA_HAS_AUDIODEV=1), so no stub is kept
+ * here.  These stubs only cover the legacy pjmedia sound-port layer that
+ * conference.c references at link time even though we always create the
+ * bridge with PJMEDIA_CONF_NO_DEVICE (no sound device); they are never
+ * actually called, they just satisfy the linker.
  */
 #include <pj/types.h>
-
-PJ_DEF(pj_status_t) pjmedia_aud_subsys_init(pj_pool_factory *pf)
-{
-    PJ_UNUSED_ARG(pf);
-    return PJ_SUCCESS;
-}
-
-PJ_DEF(pj_status_t) pjmedia_aud_subsys_shutdown(void)
-{
-    return PJ_SUCCESS;
-}
+#include <pj/string.h>
 
 /* ---- pjmedia sound-port stubs ----
  * conference.c references the sound-port layer at link time even though we
  * always create the bridge with PJMEDIA_CONF_NO_DEVICE (no sound device),
  * so these are never actually called.  They just satisfy the linker. */
 #include <pjmedia/sound_port.h>
+#include <pjmedia/echo.h>
 
 PJ_DEF(pj_status_t) pjmedia_snd_port_create(pj_pool_t *pool,
                                             int rec_id, int play_id,
@@ -76,4 +68,30 @@ PJ_DEF(pj_status_t) pjmedia_snd_port_destroy(pjmedia_snd_port *snd_port)
 {
     PJ_UNUSED_ARG(snd_port);
     return PJ_SUCCESS;
+}
+
+PJ_DEF(pj_status_t) pjmedia_snd_port_get_ec_stat(pjmedia_snd_port *snd_port,
+                                                 pjmedia_echo_stat *p_stat)
+{
+    PJ_UNUSED_ARG(snd_port); PJ_UNUSED_ARG(p_stat);
+    return PJ_ENOTSUP;
+}
+
+PJ_DEF(void) pjmedia_snd_port_param_default(pjmedia_snd_port_param *prm)
+{
+    pj_bzero(prm, sizeof(*prm));
+}
+
+PJ_DEF(pj_status_t) pjmedia_snd_port_create2(pj_pool_t *pool,
+                                             const pjmedia_snd_port_param *prm,
+                                             pjmedia_snd_port **p_port)
+{
+    PJ_UNUSED_ARG(pool); PJ_UNUSED_ARG(prm); PJ_UNUSED_ARG(p_port);
+    return PJ_ENOTSUP;
+}
+
+PJ_DEF(pj_status_t) pjmedia_snd_port_disconnect(pjmedia_snd_port *snd_port)
+{
+    PJ_UNUSED_ARG(snd_port);
+    return PJ_ENOTSUP;
 }

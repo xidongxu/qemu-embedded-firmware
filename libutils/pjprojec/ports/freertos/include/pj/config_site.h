@@ -25,8 +25,10 @@
 
 #define PJ_MAX_OBJ_NAME                 32
 
-/* Default thread stack: 4 KiB (1 K words). Overridable at runtime. */
-#define PJ_THREAD_DEFAULT_STACK_SIZE    4096
+/* Default thread stack: 16 KiB (4 K words) - pjsua 200-OK/media handling
+ * needs a deep call chain; 8 KiB still overflowed (2026-08-2x).
+ * Overridable at runtime. */
+#define PJ_THREAD_DEFAULT_STACK_SIZE    16384
 
 /* Default thread priority (FreeRTOS, higher = more important). */
 #define PJ_FREERTOS_DEFAULT_PRIO        2
@@ -95,8 +97,26 @@
 #define PJMEDIA_HAS_OPENH264_CODEC      0
 #define PJMEDIA_HAS_BCG729              0
 #define PJMEDIA_HAS_LYRA_CODEC          0
-#define PJMEDIA_HAS_AUDIODEV            0
+#define PJMEDIA_HAS_AUDIODEV            1
 #define PJMEDIA_HAS_VIDEODEV            0
+
+/* pjmedia-audiodev backend selection: only the null device for the
+ * embedded target.  The defaults pick WMME (Windows) unless overridden. */
+#define PJMEDIA_AUDIO_DEV_HAS_PORTAUDIO     0
+#define PJMEDIA_AUDIO_DEV_HAS_OPENSL        0
+#define PJMEDIA_AUDIO_DEV_HAS_ANDROID_JNI   0
+#define PJMEDIA_AUDIO_DEV_HAS_OBOE          0
+#define PJMEDIA_AUDIO_DEV_HAS_BB10          0
+#define PJMEDIA_AUDIO_DEV_HAS_ALSA          0
+#define PJMEDIA_AUDIO_DEV_HAS_COREAUDIO     0
+#define PJMEDIA_AUDIO_DEV_HAS_WMME          0
+#define PJMEDIA_AUDIO_DEV_HAS_WASAPI        0
+#define PJMEDIA_AUDIO_DEV_HAS_BDIMAD        0
+#define PJMEDIA_AUDIO_DEV_HAS_SYMB_APS      0
+#define PJMEDIA_AUDIO_DEV_HAS_SYMB_VAS      0
+#define PJMEDIA_AUDIO_DEV_HAS_SYMB_MDA      0
+#define PJMEDIA_AUDIO_DEV_HAS_LEGACY_DEVICE 0
+#define PJMEDIA_AUDIO_DEV_HAS_NULL_AUDIO    1
 #define PJMEDIA_HAS_LEGACY_SOUND_API    0
 
 /* Fixed hostfwd/slirp topology: the RTP source address seen by the stream
