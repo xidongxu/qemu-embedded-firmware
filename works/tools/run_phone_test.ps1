@@ -78,8 +78,10 @@ if ($RealAudio) {
 }
 if ($HostRec -ne '') {
     # Record the remote (guest) audio on the host: proves the guest's mic
-    # capture (1 kHz WAV fed via mpsx-simple-mic) actually arrives as RTP.
+    # capture actually arrives as RTP.  --auto-rec starts recording the
+    # remote stream automatically once media is up.
     $hostArgs += "--rec-file=$HostRec"
+    $hostArgs += "--auto-rec"
     Write-Host "host recording remote audio to $HostRec"
 }
 if ($IpAddr -ne '') {

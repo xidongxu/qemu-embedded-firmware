@@ -173,6 +173,7 @@ static void main_task_entry(void *parameters) {
     pj_phone_start();
     while (1) {
         vTaskDelay(1000);
+        pj_phone_control();
     }
 #endif
 

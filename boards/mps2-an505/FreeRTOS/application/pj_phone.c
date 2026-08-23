@@ -39,6 +39,14 @@
 static pjsua_acc_id g_acc = PJSUA_INVALID_ID;
 static pjsua_call_id g_call_id = PJSUA_INVALID_ID;   /* active call for stats */
 
+/* ---- call-control state (auto hangup + redial) ---- */
+#define CALL_DURATION_MS    15000   /* auto-hangup after 15 s in a call  */
+#define REDIAL_DELAY_MS      5000   /* wait 5 s after hangup, then redial */
+static uint32_t    g_call_start_tick; /* tick when call media went ACTIVE  */
+static uint32_t    g_last_idle_tick;  /* tick when last call disconnected  */
+static int         g_call_state = PJSIP_INV_STATE_NULL;
+static pj_bool_t   g_auto_redial = PJ_TRUE;
+
 /* High-priority watchdog: keeps reporting free heap / task stack high-water
  * even if the pjsua worker thread stalls (deadlock / stack-overflow debug). */
 static const char *wd_state_name(int s)
@@ -113,8 +121,14 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
                              pjsip_rx_data *rdata)
 {
     PJ_UNUSED_ARG(acc_id); PJ_UNUSED_ARG(rdata);
-    printf("pj_phone: incoming call %d, answering 200\r\n", call_id);
-    pjsua_call_answer(call_id, 200, NULL, NULL);
+    if (g_call_id != PJSUA_INVALID_ID) {
+        /* already in a call -> busy */
+        printf("pj_phone: busy, rejecting incoming call %d (486)\r\n", call_id);
+        pjsua_call_answer(call_id, 486, NULL, NULL);
+    } else {
+        printf("pj_phone: incoming call %d, answering 200\r\n", call_id);
+        pjsua_call_answer(call_id, 200, NULL, NULL);
+    }
 }
 
 static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
@@ -122,8 +136,15 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
     pjsua_call_info ci;
     PJ_UNUSED_ARG(e);
     if (pjsua_call_get_info(call_id, &ci) == PJ_SUCCESS) {
+        g_call_state = ci.state;
         printf("pj_phone: call %d state=%d (%.*s)\r\n", call_id,
                (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
+        if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
+            printf("pj_phone: call %d disconnected, idle (redial in %u ms)\r\n",
+                   call_id, (unsigned)REDIAL_DELAY_MS);
+            g_call_id = PJSUA_INVALID_ID;
+            g_last_idle_tick = xTaskGetTickCount();
+        }
     }
 }
 
@@ -141,8 +162,53 @@ static void on_call_media_state(pjsua_call_id call_id)
         if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
             pjsua_conf_connect(ci.conf_slot, 0);
             pjsua_conf_connect(0, ci.conf_slot);
+            g_call_start_tick = xTaskGetTickCount();
             printf("pj_phone: conf connected (call slot %d <-> snd 0)\r\n",
                    ci.conf_slot);
+        }
+    }
+}
+
+/* --------------------------- call control ------------------------ */
+static pj_status_t pj_phone_dial(void)
+{
+    pj_str_t uri;
+    pjsua_call_id call_id;
+    pj_status_t st;
+
+    pj_strset2(&uri, DIAL_TARGET);
+    st = pjsua_call_make_call(g_acc, &uri, NULL, NULL, NULL, &call_id);
+    printf("pj_phone: make_call(%s) -> %d (call=%d)\r\n", DIAL_TARGET,
+           (int)st, (int)call_id);
+    if (st == PJ_SUCCESS)
+        g_call_id = call_id;
+    return st;
+}
+
+void pj_phone_control(void)
+{
+    uint32_t now;
+
+    if (!g_auto_redial)
+        return;
+
+    now = xTaskGetTickCount();
+    if (g_call_id != PJSUA_INVALID_ID) {
+        /* in a call: auto-hangup once the call has lasted CALL_DURATION_MS */
+        if ((now - g_call_start_tick) >= pdMS_TO_TICKS(CALL_DURATION_MS)) {
+            printf("pj_phone: auto hangup after %u ms\r\n",
+                   (unsigned)CALL_DURATION_MS);
+            pjsua_call_hangup(g_call_id, 0, NULL, NULL);
+            /* g_call_id cleared on DISCONNECTED in on_call_state */
+        }
+    } else {
+        /* idle: redial once REDIAL_DELAY_MS has passed since disconnect */
+        if (g_last_idle_tick != 0 &&
+            (now - g_last_idle_tick) >= pdMS_TO_TICKS(REDIAL_DELAY_MS))
+        {
+            printf("pj_phone: redialing\r\n");
+            pj_phone_dial();
+            g_last_idle_tick = 0;   /* reset until the next disconnect */
         }
     }
 }
@@ -155,9 +221,7 @@ int pj_phone_start(void)
     pjsua_media_config media_cfg;
     pjsua_transport_config tcfg;
     pjsua_acc_config acc_cfg;
-    pj_str_t uri;
     pjsua_transport_id tp;
-    pjsua_call_id call_id;
     pj_status_t st;
 
     printf("\r\n=== PJSUA PHONE (high-level API) ===\r\n");
@@ -270,13 +334,10 @@ int pj_phone_start(void)
     printf("pj_phone: account added id=%d\r\n", g_acc);
 
     /* Dial the host UA. */
-    pj_strset2(&uri, DIAL_TARGET);
-    st = pjsua_call_make_call(g_acc, &uri, NULL, NULL, NULL, &call_id);
-    printf("pj_phone: make_call(%s) -> %d (call=%d)\r\n", DIAL_TARGET,
-           (int)st, (int)call_id);
+    st = pj_phone_dial();
     if (st != PJ_SUCCESS)
         return -1;
-    g_call_id = call_id;
+    g_last_idle_tick = xTaskGetTickCount();
 
     return 0;
 }
