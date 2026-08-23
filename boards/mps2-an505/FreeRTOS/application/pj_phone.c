@@ -175,7 +175,10 @@ int pj_phone_start(void)
     cfg.cb.on_call_media_state = &on_call_media_state;
 
     pjsua_logging_config_default(&log_cfg);
-    log_cfg.console_level = 6;
+    /* Level 2 = warnings+errors only.  Higher levels flood the serial port
+     * with per-frame media logs which dominates guest CPU under TCG -> the
+     * guest can't keep up with realtime audio. */
+    log_cfg.console_level = 2;
 
     pjsua_media_config_default(&media_cfg);
     media_cfg.clock_rate = 8000;

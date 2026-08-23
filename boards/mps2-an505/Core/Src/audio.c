@@ -59,8 +59,9 @@ static uint32_t audio_render_tone(uint8_t *buf, uint32_t max_bytes, uint32_t rat
     }
     step = (uint32_t)(((uint64_t)freq_hz << SINE_PHASE_BITS) / rate);
     for (uint32_t i = 0; i < n; i++) {
-        /* 0..63 */
-        uint32_t idx = *phase >> 16;
+        /* 0..63 (mask is REQUIRED: phase exceeds one LUT cycle -> idx > 63
+         * would read past sine_lut and yield garbage/silence) */
+        uint32_t idx = (*phase >> 16) & (SINE_LUT_SIZE - 1);
         uint32_t frac = *phase & 0xFFFF;
         int32_t y0 = sine_lut[idx];
         int32_t y1 = sine_lut[(idx + 1) & (SINE_LUT_SIZE - 1)];
