@@ -19,6 +19,13 @@ static uint8_t s_pcm[AUDIO_PCM_SIZE] __attribute__((aligned(64)));
 static volatile uint32_t s_audio_irq_done = 0;
 
 /*
+ * Weak hook invoked from Interrupt49_Handler after clearing DONE.  The
+ * mpsx pjmedia-audiodev backend (application/mpsx_dev.c) overrides it to
+ * signal its playback task; other projects keep the weak no-op.
+ */
+__attribute__((weak)) void audio_done_hook(void) {}
+
+/*
  * 64-point sine lookup table, values are round(127 * sin(2*pi*k/64)).
  * Using a fixed-point phase accumulator + this LUT keeps the driver free of
  * libm/float dependencies (newlib-nano + hard-float can't link sinf).
@@ -209,5 +216,6 @@ void Interrupt49_Handler(void) {
         /* write-1-to-clear */
         AUDIO_INT_STATUS = AUDIO_INT_DONE;
         s_audio_irq_done++;
+        audio_done_hook();
     }
 }

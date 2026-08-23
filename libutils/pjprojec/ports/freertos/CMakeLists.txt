@@ -219,7 +219,7 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/stereo_port.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wsola.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/audiodev.c
-  src/audiodev_stub.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/sound_port.c
   src/codec_stub.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/txt_stream.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_ice.c

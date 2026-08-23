@@ -26,7 +26,10 @@
 #include <pj/log.h>
 #include <pj/string.h>
 #include <pj/sock.h>
+#include <pjmedia/audiodev.h>
+#include <pjmedia-audiodev/audiodev.h>
 #include <pjsua-lib/pjsua.h>
+#include "mpsx_dev.h"
 
 #define HOST_GW        "10.0.2.2"   /* slirp gateway = host loopback alias */
 #define HOST_SIP_PORT  5060         /* host pjsua / SIP server UDP port */
@@ -62,6 +65,18 @@ void phone_watchdog(void *arg)
                        (unsigned long)ss.rtcp.rx.pkt,
                        (unsigned long)ss.rtcp.tx.pkt,
                        (unsigned long)ss.rtcp.rx.loss);
+            }
+            /* Conference signal level of the call slot: tx = what we send
+             * (mic capture), rx = what we play (from the remote). */
+            {
+                pjsua_call_info ci;
+                if (pjsua_call_get_info(g_call_id, &ci) == PJ_SUCCESS &&
+                    ci.conf_slot != PJSUA_INVALID_ID)
+                {
+                    unsigned tx = 0, rx = 0;
+                    pjsua_conf_get_signal_level(ci.conf_slot, &tx, &rx);
+                    printf("wd: conf sig tx=%u rx=%u\r\n", tx, rx);
+                }
             }
         }
         TaskHandle_t cur = xTaskGetCurrentTaskHandle();
@@ -119,6 +134,16 @@ static void on_call_media_state(pjsua_call_id call_id)
         printf("pj_phone: call %d media_status=%d%s\r\n", call_id,
                (int)ci.media_status,
                ci.media_status == PJSUA_CALL_MEDIA_ACTIVE ? " (ACTIVE)" : "");
+        /* Wire the call's conference slot to the sound device (slot 0) once
+         * media is up, so the real mpsx audio/mic is actually used:
+         *   - call -> slot 0 : incoming RTP is played on the sound card
+         *   - slot 0 -> call : mic capture is sent as RTP */
+        if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
+            pjsua_conf_connect(ci.conf_slot, 0);
+            pjsua_conf_connect(0, ci.conf_slot);
+            printf("pj_phone: conf connected (call slot %d <-> snd 0)\r\n",
+                   ci.conf_slot);
+        }
     }
 }
 
@@ -165,6 +190,11 @@ int pj_phone_start(void)
      * 1s idle, which kills the media clock -> guest stops sending RTP.
      * Disable the auto-close so the guest stream keeps running. */
     media_cfg.snd_auto_close_time = -1;
+    /* Use the mpsx sound device's native clock (the FreeRTOS tasks drive
+     * play/rec callbacks straight into/out of the conference).  The default
+     * software clock (clock_thread + cap/play delaybuf) desynchronises from
+     * the mpsx DONE interrupts -> capdbuf underflow -> silence captured. */
+    media_cfg.snd_use_sw_clock = PJ_FALSE;
 
     st = pjsua_init(&cfg, &log_cfg, &media_cfg);
     if (st != PJ_SUCCESS) {
@@ -173,9 +203,35 @@ int pj_phone_start(void)
     }
     printf("pj_phone: pjsua_init OK\r\n");
 
-    /* No sound card: use null audio device. */
+#if PJMEDIA_AUDIO_DEV_HAS_MPSX
+    /* Register the mpsx audio factory at runtime using the public
+     * pjmedia_aud_register_factory() API.  pjsua_init() already initialised
+     * the audio subsystem, so this just appends the mpsx device to the
+     * device list -- no upstream pjproject source change is needed. */
+    st = pjmedia_aud_register_factory(&pjmedia_mpsx_audio_factory);
+    printf("pj_phone: register mpsx aud factory -> %d\r\n", (int)st);
+
+    /* Use the real mpsx audio/mic device (QEMU mpsx sound card) instead of
+     * the null device.  The mpsx factory was registered just above, so
+     * look up its device id and hand it to pjsua. */
+    {
+        pjmedia_aud_dev_index mpsx_dev = PJMEDIA_AUD_INVALID_DEV;
+        st = pjmedia_aud_dev_lookup("mpsx", "mpsx audio/mic", &mpsx_dev);
+        if (st == PJ_SUCCESS && mpsx_dev != PJMEDIA_AUD_INVALID_DEV) {
+            st = pjsua_set_snd_dev(mpsx_dev, mpsx_dev);
+            printf("pj_phone: pjsua_set_snd_dev(mpsx dev=%d) -> %d\r\n",
+                   (int)mpsx_dev, (int)st);
+        } else {
+            printf("pj_phone: mpsx snd dev lookup failed (%d), "
+                   "falling back to null\r\n", (int)st);
+            st = pjsua_set_null_snd_dev();
+            printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
+        }
+    }
+#else
     st = pjsua_set_null_snd_dev();
-    printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", st);
+    printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
+#endif
 
     /* UDP transport bound to the guest SIP port (hostfwd'd as itself). */
     pjsua_transport_config_default(&tcfg);

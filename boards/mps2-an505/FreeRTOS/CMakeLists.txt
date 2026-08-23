@@ -91,7 +91,11 @@ elseif(NOT PJ_DUAL_ROLE STREQUAL "none")
     message(FATAL_ERROR "PJ_DUAL_ROLE must be one of none|caller|callee")
 endif()
 if(PJ_PHONE)
-    target_compile_definitions(${TARGET} PRIVATE PJ_PHONE=1)
+    # PJ_PHONE: the mpsx audio/mic audiodev backend (application/mpsx_dev.c)
+    # is registered at runtime from pj_phone.c via pjmedia_aud_register_factory().
+    # The macro is board-scoped so other boards sharing ports/freertos are
+    # unaffected (their pj_phone.c falls back to the null sound device).
+    target_compile_definitions(${TARGET} PRIVATE PJ_PHONE=1 PJMEDIA_AUDIO_DEV_HAS_MPSX=1)
 endif()
 if(LWIP_OS STREQUAL "FreeRTOS")
     # Flip NO_SYS=0 for this target too so lan9118_netif.c (Core/Src) and

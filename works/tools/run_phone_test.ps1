@@ -11,7 +11,9 @@ param(
     [int]$WaitSec  = 40,
     [string]$Answer = '200',
     [int]$UseTimer = 1,
-    [string]$IpAddr = ''
+    [string]$IpAddr = '',
+    [string]$AudioRec = '',
+    [string]$HostRec = ''
 )
 
 $root = 'C:\Users\xidon\code\github\qemu-embedded-firmware'
@@ -44,6 +46,12 @@ $hostArgs = @(
     "--app-log-level=5",
     "--duration=60"
 )
+if ($HostRec -ne '') {
+    # Record the remote (guest) audio on the host: proves the guest's mic
+    # capture (1 kHz WAV fed via mpsx-simple-mic) actually arrives as RTP.
+    $hostArgs += "--rec-file=$HostRec"
+    Write-Host "host recording remote audio to $HostRec"
+}
 if ($IpAddr -ne '') {
     $hostArgs += "--ip-addr=$IpAddr"
 }
@@ -63,6 +71,22 @@ $ga = @(
     '-global',"mpsx-simple-mic.infile=$tc\sine_1k_8k_10s.wav",
     '-kernel',$elf
 )
+# Optional: record what the guest plays (mpsx-simple-audio) to a wav, so we
+# can verify the host->guest RTP actually makes it to the guest sound card.
+if ($AudioRec -ne '') {
+    $ga = @(
+        '-machine','mps2-an505,audiodev=a0',
+        '-audiodev',"wav,path=$AudioRec,id=a0",
+        '-cpu','cortex-m33',
+        '-m','16M',
+        '-display','none',
+        '-serial','stdio',
+        '-nic',"user,id=n0,model=lan9118,mac=52:54:00:12:34:01,hostfwd=udp::15062-:15062,hostfwd=udp::4000-:4000,hostfwd=udp::4001-:4001",
+        '-global',"mpsx-simple-mic.infile=$tc\sine_1k_8k_10s.wav",
+        '-kernel',$elf
+    )
+    Write-Host "recording guest playback to $AudioRec"
+}
 Start-Process -FilePath $q -ArgumentList $ga -RedirectStandardOutput "$lg\phone_guest.log" -RedirectStandardError "$lg\phone_guest.err" -NoNewWindow -PassThru | Out-Null
 Write-Host "guest started, waiting ${WaitSec}s..."
 Start-Sleep -Seconds $WaitSec

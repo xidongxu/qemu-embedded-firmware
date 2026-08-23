@@ -14,6 +14,13 @@
 /* incremented by Interrupt50_Handler on each DONE interrupt */
 static volatile uint32_t s_mic_irq_done = 0;
 
+/*
+ * Weak hook invoked from Interrupt50_Handler after clearing DONE.  The
+ * mpsx pjmedia-audiodev backend (application/mpsx_dev.c) overrides it to
+ * signal its capture task; other projects keep the weak no-op.
+ */
+__attribute__((weak)) void mic_done_hook(void) {}
+
 void mic_init(void) {
     /* device-side reset */
     MIC_CTRL = MIC_CTRL_RESET;
@@ -101,6 +108,7 @@ void Interrupt50_Handler(void) {
         /* write-1-to-clear */
         MIC_INT_STATUS = MIC_INT_DONE;
         s_mic_irq_done++;
+        mic_done_hook();
     }
     if (st & MIC_INT_OVERRUN) {
         MIC_INT_STATUS = MIC_INT_OVERRUN;

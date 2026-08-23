@@ -102,9 +102,16 @@ static void main_task_entry(void *parameters) {
     touch_init();
     audio_init();
     audio_irq_enable();
-    audio_test();
     mic_init();
+#if defined(PJ_PHONE)
+    /* PJSUA phone: the looping arpeggio test and the 1s blocking mic test
+     * would fight the real call audio (mpsx_dev reconfigures both devices
+     * to S16/8k/frame-size), so skip them.  The mpsx audiodev backend
+     * enables the IRQs when the stream starts. */
+#else
+    audio_test();
     mic_test();
+#endif
 
 #if defined(PJ_PHONE)
     /* PJSUA 高层电话应用：必须在 lwIP 网络（tcpip_thread）就绪后再启动，
@@ -161,7 +168,7 @@ static void main_task_entry(void *parameters) {
     {
         /* High-prio watchdog to observe system state if pjsua stalls. */
         extern void phone_watchdog(void *arg);
-        xTaskCreate(phone_watchdog, "wd", 512, NULL, 5U, NULL);
+        xTaskCreate(phone_watchdog, "wd", 2048, NULL, 5U, NULL);
     }
     pj_phone_start();
     while (1) {

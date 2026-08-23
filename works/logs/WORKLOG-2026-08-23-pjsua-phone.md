@@ -41,6 +41,29 @@
   - 宿主 `Jitter buffer empty`=0 → 宿主持续解码 guest RTP
 - **附注**：`--auto-loop`（宿主回环远端音频到 TX）可使双向持续 60s，但宿主 jitter-empty ~900/次（auto-loop 处理干扰宿主 RX 时钟，非 guest 发包问题——auto-play 基线为 0）；`--auto-play` 为干净 A1 基线（宿主仅在 10s WAV 期间持续发，但已验证 host→guest 全程收包）
 
+### 6. A2：接入真实音频（mpsx audio/mic 后端，替代 null）
+- **目标**：PJSUA 用真实的 QEMU mpsx 声卡（audio 播放 + mic 采集）替代 null 音频，让电话真正有声音
+- **新增 `application/mpsx_dev.c`**（pjmedia-audiodev 后端，`PJMEDIA_AUDIO_DEV_HAS_MPSX`）：
+  - 参考 `null_dev.c` 实现 factory_op + stream_op（13 个回调）
+  - 播放：mpsx-simple-audio（0x51002000/IRQ49）DMA 缓冲设为**一帧大小（320B S16 @8k/20ms）**，每 DONE 中断 → FreeRTOS play_task 调 `play_cb` 拿 PCM 写回缓冲
+  - 采集：mpsx-simple-mic（0x51003000/IRQ50）同样一帧缓冲，每 DONE → cap_task 读帧调 `rec_cb`
+  - ISR 钩子：`audio.c`/`mic.c` 的 `Interrupt49/50_Handler` 加弱函数 `audio_done_hook`/`mic_done_hook`，mpsx_dev 强实现给信号量
+- **注册（不改上游源码）**：`pj_phone.c` 在 `pjsua_init()` 后调上游公开 API `pjmedia_aud_register_factory(&pjmedia_mpsx_audio_factory)` 运行时注册（`pjsua_init` 内部 `pjsua_aud_subsys_init → pjmedia_aud_subsys_init` 已初始化子系统，register_factory 只是把 mpsx 设备追加进设备列表）；**不修改 `audiodev.c`/`config_site.h`**（已还原）。`PJMEDIA_AUDIO_DEV_HAS_MPSX` 宏在 **board 层** `FreeRTOS/CMakeLists.txt` 定义（仅 mps2-an505 PJ_PHONE），`pj_phone.c` 用 `#if` 守卫 mpsx 段（fallback null）
+- **启用 snd 路径**：把 `sound_port.c` 编入 pjmedia 库、删除 `audiodev_stub.c` 的 snd_port 桩（此前返回 `PJ_ENOTSUP`）
+- **pj_phone.c**：
+  - `pjsua_set_snd_dev(mpsx_dev_id, mpsx_dev_id)`（`pjmedia_aud_dev_lookup("mpsx",...)`）替代 `pjsua_set_null_snd_dev()`
+  - `on_call_media_state` 加 `pjsua_conf_connect(ci.conf_slot,0)` + `(0,ci.conf_slot)`：媒体 ACTIVE 后把 call 接到声卡（否则 call 不进 conference → 播放/采集无内容）
+  - `media_cfg.snd_use_sw_clock = PJ_FALSE`：用 mpsx native 时钟（默认软件时钟 clock_thread+delaybuf 与 mpsx DONE 不同步 → capdbuf Underflow → 采集静音）
+  - wd 加 `pjsua_conf_get_signal_level` 打印 conf tx/rx 电平（运行监控）
+- **main.c**：PJ_PHONE 下跳过 `audio_test()`/`mic_test()`（琶音/阻塞采集会与通话音频冲突）；**wd 栈 512→2048**（加 conf sig 后 512 溢出 → 系统卡死，栈溢出破坏调度）
+- **验证**（native 时钟，`--auto-play`）：
+  - `pjsua_set_snd_dev(mpsx dev=1) -> 0`（真实设备打开）
+  - `mpsx playback started` / `mpsx capture started`（两个 FreeRTOS 任务运行）
+  - **采集**：mic infile 1kHz WAV → mpsx cap 帧 zcr=40（≈1kHz）→ conf → **发送 tx=99**（有内容）
+  - **播放**：guest 收到 host 1kHz → play_cb 帧 zcr=40（1kHz）→ conf rx=99（有内容）
+  - RTP 双向稳定：rx_pkt 持续、tx_pkt 持续、rx_lost 小
+- **⚠ 剩余（QEMU 后端）**：QEMU `-audiodev wav` 录 guest 播放是 **500Hz**（应为 1kHz）——固件 play_cb 给 1kHz 正确，是 patched QEMU mpsx audio voice 采样率问题（疑 S16 voice 处理/采样率减半，U8 audio_test 播放 1kHz 正确）。需在 qemu-embedded-platform 仓库修。宿主 `--rec-file` 录 guest 为空：宿主 pjsua rec-file 连接未执行（宿主配置问题，非 guest——guest conf tx=99 证明在发）
+
 ## 改动文件
 - `libutils/pjprojec/ports/freertos/CMakeLists.txt`：补编 pjnath/pjmedia-audiodev/pjsua-lib + 依赖源
 - `libutils/pjprojec/ports/freertos/include/pj/config_site.h`：PJMEDIA_HAS_AUDIODEV=1、音频后端裁剪、PJ_THREAD_DEFAULT_STACK_SIZE 16K
