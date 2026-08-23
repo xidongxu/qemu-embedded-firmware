@@ -72,13 +72,14 @@
 
 /* ---- PJMEDIA (full-framework trial, stage 14) ----------------------- */
 /* No external media backends / codecs on this embedded target; keep only
- * the built-in G.711 (PCMU/PCMA) codec.  pjmedia/config.h uses #ifndef so
- * defining these here (config_site.h is included first) overrides defaults. */
+ * the built-in G.711 (PCMU/PCMA) codec and the bundled Speex AEC.
+ * pjmedia/config.h uses #ifndef so defining these here (config_site.h is
+ * included first) overrides defaults. */
 #define PJMEDIA_HAS_VIDEO               0
 #define PJMEDIA_HAS_SRTP                0
 #define PJMEDIA_HAS_FFMPEG              0
 #define PJMEDIA_HAS_LIBYUV              0
-#define PJMEDIA_HAS_SPEEX_AEC           0
+#define PJMEDIA_HAS_SPEEX_AEC           1   /* bundled Speex AEC (third_party/speex) */
 #define PJMEDIA_HAS_WEBRTC_AEC          0
 #define PJMEDIA_HAS_WEBRTC_AEC3         0
 #define PJMEDIA_RESAMPLE_IMP            PJMEDIA_RESAMPLE_NONE

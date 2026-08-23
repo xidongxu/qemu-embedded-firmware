@@ -160,6 +160,13 @@ static void on_call_media_state(pjsua_call_id call_id)
          *   - call -> slot 0 : incoming RTP is played on the sound card
          *   - slot 0 -> call : mic capture is sent as RTP */
         if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
+            /* pjsua does NOT create the echo canceller automatically from
+             * media_cfg.ec_tail_len; it must be enabled explicitly with
+             * pjsua_set_ec() once the sound device exists (200 ms tail). */
+            {
+                pj_status_t e = pjsua_set_ec(200, 0);
+                printf("pj_phone: pjsua_set_ec(tail=200) -> %d\r\n", (int)e);
+            }
             pjsua_conf_connect(ci.conf_slot, 0);
             pjsua_conf_connect(0, ci.conf_slot);
             g_call_start_tick = xTaskGetTickCount();
@@ -194,6 +201,17 @@ void pj_phone_control(void)
 
     now = xTaskGetTickCount();
     if (g_call_id != PJSUA_INVALID_ID) {
+        /* In a call: report echo-canceller convergence.  The simple echo
+         * suppressor exposes learning/stat_info; Speex AEC has no get_stat
+         * (PJ_ENOTSUP) so nothing is printed for it. */
+        {
+            pjmedia_echo_stat ecs;
+            if (pjsua_get_ec_stat(&ecs) == PJ_SUCCESS) {
+                printf("pj_phone: ec learn=%u tail=%u min=%u avg=%u | %.*s\r\n",
+                       ecs.learning, ecs.tail, ecs.min_factor, ecs.avg_factor,
+                       (int)ecs.stat_info.slen, (char*)ecs.stat_info.ptr);
+            }
+        }
         /* in a call: auto-hangup once the call has lasted CALL_DURATION_MS */
         if ((now - g_call_start_tick) >= pdMS_TO_TICKS(CALL_DURATION_MS)) {
             printf("pj_phone: auto hangup after %u ms\r\n",

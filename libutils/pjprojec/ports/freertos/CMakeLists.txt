@@ -168,6 +168,67 @@ target_include_directories(pjsip-simple PUBLIC ${PJPROJECT_ROOT}/pjsip/include)
 target_link_libraries(pjsip-simple PUBLIC pjlib pjsip PRIVATE pjlib-util)
 
 # ##############################################################################
+# bundled Speex (AEC backend).  Defined HERE instead of add_subdirectory() on
+# third_party/speex so the upstream pjproject tree stays unmodified: the
+# upstream CMakeLists does `find_library(MATH_LIBRARY m REQUIRED)` which fails
+# on bare-metal (no libm file; newlib provides the math symbols).  We only
+# need the AEC subset; the stereo decorrelator (scal.c) is compiled only if
+# referenced, and our echo_speex.c overlay compiles it out (see
+# src/pjmedia/echo_speex.c + PJMEDIA_SPEEX_AEC_NO_DECORRELATE in config_site.h).
+add_library(speex STATIC
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/bits.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/cb_search.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_10_16_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_10_32_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_20_32_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_5_256_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_5_64_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/exc_8_128_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/fftwrap.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/filterbank.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/filters.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/gain_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/gain_table_lbr.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/hexc_10_32_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/hexc_table.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/high_lsp_tables.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/kiss_fft.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/kiss_fftr.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/lpc.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/lsp.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/lsp_tables_nb.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/ltp.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/mdf.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/modes.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/modes_wb.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/nb_celp.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/preprocess.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/quant_lsp.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/resample.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/sb_celp.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/smallft.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/speex.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/speex_callbacks.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/speex_header.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/scal.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/stereo.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/vbr.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/vq.c
+  ${PJPROJECT_ROOT}/third_party/speex/libspeex/window.c
+)
+# Public so consumers (pjmedia compiles the echo_speex.c overlay, which includes
+# <speex/speex_echo.h> and transitively speex/speex_config_types.h) get them.
+target_include_directories(speex PUBLIC
+  ${PJPROJECT_ROOT}/third_party/speex/include
+  ${PJPROJECT_ROOT}/third_party/build/speex
+)
+target_compile_definitions(speex PRIVATE HAVE_CONFIG_H=1)
+# speex (mdf.c / preprocess.c) uses libm (sin/pow/sqrt).  Link it PUBLIC so any
+# target using speex also links libm AFTER speex in the link line - CMake
+# places a library's PUBLIC deps right after it, which matters for static lib
+# symbol resolution (an -lm placed earlier never resolves speex's math refs).
+target_link_libraries(speex PUBLIC m PRIVATE pjlib)
+
 # pjmedia (full framework trial: SDP + RTP + RTCP + event + codec mgr...)
 # ##############################################################################
 add_library(pjmedia STATIC
@@ -209,6 +270,7 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/delaybuf.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_common.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_port.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_speex.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/echo_suppress.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/plc_common.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/resample_port.c
@@ -229,7 +291,7 @@ target_include_directories(pjmedia PUBLIC
   ${PJPROJECT_ROOT}/pjmedia/include
   ${PJPROJECT_ROOT}/pjnath/include
 )
-target_link_libraries(pjmedia PUBLIC pjlib PRIVATE pjlib-util)
+target_link_libraries(pjmedia PUBLIC pjlib speex PRIVATE pjlib-util)
 
 # ##############################################################################
 # pjsip-ua (INVITE session + REGISTER client; needs pjmedia/SDP)
