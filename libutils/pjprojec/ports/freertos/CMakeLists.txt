@@ -13,6 +13,36 @@
 
 set(PJPROJECT_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
+# ---------------------------------------------------------------------------
+# Generate the autoconf-style headers that upstream pjproject's own CMake
+# produces via configure_file() in pjlib/CMakeLists.txt, pjsip/CMakeLists.txt,
+# pjmedia/CMakeLists.txt, ...  Those upstream files are NOT part of this port
+# (each module is built by hand below), so without this step the generated
+# headers would be missing and every compile of pjsip / pjmedia fails with
+# "No such file or directory" (sip_autoconf.h / config_auto.h).  We reproduce
+# the generation here, writing into ports/freertos/include which is already on
+# every target's include path - same "shadow the autoconf header" pattern the
+# hand-written os_auto.h / m_auto.h / config_site.h use.  Output files are
+# gitignored (see libutils/pjprojec/.gitignore).
+# ---------------------------------------------------------------------------
+# PJMEDIA: only the built-in G.711 codec is enabled (see pj/config_site.h).
+set(PJMEDIA_HAS_G711_CODEC 1)
+# PJSIP: no TLS transport on this embedded target (config_site.h sets 0 too).
+set(PJSIP_HAS_TLS_TRANSPORT 0)
+
+configure_file(
+  ${PJPROJECT_ROOT}/pjsip/include/pjsip/sip_autoconf.h.cm
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/pjsip/sip_autoconf.h
+)
+configure_file(
+  ${PJPROJECT_ROOT}/pjmedia/include/pjmedia/config_auto.h.cm
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/pjmedia/config_auto.h
+)
+configure_file(
+  ${PJPROJECT_ROOT}/pjmedia/include/pjmedia-codec/config_auto.h.cm
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/pjmedia-codec/config_auto.h
+)
+
 add_library(pjlib STATIC
   # ---- pjlib core ----
   ${PJPROJECT_ROOT}/pjlib/src/pj/array.c
