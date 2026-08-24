@@ -26,6 +26,7 @@
 #include <pj/log.h>
 #include <pj/string.h>
 #include <pj/sock.h>
+#include <pj/os.h>
 #include <pjmedia/audiodev.h>
 #include <pjmedia-audiodev/audiodev.h>
 #include <pjsua-lib/pjsua.h>
@@ -54,8 +55,21 @@
 static pjsua_acc_id g_acc = PJSUA_INVALID_ID;
 static pjsua_call_id g_call_id = PJSUA_INVALID_ID;   /* active call for stats */
 
-/* Single-call mode: dial once at startup, hold until the remote hangs up.
- * No auto-hangup / auto-redial (that would re-ring the callee repeatedly). */
+/* Registration / dial state machine (single-call mode):
+ *  - g_reg_attempts : count of failed REGISTER attempts (for logging).
+ *  - g_dialed       : set once a dial was issued, so a registration refresh
+ *                     or a retry that finally succeeded does NOT re-dial.
+ *  - g_call_start   : wall-clock time the active call became CONFIRMED; used
+ *                     to log call duration when it is disconnected. */
+static unsigned g_reg_attempts = 0;
+static int g_dialed = 0;
+static pj_time_val g_call_start;
+
+static pj_status_t pj_phone_dial(void);   /* defined below (used by on_reg_state) */
+
+/* Single-call mode: dial once after registration succeeds, hold until the
+ * remote hangs up.  No auto-hangup / auto-redial (that would re-ring the
+ * callee repeatedly). */
 
 /* High-priority watchdog: keeps reporting free heap / task stack high-water
  * even if the pjsua worker thread stalls (deadlock / stack-overflow debug). */
@@ -120,11 +134,42 @@ void phone_watchdog(void *arg)
 static void on_reg_state(pjsua_acc_id acc_id)
 {
     pjsua_acc_info info;
-    if (pjsua_acc_get_info(acc_id, &info) == PJ_SUCCESS) {
-        printf("pj_phone: acc %d reg state=%d (%.*s)\r\n", acc_id,
-               (int)info.status, (int)info.status_text.slen,
-               info.status_text.ptr);
+    pj_status_t st;
+
+    if (pjsua_acc_get_info(acc_id, &info) != PJ_SUCCESS)
+        return;
+
+    printf("pj_phone: acc %d reg state=%d (%.*s)\r\n", acc_id,
+           (int)info.status, (int)info.status_text.slen,
+           info.status_text.ptr);
+
+    if (info.status >= 200 && info.status < 300) {
+        /* Registered OK (2xx).  Dial only now - the previous code dialed
+         * right after pjsua_acc_add(), before the REGISTER round-trip had
+         * completed.  g_dialed keeps this to a single call even when the
+         * registration is refreshed or a retry finally succeeds. */
+        if (!g_dialed) {
+            st = pj_phone_dial();
+            if (st == PJ_SUCCESS) {
+                g_dialed = 1;
+                printf("pj_phone: dial on reg OK -> success (call=%d)\r\n",
+                       (int)g_call_id);
+            } else {
+                /* Dial failed (e.g. transport not ready yet).  Stay
+                 * un-dialed so the next registration refresh retries it. */
+                printf("pj_phone: dial on reg OK -> FAILED (%d), will retry "
+                       "on next reg refresh\r\n", (int)st);
+            }
+        }
+    } else if (info.status != 0) {
+        /* Registration failed (403/408/503/...).  pjsua retries the REGISTER
+         * automatically every reg_first_retry_interval / reg_retry_interval
+         * seconds (set in pj_phone_start); we just count + log and keep
+         * waiting - no dial until a 2xx comes back. */
+        printf("pj_phone: reg attempt %u FAILED (%d) - pjsua will retry\r\n",
+               ++g_reg_attempts, (int)info.status);
     }
+    /* info.status == 0 => REGISTER still in flight, do nothing yet. */
 }
 
 static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
@@ -145,13 +190,42 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 {
     pjsua_call_info ci;
     PJ_UNUSED_ARG(e);
-    if (pjsua_call_get_info(call_id, &ci) == PJ_SUCCESS) {
-        printf("pj_phone: call %d state=%d (%.*s)\r\n", call_id,
-               (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
-        if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
-            printf("pj_phone: call %d disconnected\r\n", call_id);
-            g_call_id = PJSUA_INVALID_ID;
+    if (pjsua_call_get_info(call_id, &ci) != PJ_SUCCESS)
+        return;
+
+    printf("pj_phone: call %d state=%d (%.*s)\r\n", call_id,
+           (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
+
+    /* Remember when the call became active so the hang-up log below can
+     * report the call duration. */
+    if (ci.state == PJSIP_INV_STATE_CONFIRMED && call_id == g_call_id)
+        pj_gettimeofday(&g_call_start);
+
+    if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
+        /* Log why the call ended (remote hang-up / 486 / timeout / ...) plus
+         * the call duration when it was established. */
+        if (g_call_start.sec != 0) {
+            pj_time_val now, dur;
+            pj_gettimeofday(&now);
+            dur = now;
+            PJ_TIME_VAL_SUB(dur, g_call_start);
+            printf("pj_phone: call %d disconnected: reason=%d (%.*s) "
+                   "dur=%ldms\r\n",
+                   call_id, (int)ci.last_status,
+                   (int)ci.last_status_text.slen,
+                   ci.last_status_text.ptr,
+                   (long)PJ_TIME_VAL_MSEC(dur));
+        } else {
+            printf("pj_phone: call %d disconnected: reason=%d (%.*s) "
+                   "(call never established)\r\n",
+                   call_id, (int)ci.last_status,
+                   (int)ci.last_status_text.slen,
+                   ci.last_status_text.ptr);
         }
+        if (call_id == g_call_id)
+            g_call_id = PJSUA_INVALID_ID;
+        g_call_start.sec = 0;
+        g_call_start.msec = 0;
     }
 }
 
@@ -320,6 +394,11 @@ int pj_phone_start(void)
      * RTP to the slirp hostfwd port (udp::4000-:4000 -> guest) instead of
      * an unreachable 10.0.2.15.  Binding stays 0.0.0.0. */
     acc_cfg.rtp_cfg.public_addr = pj_str("127.0.0.1");
+    /* Retry failed REGISTERs every 5s instead of the pjsua defaults
+     * (60s first / 300s later) so a transient failure recovers fast.
+     * on_reg_state only dials after a 2xx comes back. */
+    acc_cfg.reg_first_retry_interval = 5;
+    acc_cfg.reg_retry_interval = 5;
     st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
     if (st != PJ_SUCCESS) {
         printf("pj_phone: acc_add failed (%d)\r\n", st);
@@ -327,10 +406,7 @@ int pj_phone_start(void)
     }
     printf("pj_phone: account added id=%d\r\n", g_acc);
 
-    /* Dial the callee once (single-call mode). */
-    st = pj_phone_dial();
-    if (st != PJ_SUCCESS)
-        return -1;
-
+    /* Dialing now happens in on_reg_state() once REGISTER returns 2xx -
+     * never dial before the account is actually registered. */
     return 0;
 }
