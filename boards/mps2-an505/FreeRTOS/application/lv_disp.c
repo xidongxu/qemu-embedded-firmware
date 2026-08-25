@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 
 #include "lcd.h"
 #include "touch.h"
@@ -9,7 +10,8 @@
 #include <queue.h>
 #include <timers.h>
 #include "lvgl.h"
-#include "lv_demos.h"
+#include "lv_phone_app.h"
+#include <pj/os.h>   /* pj_thread_register: make pjsua calls from this task safe */
 
 void vApplicationTickHook(void) {
     lv_tick_inc(1);
@@ -32,6 +34,15 @@ static void lv_touch_read(lv_indev_t * indev, lv_indev_data_t * data) {
 }
 
 static void lv_task_entry(void *parameters) {
+    /* Register this FreeRTOS task with PJLIB so pjsua calls from the UI
+     * (dial/answer/hangup) see a valid pj_thread_this().  An unregistered
+     * task makes pjsua's PJSUA_LOCK spin forever (NULL thread, see
+     * ports/freertos/src/os_core_freertos.c) -> UI freezes on CALL. */
+    {
+        pj_thread_desc desc;
+        memset(desc, 0, sizeof(desc));
+        pj_thread_register("lv_task", desc, NULL);
+    }
     lv_init();
     printf("LVGL %d.%d.%d\n", lv_version_major(), lv_version_minor(), lv_version_patch());
     lv_display_t *disp = lv_display_create(LCD_WIDTH_PIXELS, LCD_HEIGHT_PIXELS);
@@ -47,10 +58,12 @@ static void lv_task_entry(void *parameters) {
     lv_indev_t * indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, lv_touch_read);
-    lv_demo_benchmark();
+    /* Phone UI (dial pad + answer/hangup) instead of the benchmark demo. */
+    lv_phone_app_create();
     int time = 0;
     while(1) {
         time = lv_timer_handler();
+        lv_phone_app_update();
         if (time < 1) {
             time = 1;
         }

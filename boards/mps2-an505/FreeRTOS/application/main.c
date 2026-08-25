@@ -146,12 +146,10 @@ static void main_task_entry(void *parameters) {
     fatfs_test();
 #endif
 
-#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE) || defined(PJ_PHONE)
-    /* Dual-QEMU call mode: SKIP the LVGL task + benchmark so the guest CPU
-     * is free for the SIP/RTP media path.  Hypothesis (2026-08-20): the LVGL
-     * benchmark saturates CPU, worsening QEMU TCG virtual-clock bursts and
-     * amplifying RTP loss.  Controlled A/B: compare dual-call loss with
-     * LVGL on (default build) vs off (dual build). */
+#if defined(PJ_DUAL_ROLE_CALLER) || defined(PJ_DUAL_ROLE_CALLEE)
+    /* Dual-QEMU call mode: SKIP the LVGL task so the guest CPU is free for
+     * the SIP/RTP media path (the LVGL benchmark saturated CPU under TCG).
+     * Normal and PJ_PHONE builds run the LVGL task (phone UI). */
 #else
     lv_task_init();
 #endif
@@ -162,7 +160,8 @@ static void main_task_entry(void *parameters) {
 #endif
 
 #if defined(PJ_PHONE)
-    /* PJSUA 高层电话应用：lwIP/tcpip 已就绪，启动 pjsua 并拨号到宿主。
+    /* PJSUA 高层电话应用：lwIP/tcpip 已就绪，启动 pjsua（注册到 FreeSWITCH，
+     * 不自动拨号 - 由 LVGL 电话 UI 通过触摸屏发起呼叫/接听/挂断）。
      * 稍等让 tcpip_init 完成，再启动 pjsua。 */
     vTaskDelay(1000);
     {
@@ -170,9 +169,9 @@ static void main_task_entry(void *parameters) {
         extern void phone_watchdog(void *arg);
         xTaskCreate(phone_watchdog, "wd", 2048, NULL, 5U, NULL);
     }
-    pj_phone_start();
-    /* Single-call mode: keep this task suspended; pjsua threads + watchdog
-     * handle the call.  Hangup just clears state, no redial. */
+    pj_phone_init();
+    /* UI-driven phone: keep this task suspended; the LVGL task drives the
+     * phone, pjsua threads + watchdog handle the media/call state. */
     while (1) {
         vTaskDelay(1000);
     }
