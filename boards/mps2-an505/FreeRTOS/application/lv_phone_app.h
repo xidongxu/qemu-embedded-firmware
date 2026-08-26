@@ -8,10 +8,9 @@
 extern "C" {
 #endif
 
-/* Create the phone UI on the active screen (call after lv_init + display). */
+/* Create the phone UI on the active screen. */
 void lv_phone_app_create(void);
-
-/* Refresh the UI from the phone state; call it each LVGL loop iteration. */
+/* Refresh the UI from the phone state. */
 void lv_phone_app_update(void);
 
 #ifdef __cplusplus

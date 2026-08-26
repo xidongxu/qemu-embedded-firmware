@@ -2,7 +2,7 @@
  * pj_phone.h - PJSUA high-level phone application (UI-facing API).
  *
  * Exposes a small, UI-friendly standard phone interface on top of pjsua:
- *   init / dial / answer / reject / hangup  +  state query + notification.
+ * init / dial / answer / reject / hangup + state query + notification.
  * No pjsua types leak into this header so a GUI (LVGL) can use it directly.
  */
 #ifndef PJ_PHONE_H
@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-/* ---- registration state ---- */
+/* Registration state. */
 typedef enum {
     PJ_PHONE_REG_UNREGISTERED = 0,
     PJ_PHONE_REG_REGISTERING,
@@ -20,42 +20,49 @@ typedef enum {
     PJ_PHONE_REG_FAILED
 } pj_phone_reg_state_t;
 
-/* ---- call state ---- */
+/* Call state. */
 typedef enum {
-    PJ_PHONE_CALL_IDLE = 0,    /* no call */
-    PJ_PHONE_CALL_DIALING,     /* outgoing: CALLING / EARLY (ringing) */
-    PJ_PHONE_CALL_INCOMING,    /* incoming, waiting for answer/reject */
-    PJ_PHONE_CALL_ACTIVE       /* connected, media up */
+    PJ_PHONE_CALL_IDLE = 0,
+    PJ_PHONE_CALL_DIALING,
+    PJ_PHONE_CALL_INCOMING,
+    PJ_PHONE_CALL_ACTIVE
 } pj_phone_call_state_t;
 
-/* UI notification callback.  Called from the pjsua worker thread - only set
- * a flag / post a message, do NOT touch the UI (LVGL) directly. */
+/* UI notification callback, called from the pjsua worker thread. */
 typedef void (*pj_phone_cb_t)(void *user_data);
 
-/* ---- lifecycle ---- */
-/* Initialise pjsua + register the local account.  Does NOT auto-dial; the UI
- * drives calls via pj_phone_dial()/answer()/hangup(). */
-int  pj_phone_init(void);
-
+/* Initialise pjsua and register the local account. */
+int pj_phone_init(void);
 /* Register a callback invoked on any registration/call state change. */
 void pj_phone_set_callback(pj_phone_cb_t cb, void *user_data);
-
-/* ---- configuration (runtime overrides; host IP changes need no rebuild) ---- */
-/* Set the SIP host used to build dial URIs (default: PJ_PHONE_DIAL_HOST). */
+/* Set the SIP host used to build dial URIs. */
 void pj_phone_set_dial_host(const char *host, unsigned port);
-
-/* ---- call control (may be called from any task; pjsua is thread-safe) ---- */
-/* Dial an extension ("1005") or a full SIP URI ("sip:user@host:port"). */
-int  pj_phone_dial(const char *number);
-int  pj_phone_answer(void);   /* answer the pending incoming call (200) */
-int  pj_phone_reject(void);   /* reject the pending incoming call (486) */
-int  pj_phone_hangup(void);   /* hang up the active / ringing call */
-
-/* ---- state query (poll from the UI loop) ---- */
-pj_phone_reg_state_t  pj_phone_get_reg_state(void);
+/* Get the current dial host. */
+const char *pj_phone_get_dial_host(void);
+/* Dial an extension or a full SIP URI. */
+int pj_phone_dial(const char *number);
+/* Answer the pending incoming call. */
+int pj_phone_answer(void);
+/* Reject the pending incoming call. */
+int pj_phone_reject(void);
+/* Hang up the active or ringing call. */
+int pj_phone_hangup(void);
+/* Get the registration state. */
+pj_phone_reg_state_t pj_phone_get_reg_state(void);
+/* Get the call state. */
 pj_phone_call_state_t pj_phone_get_call_state(void);
-const char           *pj_phone_get_peer_number(void);       /* remote user */
-unsigned long         pj_phone_get_call_duration_ms(void);  /* 0 if not active */
+/* Get the remote user. */
+const char *pj_phone_get_peer_number(void);
+/* Get the call duration in ms (0 if not active). */
+unsigned long pj_phone_get_call_duration_ms(void);
+/* Get the SIP status code of the last ended call (0 if none). */
+int pj_phone_get_last_call_status(void);
+/* Get the text of the last ended call. */
+const char *pj_phone_get_last_call_status_text(void);
+/* Force re-registration under the current dial host. */
+int pj_phone_reregister(void);
+/* Return 1 if inbound media has stalled while in a call. */
+int pj_phone_get_media_stall(void);
 
 #ifdef __cplusplus
 }
