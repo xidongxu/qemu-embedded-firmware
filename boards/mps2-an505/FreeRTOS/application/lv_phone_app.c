@@ -57,6 +57,10 @@ static uint32_t s_feedback_at = 0;
  * reason; used to show "Ended: ..." for a few seconds. */
 static uint32_t s_end_reason_at = 0;
 
+/* Set when the number line is showing received DTMF instead of the dial
+ * buffer; used to restore it after the call ends. */
+static int s_showing_dtmf = 0;
+
 static void enter_setting_mode(void);
 static void exit_setting_mode(void);
 static void apply_host_setting(void);
@@ -112,6 +116,10 @@ static void key_event_cb(lv_event_t *e) {
         if (ch != '.' && (ch < '0' || ch > '9')) {
             return;
         }
+    } else if (pj_phone_get_call_state() == PJ_PHONE_CALL_ACTIVE) {
+        /* During a call the keypad sends DTMF (RFC 2833). */
+        pj_phone_send_dtmf(d);
+        return;
     } else {
         /* Normal mode: '#' enters settings while idle, other keys append. */
         if (d[0] == '#' && pj_phone_get_call_state() == PJ_PHONE_CALL_IDLE) {
@@ -313,6 +321,21 @@ static void update_ui(void) {
     }
     }
     lv_label_set_text(s_lbl_state, buf);
+
+    /* Number line: show received DTMF during a call, else restore the dial
+     * buffer after leaving the call. */
+    if (call == PJ_PHONE_CALL_ACTIVE) {
+        char dtmf_buf[16] = "";
+        if (pj_phone_get_rx_dtmf(dtmf_buf, sizeof(dtmf_buf)) > 0) {
+            char nbuf[24] = "";
+            snprintf(nbuf, sizeof(nbuf), "RX: %s", dtmf_buf);
+            lv_label_set_text(s_lbl_number, nbuf);
+            s_showing_dtmf = 1;
+        }
+    } else if (s_showing_dtmf) {
+        lv_label_set_text(s_lbl_number, s_number[0] ? s_number : "Enter number");
+        s_showing_dtmf = 0;
+    }
 
     /* Context action buttons. */
     switch (call) {

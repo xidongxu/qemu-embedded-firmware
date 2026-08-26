@@ -84,6 +84,13 @@
 #define PJMEDIA_HAS_WEBRTC_AEC3         0
 #define PJMEDIA_RESAMPLE_IMP            PJMEDIA_RESAMPLE_NONE
 #define PJMEDIA_HAS_G711_CODEC          1
+/* Use the standard 101 for the telephone-event RTP payload so outbound DTMF
+ * interoperates with normal SIP endpoints (FreeSWITCH / Linphone negotiate
+ * 101).  This port's pjmedia default is 120 (non-standard): the guest then
+ * sent DTMF events with pt=120 while the phone listened on pt=101, so the
+ * remote phone could not display DTMF sent by the guest (FS log showed
+ * "a=rtpmap:120 telephone-event" for the guest leg vs 101 for the phone). */
+#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS 101
 #define PJMEDIA_HAS_G722_CODEC          0
 #define PJMEDIA_HAS_G7221_CODEC         0
 #define PJMEDIA_HAS_L16_CODEC           0

@@ -92,6 +92,9 @@ static volatile int g_media_stall = 0;
 static pj_time_val g_media_stall_at = {0, 0};
 static volatile int g_media_stall_hung = 0;
 
+/* Most recently received DTMF digits (shift buffer, for the UI display). */
+static char g_rx_dtmf[16] = "";
+
 #if PJ_PHONE_AUTO_DIAL
 static int g_auto_dialed = 0;
 #endif
@@ -555,6 +558,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
         g_call_start.msec = 0;
         g_media_stall = 0;
         g_media_stall_hung = 0;
+        g_rx_dtmf[0] = '\0';
         phone_notify();
         break;
 
@@ -597,6 +601,26 @@ static void on_call_media_state(pjsua_call_id call_id) {
     }
 }
 
+/* DTMF receive callback (RFC 2833 / SIP INFO).  Runs on the worker thread. */
+static void on_dtmf_digit(pjsua_call_id call_id, int digit) {
+    char ch = (char)digit;
+    size_t len = strlen(g_rx_dtmf);
+
+    if (ch == 0) {
+        return;
+    }
+    /* Shift the buffer to keep the most recent digits. */
+    if (len >= sizeof(g_rx_dtmf) - 1) {
+        memmove(g_rx_dtmf, g_rx_dtmf + 1, sizeof(g_rx_dtmf) - 2);
+        len = sizeof(g_rx_dtmf) - 2;
+    }
+    g_rx_dtmf[len] = ch;
+    g_rx_dtmf[len + 1] = '\0';
+    printf("pj_phone: call %d DTMF rx '%c' (buf=%s)\r\n",
+           (int)call_id, ch, g_rx_dtmf);
+    phone_notify();
+}
+
 /* Dial an extension. */
 int pj_phone_dial(const char *number) {
     pj_status_t st = PJ_SUCCESS;
@@ -624,6 +648,42 @@ int pj_phone_dial(const char *number) {
     return (int)st;
 }
 
+/* Send DTMF digits during an active call (RFC 2833). */
+int pj_phone_send_dtmf(const char *digits) {
+    pjsua_call_id cid = PJSUA_INVALID_ID;
+    pj_str_t str;
+    pj_status_t st = PJ_SUCCESS;
+
+    if (digits == NULL || !*digits || g_call_state != PJ_PHONE_CALL_ACTIVE) {
+        printf("pj_phone: send_dtmf rejected (no active call)\r\n");
+        return -1;
+    }
+    taskENTER_CRITICAL();
+    cid = g_call_id;
+    taskEXIT_CRITICAL();
+    if (cid == PJSUA_INVALID_ID) {
+        printf("pj_phone: send_dtmf rejected (bad call id)\r\n");
+        return -1;
+    }
+    pj_strset2(&str, (char *)digits);
+    st = pjsua_call_dial_dtmf(cid, &str);
+    if (st != PJ_SUCCESS) {
+        printf("pj_phone: dial_dtmf(\"%s\") FAILED (%d)\r\n", digits, (int)st);
+    }
+    return (int)st;
+}
+
+/* Get the most recently received DTMF digits. */
+int pj_phone_get_rx_dtmf(char *buf, int size) {
+    if (buf == NULL || size <= 0) {
+        return 0;
+    }
+    buf[0] = '\0';
+    strncpy(buf, g_rx_dtmf, (size_t)size - 1);
+    buf[size - 1] = '\0';
+    return (int)strlen(buf);
+}
+
 /* Initialise the phone. */
 int pj_phone_init(void) {
     pjsua_config cfg;
@@ -648,6 +708,7 @@ int pj_phone_init(void) {
     cfg.cb.on_incoming_call = &on_incoming_call;
     cfg.cb.on_call_state = &on_call_state;
     cfg.cb.on_call_media_state = &on_call_media_state;
+    cfg.cb.on_dtmf_digit = &on_dtmf_digit;
 
     pjsua_logging_config_default(&log_cfg);
     /* Level 2 = warnings+errors only; higher levels flood the serial port

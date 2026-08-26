@@ -47,6 +47,10 @@ int pj_phone_answer(void);
 int pj_phone_reject(void);
 /* Hang up the active or ringing call. */
 int pj_phone_hangup(void);
+/* Send DTMF digits during an active call (RFC 2833). */
+int pj_phone_send_dtmf(const char *digits);
+/* Get the most recently received DTMF digits (returns the length). */
+int pj_phone_get_rx_dtmf(char *buf, int size);
 /* Get the registration state. */
 pj_phone_reg_state_t pj_phone_get_reg_state(void);
 /* Get the call state. */
