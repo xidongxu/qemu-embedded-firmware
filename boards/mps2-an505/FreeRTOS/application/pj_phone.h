@@ -67,6 +67,8 @@ const char *pj_phone_get_last_call_status_text(void);
 int pj_phone_reregister(void);
 /* Return 1 if inbound media has stalled while in a call. */
 int pj_phone_get_media_stall(void);
+/* Get RTP stream packet counters for the active audio call (0=ok, -1=none). */
+int pj_phone_get_stream_stats(unsigned *rx, unsigned *tx, unsigned *loss);
 
 #ifdef __cplusplus
 }

@@ -170,6 +170,13 @@ static void main_task_entry(void *parameters) {
         xTaskCreate(phone_watchdog, "wd", 2048, NULL, 5U, NULL);
     }
     pj_phone_init();
+    /* UDP command server (hostfwd udp::15000-:15000): lets a host script
+     * drive the phone (dial/hangup/status/stat) reliably over the slirp
+     * network - this is the primary debug/automation channel. */
+    {
+        extern void phone_net_task(void *arg);
+        xTaskCreate(phone_net_task, "netcmd", 2048, NULL, 5U, NULL);
+    }
     /* UI-driven phone: keep this task suspended; the LVGL task drives the
      * phone, pjsua threads + watchdog handle the media/call state. */
     while (1) {

@@ -820,8 +820,15 @@ int pj_phone_init(void) {
     acc_cfg.cred_info[0].username = pj_str(REG_USER);
     acc_cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
     acc_cfg.cred_info[0].data = pj_str(REG_PASSWORD);
-    /* Advertise 127.0.0.1 as the media address in SDP so the host sends RTP
-     * to the slirp hostfwd port instead of an unreachable 10.0.2.15. */
+    /* Advertise 127.0.0.1 as the media address in SDP.  Two directions are
+     * covered by this:
+     *  - FS -> guest: FreeSWITCH sends RTP to our advertised 127.0.0.1:4000,
+     *    which the slirp hostfwd udp::4000 forwards into the guest.  (slirp
+     *    has no reverse route for 10.0.2.15, so we must NOT advertise that.)
+     *  - guest -> FS: pjsua_media.c forces our outbound RTP to the slirp
+     *    gateway 10.0.2.2.  slirp delivers it to the host stamped with
+     *    source 127.0.0.1 (verified by a UDP probe), which matches our
+     *    advertised c=, so FreeSWITCH's RTP source check accepts it. */
     acc_cfg.rtp_cfg.public_addr = pj_str("127.0.0.1");
     /* Retry failed REGISTERs every 5s so a transient failure recovers fast. */
     acc_cfg.reg_first_retry_interval = 5;
@@ -922,4 +929,19 @@ int pj_phone_reregister(void) {
 /* Return 1 if inbound media has stalled while in a call. */
 int pj_phone_get_media_stall(void) {
     return g_media_stall;
+}
+
+/* Get RTP stream packet counters for the active audio call (index 0). */
+int pj_phone_get_stream_stats(unsigned *rx, unsigned *tx, unsigned *loss) {
+    pjsua_stream_stat ss;
+    if (g_call_id == PJSUA_INVALID_ID) {
+        return -1;
+    }
+    if (pjsua_call_get_stream_stat(g_call_id, 0, &ss) != PJ_SUCCESS) {
+        return -1;
+    }
+    if (rx)   *rx   = (unsigned)ss.rtcp.rx.pkt;
+    if (tx)   *tx   = (unsigned)ss.rtcp.tx.pkt;
+    if (loss) *loss = (unsigned)ss.rtcp.rx.loss;
+    return 0;
 }
