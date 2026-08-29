@@ -251,27 +251,27 @@ static void tcpip_init_done(void *arg) {
     ip4_addr_t ipaddr = { 0 }, netmask = { 0 }, gw = { 0 };
     uint8_t mac[6] = { 0 };
 
-    /* slirp: each instance is its own NAT; hostfwd injects to 10.0.2.15,
-     * so both guests must use .15 (see WORKLOG-2026-08-20-netdev-socket.md). */
-    IP4_ADDR(&ipaddr, 10, 0, 2, 15);
+    /* tap0 point-to-point segment (no bridge; Hyper-V blocks Windows Network
+     * Bridge).  Guest 172.16.23.50 <-> host tap0 172.16.23.1. */
+    IP4_ADDR(&ipaddr, 172, 16, 23, 50);
     IP4_ADDR(&netmask, 255, 255, 255, 0);
-    IP4_ADDR(&gw, 10, 0, 2, 2);
+    IP4_ADDR(&gw, 172, 16, 23, 1);
     netif_add(n, &ipaddr, &netmask, &gw, NULL, lan9118_netif_init, tcpip_input);
     netif_set_default(n);
     netif_set_up(n);
 
-    /* DNS server (QEMU slirp). */
+    /* DNS server (host tap0; LAN DNS reachable only with host fwd). */
     {
         ip4_addr_t dns4 = { 0 };
         ip_addr_t dns = { 0 };
-        IP4_ADDR(&dns4, 10, 0, 2, 3);
+        IP4_ADDR(&dns4, 172, 16, 23, 1);
         ip_addr_copy_from_ip4(dns, dns4);
         dns_setserver(0, &dns);
     }
 
 #if LWIP_OS_TEST_ICMP_PING
-    /* Periodic ping of the QEMU user-mode gateway (10.0.2.2). */
-    ip_2_ip4(&s_ping_target)->addr = lwip_htonl(LWIP_MAKEU32(10, 0, 2, 2));
+    /* Periodic ping of the host tap0 (172.16.23.1) to prove reachability. */
+    ip_2_ip4(&s_ping_target)->addr = lwip_htonl(LWIP_MAKEU32(172, 16, 23, 1));
     IP_SET_TYPE(&s_ping_target, IPADDR_TYPE_V4);
     s_ping_pcb = raw_new(IP_PROTO_ICMP);
     if (s_ping_pcb != NULL) {

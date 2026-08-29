@@ -2,12 +2,12 @@
  * pj_phone.c - PJSUA high-level phone application (experiment).
  *
  * Uses the pjsua high-level API (pjsua_create/init/transport/acc/call) to
- * place SIP calls through QEMU slirp + hostfwd.
+ * place SIP calls to FreeSWITCH over the QEMU tap0 segment.
  *
- * Topology (slirp user-net + hostfwd):
- *   guest SIP  : bind 0.0.0.0:<GUEST_SIP_PORT>  (hostfwd udp::<port>-:<port>)
- *   dial target: sip:user@10.0.2.2:<HOST_SIP_PORT>  (gateway = host loopback)
- *   host responds to the Via "received" (127.0.0.1:<port>) -> hostfwd -> guest
+ * Topology (tap0 point-to-point segment, no slirp, no bridge):
+ *   guest      : 172.16.23.50  (SIP/Media on the guest's own address)
+ *   host tap0  : 172.16.23.1   (FreeSWITCH binds 172.16.23.1)
+ *   both directions are direct L2 over tap0; no hostfwd, no 127.0.0.1 tricks.
  *
  * Audio: mpsx audio/mic (QEMU virtual sound card) via pjmedia-audiodev.
  */
@@ -34,25 +34,27 @@
 #include <pjsua-lib/pjsua.h>
 #include "mpsx_dev.h"
 
-/* Slirp gateway = host loopback alias (fixed, independent of host DHCP). */
-#define HOST_GW "10.0.2.2"
+/* Host tap0 endpoint (point-to-point segment guest <-> host, no slirp). */
+#define HOST_GW "172.16.23.1"
 
-/* FreeSWITCH binds 0.0.0.0 so it is reachable on host loopback. */
-#define FS_HOST "10.0.2.2"
+/* FreeSWITCH binds the host tap0 address (172.16.23.1). */
+#define FS_HOST "172.16.23.1"
 #define HOST_SIP_PORT 5060
 
-/* Guest SIP port (hostfwd'd as itself). */
+/* Guest SIP port (host-reachable over the tap0 segment). */
 #define GUEST_SIP_PORT 15062
 
 /* Extension registered on FreeSWITCH. */
 #define REG_USER "1000"
 #define REG_PASSWORD "1234"
 
-/* Dial host/port: where to reach SIP peers (the extension's home domain on
- * FreeSWITCH = the HOST LAN IP, where the Android phone 1005 registers).
- * This is the one value tied to the host's DHCP-assigned address.  It can be
- * overridden at runtime with pj_phone_set_dial_host() + pj_phone_reregister()
- * so a host IP change needs no rebuild. */
+/* Dial host/port: where to reach SIP peers.  This must match FreeSWITCH's
+ * default domain ($${local_ip_v4} = the host LAN IP 192.168.23.7) so the
+ * guest's AOR (1000@<dial_host>) resolves to the directory user.  The
+ * REGISTER/proxy still go to FS_HOST = 172.16.23.1 (the tap0 address where
+ * FreeSWITCH's internal-lo profile listens).  Can be overridden at runtime
+ * with pj_phone_set_dial_host() + pj_phone_reregister() so an IP change
+ * needs no rebuild. */
 #define PJ_PHONE_DIAL_HOST "192.168.23.7"
 #define PJ_PHONE_DIAL_PORT 5060
 
@@ -772,13 +774,11 @@ int pj_phone_init(void) {
     printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
 #endif
 
-    /* UDP transport bound to the guest SIP port (hostfwd'd as itself).
-     * Advertise 127.0.0.1 as the transport's public address so the SIP
-     * Contact/Via (hence inbound INVITE/BYE from the host FreeSWITCH) is
-     * reachable through the slirp hostfwd udp::15062 -> guest:15062. */
+    /* UDP transport bound to the guest SIP port.  No public_addr override:
+     * over the tap0 segment the host reaches the guest directly at
+     * 172.16.23.50, so the SIP Contact/Via advertises the guest's own IP. */
     pjsua_transport_config_default(&tcfg);
     tcfg.port = GUEST_SIP_PORT;
-    tcfg.public_addr = pj_str("127.0.0.1");
     st = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &tcfg, &tp);
     if (st != PJ_SUCCESS) {
         printf("pj_phone: transport_create failed (%d)\r\n", st);
@@ -796,23 +796,15 @@ int pj_phone_init(void) {
     }
     printf("pj_phone: pjsua_start OK\r\n");
 
-    /* Register extension 1000 in the SAME domain as the phone (the internal/
-     * default profile = the host LAN IP = g_dial_host).  The REGISTER still
-     * goes to the loopback leg (reg_uri = 10.0.2.2) so the Contact
-     * (127.0.0.1:15062) is NOT NAT-rewritten by the internal profile, while
-     * the To domain (id) is the LAN IP so FreeSWITCH binds 1000 under the
-     * LAN domain.  realm "*" matches FS's realm. */
+    /* Register extension 1000 with FreeSWITCH (FS_HOST = 172.16.23.1).
+     * The Contact is the guest's own address (172.16.23.50:15062), directly
+     * reachable over the tap0 segment.  realm "*" matches FS's realm. */
     pjsua_acc_config_default(&acc_cfg);
     snprintf(id_buf, sizeof(id_buf), "sip:%s@%s", REG_USER, g_dial_host);
     acc_cfg.id = pj_str(id_buf);
     acc_cfg.reg_uri = pj_str("sip:" FS_HOST ":5060");
-    /* Outbound proxy: route ALL outbound requests (REGISTER + INVITE) via the
-     * loopback leg (10.0.2.2 = internal-lo profile) so the outgoing call's
-     * dialog is on the SAME profile as the registration.  This makes the
-     * remote-hangup BYE return to the guest's Contact (127.0.0.1:15062)
-     * instead of an unreachable AOR.  The Request-URI keeps the LAN domain
-     * so routing to the phone is unaffected, and the source stays 127.0.0.1
-     * (out of FS's nat.auto ACL) so the Contact is never NAT-rewritten. */
+    /* Outbound proxy: route all outbound requests (REGISTER + INVITE) to
+     * FreeSWITCH (172.16.23.1) so the dialog stays on the same profile. */
     acc_cfg.proxy[acc_cfg.proxy_cnt++] = pj_str("sip:" FS_HOST ":5060");
     acc_cfg.cred_count = 1;
     acc_cfg.cred_info[0].realm = pj_str("*");
@@ -820,16 +812,9 @@ int pj_phone_init(void) {
     acc_cfg.cred_info[0].username = pj_str(REG_USER);
     acc_cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
     acc_cfg.cred_info[0].data = pj_str(REG_PASSWORD);
-    /* Advertise 127.0.0.1 as the media address in SDP.  Two directions are
-     * covered by this:
-     *  - FS -> guest: FreeSWITCH sends RTP to our advertised 127.0.0.1:4000,
-     *    which the slirp hostfwd udp::4000 forwards into the guest.  (slirp
-     *    has no reverse route for 10.0.2.15, so we must NOT advertise that.)
-     *  - guest -> FS: pjsua_media.c forces our outbound RTP to the slirp
-     *    gateway 10.0.2.2.  slirp delivers it to the host stamped with
-     *    source 127.0.0.1 (verified by a UDP probe), which matches our
-     *    advertised c=, so FreeSWITCH's RTP source check accepts it. */
-    acc_cfg.rtp_cfg.public_addr = pj_str("127.0.0.1");
+    /* Media SDP: no public_addr override -> the SDP c= advertises the guest's
+     * own 172.16.23.50.  FreeSWITCH sends RTP directly to the guest over the
+     * tap0 segment (no hostfwd, no 127.0.0.1 loopback trick). */
     /* Retry failed REGISTERs every 5s so a transient failure recovers fast. */
     acc_cfg.reg_first_retry_interval = 5;
     acc_cfg.reg_retry_interval = 5;
