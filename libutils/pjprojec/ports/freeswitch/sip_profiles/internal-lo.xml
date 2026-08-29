@@ -1,0 +1,42 @@
+﻿<profile name="internal-lo">
+  <aliases/>
+  <gateways/>
+  <domains>
+    <domain name="all" alias="true" parse="false"/>
+  </domains>
+  <settings>
+    <param name="debug" value="0"/>
+    <param name="sip-trace" value="no"/>
+    <param name="sip-capture" value="no"/>
+    <param name="context" value="default"/>
+    <param name="rfc2833-pt" value="101"/>
+    <param name="sip-port" value="5060"/>
+    <param name="dialplan" value="XML"/>
+    <param name="dtmf-duration" value="2000"/>
+    <param name="inbound-codec-prefs" value="$${global_codec_prefs}"/>
+    <param name="outbound-codec-prefs" value="$${global_codec_prefs}"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="disable-rtp-auto-adjust" value="true"/>
+    <!-- Loopback profile for the QEMU guest over the tap0 segment
+         (guest 172.16.23.50 <-> host tap0 172.16.23.1).  SIP/RTP bind the
+         tap0 address so the guest reaches FreeSWITCH directly. -->
+    <param name="rtp-ip" value="172.16.23.1"/>
+    <param name="apply-nat-acl" value="deny.auto"/>
+    <param name="sip-ip" value="172.16.23.1"/>
+    <param name="hold-music" value="$${hold_music}"/>
+    <param name="local-network-acl" value="localnet.auto"/>
+    <param name="apply-inbound-acl" value="domains"/>
+    <param name="inbound-late-negotiation" value="true"/>
+    <param name="nonce-ttl" value="60"/>
+    <param name="auth-calls" value="$${internal_auth_calls}"/>
+    <param name="auth-subscriptions" value="true"/>
+    <param name="inbound-reg-force-matching-username" value="true"/>
+    <param name="auth-all-packets" value="false"/>
+    <param name="ext-rtp-ip" value="172.16.23.1"/>
+    <param name="ext-sip-ip" value="172.16.23.1"/>
+    <!-- SRTP (compiled into core/mod_sofia in v1.11.2; no mod_srtp needed).
+         optional = offer SRTP but fall back to plain RTP if peer has no SRTP. -->
+    <param name="inbound-srtp-negotiation" value="optional"/>
+    <param name="outbound-srtp-negotiation" value="optional"/>
+  </settings>
+</profile>

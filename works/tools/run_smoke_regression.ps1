@@ -18,7 +18,7 @@ param(
     [int]   $Port         = 15000,
     [string]$Number       = '9196',
     [int]   $Iterations   = 3,
-    [int]   $CallTimeoutS = 12,
+    [int]   $CallTimeoutS = 30,   # v1.11.3 call setup can take ~15s
     [int]   $MediaWaitS   = 3
 )
 
@@ -82,7 +82,8 @@ for ($i = 1; $i -le $Iterations; $i++) {
     Write-Host ("  dial  : {0}" -f $d)
     if ($null -eq $d -or $d -notmatch 'rc=0') {
         Write-Host '  FAIL dial' -ForegroundColor Red
-        $ok = $false
+        $fail++
+        Write-Host '  ==> FAIL' -ForegroundColor Red
         continue
     }
 
