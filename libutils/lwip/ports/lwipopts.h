@@ -191,8 +191,12 @@ a lot of data that needs to be copied, this should be set high. */
    per active RAW "connection". */
 #define MEMP_NUM_RAW_PCB        3
 /* MEMP_NUM_UDP_PCB: the number of UDP protocol control blocks. One
-   per active UDP "connection". */
-#define MEMP_NUM_UDP_PCB        8
+   per active UDP "connection".
+   2026-08-29: was 8 - too small.  Each pjsua call uses ~4 UDP PCBs
+   (RTP+RTCP etc.), plus the system uses ~2 (SIP transport 15062, cmd
+   server 15000).  A second call needs 2+4+4=10 > 8 -> socket() fails
+   with 120105 (No buffer space available).  Raised to 24. */
+#define MEMP_NUM_UDP_PCB        24
 /* MEMP_NUM_TCP_PCB: the number of simultaneously active TCP
    connections. */
 #define MEMP_NUM_TCP_PCB        5
@@ -214,8 +218,10 @@ a lot of data that needs to be copied, this should be set high. */
    media ioqueue has not drained them yet), lwIP drops the UDP packet.
    Raised to 32 to absorb the burst. */
 #define MEMP_NUM_NETBUF         32
-/* MEMP_NUM_NETCONN: the number of struct netconns. */
-#define MEMP_NUM_NETCONN        12
+/* MEMP_NUM_NETCONN: the number of struct netconns.
+   2026-08-29: raised to 24 to match MEMP_NUM_UDP_PCB (one netconn per
+   socket; pjsua calls create RTP/RTCP sockets). */
+#define MEMP_NUM_NETCONN        24
 /* MEMP_NUM_TCPIP_MSG_*: the number of struct tcpip_msg, which is used
    for sequential API communication and incoming packets. Used in
    src/api/tcpip.c. */

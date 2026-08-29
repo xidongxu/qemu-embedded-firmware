@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
+#include "lwip/memp.h"
+#include "lwip/stats.h"
 #include "pj/os.h"
 #include "pj_phone.h"
 #include "FreeRTOS.h"
@@ -75,6 +77,29 @@ static void pnet_exec(const char *line, char *resp, int rsize)
         } else {
             snprintf(resp, rsize, "rx=-1 (no active call)");
         }
+    } else if (strcmp(cmd, "memp") == 0) {
+        /* lwIP pool usage (diagnostic for the 120105 socket leak). */
+        extern struct stats_ lwip_stats;
+        snprintf(resp, rsize,
+                 "mem.used=%u/%u max=%u err=%u | UDP_PCB %u/%u err=%u | "
+                 "NETCONN %u/%u err=%u | NETBUF %u/%u err=%u | "
+                 "PBUF %u/%u err=%u | UDP xmit=%u recv=%u",
+                 (unsigned)lwip_stats.mem.used, (unsigned)MEM_SIZE,
+                 (unsigned)lwip_stats.mem.max, (unsigned)lwip_stats.mem.err,
+                 (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used,
+                 (unsigned)MEMP_NUM_UDP_PCB,
+                 (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->err,
+                 (unsigned)lwip_stats.memp[MEMP_NETCONN]->used,
+                 (unsigned)MEMP_NUM_NETCONN,
+                 (unsigned)lwip_stats.memp[MEMP_NETCONN]->err,
+                 (unsigned)lwip_stats.memp[MEMP_NETBUF]->used,
+                 (unsigned)MEMP_NUM_NETBUF,
+                 (unsigned)lwip_stats.memp[MEMP_NETBUF]->err,
+                 (unsigned)lwip_stats.memp[MEMP_PBUF]->used,
+                 (unsigned)MEMP_NUM_PBUF,
+                 (unsigned)lwip_stats.memp[MEMP_PBUF]->err,
+                 (unsigned)lwip_stats.udp.xmit,
+                 (unsigned)lwip_stats.udp.recv);
     } else if (strcmp(cmd, "status") == 0) {
         snprintf(resp, rsize,
                  "reg=%d call=%s peer=%s dur=%lu last=%d(%s) stall=%d host=%s",
