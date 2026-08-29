@@ -38,7 +38,7 @@
 |---|---|---|
 | **RTP socket 不足（120105）** | ✅ **已解决（2026-08-29）**：非泄漏，是 `MEMP_NUM_UDP_PCB=8` 太小。实测每次通话占 ~4 个 UDP_PCB（RTP/RTCP 等多 socket）+ 系统 ~2（SIP/命令服务器）→ 第二次通话需要 10>8 → `socket()` ENOBUFS | 修复：`libutils/lwip/ports/lwipopts.h` 的 `MEMP_NUM_UDP_PCB 8→24`、`MEMP_NUM_NETCONN 12→24`；`phone_net.c` 加 `memp` 命令查看池用量；验证 3 次连续通话均正常，挂断后回落 2/24 无泄漏 |
 | 长时间 soak 稳定性 | ⚠️ 未系统测 | 24h+ 连续通话/挂断循环回归 |
-| 网络断线/抖动恢复 | ⚠️ 部分 | 断网检测、媒体恢复、注册重连策略 |
+| **注册断线恢复** | ✅ **已完成（2026-08-29）** | watchdog 每 15s 主动注册保活（`reg keepalive probe` → `pjsua_acc_set_registration`）；FS 断线 → REGISTER 408 失败检测 → 自动重试；FS 恢复 → 200 OK 自动重连。`reg_timeout=90` 加快续期。已验证：profile stop→guest 408→start→guest 200 恢复。 |
 | 自动回归 | ❌ | M0：脚本化冒烟 + soak 测试 |
 
 ### 2.2 安全（🔴 工业级硬门槛）

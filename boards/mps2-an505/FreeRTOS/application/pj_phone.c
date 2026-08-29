@@ -328,6 +328,31 @@ void phone_watchdog(void *arg) {
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(3000));
 
+        /* Active registration keepalive: every 15 s, re-register so a silent
+         * FreeSWITCH/network drop is detected promptly (pjsua would otherwise
+         * wait until the registration expires and may not notice a quiet
+         * disconnect).  If it fails, pjsua retries every 5 s and this loop
+         * keeps probing until the registration comes back. */
+        {
+            static pj_time_val wd_last_probe = {0, 0};
+            pj_time_val now = {0, 0};
+            pj_time_val el = {0, 0};
+            pj_gettimeofday(&now);
+            if (wd_last_probe.sec == 0) {
+                wd_last_probe = now;
+            } else {
+                el = now;
+                PJ_TIME_VAL_SUB(el, wd_last_probe);
+                if (PJ_TIME_VAL_MSEC(el) >= 15000) {
+                    wd_last_probe = now;
+                    if (g_reg_state != PJ_PHONE_REG_REGISTERING) {
+                        printf("wd: reg keepalive probe -> re-register\r\n");
+                        phone_job_post(PHONE_JOB_REREG, NULL);
+                    }
+                }
+            }
+        }
+
         /* RTP stream stat for audio media (index 0). */
         if (g_call_id != PJSUA_INVALID_ID) {
             pjsua_stream_stat ss;
@@ -815,7 +840,11 @@ int pj_phone_init(void) {
     /* Media SDP: no public_addr override -> the SDP c= advertises the guest's
      * own 172.16.23.50.  FreeSWITCH sends RTP directly to the guest over the
      * tap0 segment (no hostfwd, no 127.0.0.1 loopback trick). */
-    /* Retry failed REGISTERs every 5s so a transient failure recovers fast. */
+    /* Retry failed REGISTERs every 5s so a transient failure recovers fast.
+     * Shorten the registration lifetime so a silent FreeSWITCH/network drop
+     * is noticed quickly (pjsua re-registers every ~reg_timeout/2), and the
+     * watchdog can then force recovery instead of waiting for expiry. */
+    acc_cfg.reg_timeout = 90;
     acc_cfg.reg_first_retry_interval = 5;
     acc_cfg.reg_retry_interval = 5;
     st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
