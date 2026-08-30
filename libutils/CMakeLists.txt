@@ -62,6 +62,9 @@ endif()
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     add_subdirectory(littlefs)
     add_subdirectory(fatfs)
+    # mbedtls 4.2 (TLS/X509/crypto, 含 TF-PSA-Crypto) FreeRTOS port.
+    # 配置集中在 libutils/mbedtls/ports/（含裸机时间/熵对接）。
+    add_subdirectory(mbedtls/ports)
     # PJLIB (SIP/RTP stack) FreeRTOS port - stage 1: pjlib core only.
     add_subdirectory(pjprojec/ports/freertos)
 endif()

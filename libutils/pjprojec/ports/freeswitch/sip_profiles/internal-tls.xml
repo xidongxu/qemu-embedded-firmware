@@ -1,0 +1,47 @@
+<profile name="internal-tls">
+  <aliases/>
+  <gateways/>
+  <domains>
+    <domain name="all" alias="true" parse="false"/>
+  </domains>
+  <settings>
+    <param name="debug" value="0"/>
+    <param name="sip-trace" value="no"/>
+    <param name="sip-capture" value="no"/>
+    <param name="context" value="default"/>
+    <param name="rfc2833-pt" value="101"/>
+    <!-- SIPS/TLS listener port (UDP stays on internal-lo :5060). -->
+    <param name="sip-port" value="5061"/>
+    <param name="dialplan" value="XML"/>
+    <param name="dtmf-duration" value="2000"/>
+    <param name="inbound-codec-prefs" value="$${global_codec_prefs}"/>
+    <param name="outbound-codec-prefs" value="$${global_codec_prefs}"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="disable-rtp-auto-adjust" value="true"/>
+    <!-- SIPS profile for the QEMU guest over the tap0 segment
+         (guest 172.16.23.50 <-> host tap0 172.16.23.1).  TLS server binds
+         172.16.23.1:5061; certs live in ${base_dir}/cert. -->
+    <param name="rtp-ip" value="172.16.23.1"/>
+    <param name="apply-nat-acl" value="deny.auto"/>
+    <param name="sip-ip" value="172.16.23.1"/>
+    <param name="hold-music" value="$${hold_music}"/>
+    <param name="local-network-acl" value="localnet.auto"/>
+    <param name="apply-inbound-acl" value="domains"/>
+    <param name="inbound-late-negotiation" value="true"/>
+    <param name="nonce-ttl" value="60"/>
+    <param name="auth-calls" value="true"/>
+    <param name="auth-subscriptions" value="true"/>
+    <param name="inbound-reg-force-matching-username" value="true"/>
+    <param name="auth-all-packets" value="false"/>
+    <param name="ext-rtp-ip" value="172.16.23.1"/>
+    <param name="ext-sip-ip" value="172.16.23.1"/>
+    <!-- TLS server settings (agent.pem + cafile.pem in ${base_dir}/cert) -->
+    <param name="tls" value="true"/>
+    <param name="tls-only" value="true"/>
+    <param name="tls-cert-dir" value="$${base_dir}/cert"/>
+    <param name="tls-version" value="tlsv1.2"/>
+    <!-- SRTP (compiled into core/mod_sofia): optional -> fall back to RTP. -->
+    <param name="inbound-srtp-negotiation" value="optional"/>
+    <param name="outbound-srtp-negotiation" value="optional"/>
+  </settings>
+</profile>

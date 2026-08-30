@@ -56,6 +56,15 @@
 /* Suppress the (intentional) unused-label warning from PJ_TODO(). */
 #define PJ_TODO(x)
 
+/* ---- PJLIB SSL (mbedtls 4.2 backend) -------------------------------- */
+/* Enable pj_ssl_sock and select the mbedTLS implementation (6).
+ * config.h defines PJ_SSL_SOCK_IMP_MBEDTLS as 6 AFTER config_site.h is
+ * included, so use the numeric value here. mbedtls is built by
+ * libutils/mbedtls/ports (config via MBEDTLS_CONFIG_FILE /
+ * TF_PSA_CRYPTO_CONFIG_FILE); pjlib links it through the mbedtls target. */
+#define PJ_HAS_SSL_SOCK                1
+#define PJ_SSL_SOCK_IMP                6   /* PJ_SSL_SOCK_IMP_MBEDTLS */
+
 /* ---- PJSIP (stage 3) ------------------------------------------------ */
 
 /* Small embedded sizing: keep the transaction/dialog tables tiny. */
@@ -68,7 +77,7 @@
 #ifndef PJSIP_MAX_TRANSPORTS
 #   define PJSIP_MAX_TRANSPORTS         4
 #endif
-#define PJSIP_HAS_TLS_TRANSPORT         0
+#define PJSIP_HAS_TLS_TRANSPORT         1   /* SIPS over mbedtls (pjlib SSL) */
 
 /* ---- PJMEDIA (full-framework trial, stage 14) ----------------------- */
 /* No external media backends / codecs on this embedded target; keep only

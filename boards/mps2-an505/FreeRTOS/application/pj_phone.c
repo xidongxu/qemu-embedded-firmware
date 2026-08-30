@@ -33,6 +33,20 @@
 #include <pj/timer.h>
 #include <pjsua-lib/pjsua.h>
 #include "mpsx_dev.h"
+#include "ca_cert.h"
+
+/* SIPS/TLS: register over a TLS transport (FreeSWITCH internal-tls :5061),
+ * verifying the server certificate against the embedded CA (ca_cert.h).
+ * Set to 0 to fall back to plain UDP (internal-lo :5060). */
+#ifndef PJ_PHONE_TLS
+#define PJ_PHONE_TLS 1
+#endif
+
+/* FreeSWITCH TLS (SIPS) port. */
+#define FS_TLS_PORT 5061
+/* String forms for URI building. */
+#define HOST_SIP_PORT_STR "5060"
+#define PJ_PHONE_TLS_PORT_STR "5061"
 
 /* Host tap0 endpoint (point-to-point segment guest <-> host, no slirp). */
 #define HOST_GW "172.16.23.1"
@@ -813,6 +827,34 @@ int pj_phone_init(void) {
     printf("pj_phone: UDP transport up on :%d (id=%d)\r\n", GUEST_SIP_PORT,
            (int)tp);
 
+#if PJ_PHONE_TLS
+    /* TLS transport for SIPS: verify the server against the embedded CA
+     * (FreeSWITCH internal-tls profile on :5061).  No client certificate
+     * (verify_client off). */
+    {
+        pjsip_tls_setting tls;
+        pjsip_tls_setting_default(&tls);
+        /* mbedtls 4.2 requires PEM input to be NUL-terminated
+         * (buf[buflen-1] == '\0'), so pass length+1 (embedded CA array ends
+         * with a NUL). pj_str() uses strlen -> would omit the NUL. */
+        pj_strset(&tls.ca_buf, (char *)pj_phone_ca_cert,
+                  (pj_ssize_t)(strlen(pj_phone_ca_cert) + 1));
+        tls.verify_server = PJ_TRUE;
+        tls.verify_client = PJ_FALSE;
+        pjsua_transport_config_default(&tcfg);
+        tcfg.port = GUEST_SIP_PORT + 1;
+        tcfg.tls_setting = tls;
+        st = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &tcfg, &tp);
+        if (st != PJ_SUCCESS) {
+            printf("pj_phone: TLS transport_create failed (%d)\r\n", st);
+            pjsua_destroy();
+            return -1;
+        }
+        printf("pj_phone: TLS transport up on :%d (id=%d)\r\n",
+               GUEST_SIP_PORT + 1, (int)tp);
+    }
+#endif
+
     st = pjsua_start();
     if (st != PJ_SUCCESS) {
         printf("pj_phone: pjsua_start failed (%d)\r\n", st);
@@ -827,10 +869,22 @@ int pj_phone_init(void) {
     pjsua_acc_config_default(&acc_cfg);
     snprintf(id_buf, sizeof(id_buf), "sip:%s@%s", REG_USER, g_dial_host);
     acc_cfg.id = pj_str(id_buf);
-    acc_cfg.reg_uri = pj_str("sip:" FS_HOST ":5060");
+#if PJ_PHONE_TLS
+    /* SIPS: route REGISTER/INVITE over the TLS transport to the internal-tls
+     * profile (sips:172.16.23.1:5061).  tp holds the TLS transport id. */
+    acc_cfg.transport_id = tp;
+    acc_cfg.reg_uri = pj_str("sips:" FS_HOST ":" PJ_PHONE_TLS_PORT_STR);
+    /* Outbound proxy: route all outbound requests (REGISTER + INVITE) to
+     * FreeSWITCH TLS so the dialog stays on the internal-tls profile. */
+    acc_cfg.proxy[acc_cfg.proxy_cnt++] =
+        pj_str("sips:" FS_HOST ":" PJ_PHONE_TLS_PORT_STR);
+#else
+    acc_cfg.reg_uri = pj_str("sip:" FS_HOST ":" HOST_SIP_PORT_STR);
     /* Outbound proxy: route all outbound requests (REGISTER + INVITE) to
      * FreeSWITCH (172.16.23.1) so the dialog stays on the same profile. */
-    acc_cfg.proxy[acc_cfg.proxy_cnt++] = pj_str("sip:" FS_HOST ":5060");
+    acc_cfg.proxy[acc_cfg.proxy_cnt++] =
+        pj_str("sip:" FS_HOST ":" HOST_SIP_PORT_STR);
+#endif
     acc_cfg.cred_count = 1;
     acc_cfg.cred_info[0].realm = pj_str("*");
     acc_cfg.cred_info[0].scheme = pj_str("digest");

@@ -27,8 +27,9 @@ set(PJPROJECT_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 # ---------------------------------------------------------------------------
 # PJMEDIA: only the built-in G.711 codec is enabled (see pj/config_site.h).
 set(PJMEDIA_HAS_G711_CODEC 1)
-# PJSIP: no TLS transport on this embedded target (config_site.h sets 0 too).
-set(PJSIP_HAS_TLS_TRANSPORT 0)
+# PJSIP: TLS transport over mbedtls (config_site.h sets 1; sip_transport_tls.c
+# is added to the pjsip target below).
+set(PJSIP_HAS_TLS_TRANSPORT 1)
 
 configure_file(
   ${PJPROJECT_ROOT}/pjsip/include/pjsip/sip_autoconf.h.cm
@@ -84,6 +85,10 @@ add_library(pjlib STATIC
   src/sock_select_lwip.c
   src/ioqueue_select.c
   src/ip_helper_freertos.c
+  # ---- SSL socket layer (mbedtls 4.2 backend) ----
+  ${PJPROJECT_ROOT}/pjlib/src/pj/ssl_sock_common.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/ssl_sock_dump.c
+  ${PJPROJECT_ROOT}/pjlib/src/pj/ssl_sock_mbedtls.c
   # ---- FreeRTOS platform port ----
   src/os_core_freertos.c
   src/os_time_freertos.c
@@ -114,11 +119,21 @@ target_compile_definitions(pjlib
 )
 
 # FreeRTOS kernel headers + FreeRTOSConfig.h (via freertos_kernel_include and
-# freertos_config), exactly like the lwIP FreeRTOS port does.
+# freertos_config), exactly like the lwIP FreeRTOS port does.  mbedtls brings
+# the mbedtls headers + MBEDTLS_CONFIG_FILE/TF_PSA_CRYPTO_CONFIG_FILE compile
+# definitions for ssl_sock_mbedtls.c (config lives in libutils/mbedtls/ports).
+# mbedtls_port provides the bare-metal platform glue (mbedtls_ms_time +
+# mbedtls_platform_get_entropy) referenced by the mbedtls libs.  Order matters
+# for static libs: mbedtls must come BEFORE mbedtls_port so the linker has
+# already recorded the undefined mbedtls_ms_time before it scans
+# mbedtls_port.a and pulls in its single member.
 target_link_libraries(pjlib
   PRIVATE
     freertos_kernel
     lwipcore
+  PUBLIC
+    mbedtls
+    mbedtls_port
 )
 
 # ##############################################################################
@@ -166,6 +181,7 @@ add_library(pjsip STATIC
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_loop.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_tcp.c
+  ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_tls.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_transport_udp.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_ua_layer.c
   ${PJPROJECT_ROOT}/pjsip/src/pjsip/sip_uri.c
