@@ -259,6 +259,55 @@ target_compile_definitions(speex PRIVATE HAVE_CONFIG_H=1)
 # symbol resolution (an -lm placed earlier never resolves speex's math refs).
 target_link_libraries(speex PUBLIC m PRIVATE pjlib)
 
+# ##############################################################################
+# bundled libsrtp (SDES SRTP, pure-software crypto - no OpenSSL on this target).
+# Same "manual sources" approach as Speex so the upstream pjproject tree stays
+# unmodified.  third_party/build/srtp/{config,srtp_config}.h are pre-generated
+# by pjproject (config.h just includes srtp_config.h).  PJMEDIA_HAS_SRTP=1 in
+# config_site.h pulls in pjmedia/src/pjmedia/transport_srtp.c (Bundled branch,
+# includes <srtp_config.h>), which needs this lib.
+add_library(srtp STATIC
+  ${PJPROJECT_ROOT}/third_party/srtp/srtp/srtp.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/cipher/cipher.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/cipher/null_cipher.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/cipher/cipher_test_cases.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/cipher/aes.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/cipher/aes_icm.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/hash/null_auth.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/hash/auth.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/hash/auth_test_cases.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/hash/sha1.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/hash/hmac.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/replay/rdb.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/replay/rdbx.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/math/datatypes.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/kernel/crypto_kernel.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/kernel/alloc.c
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/kernel/key.c
+  ${PJPROJECT_ROOT}/third_party/srtp/pjlib/srtp_err.c
+)
+# Public so pjmedia's transport_srtp.c (compiled in pjmedia) sees
+# <srtp_config.h> / <config.h> and the srtp headers.
+target_include_directories(srtp PUBLIC
+  ${PJPROJECT_ROOT}/third_party/build/srtp
+  ${PJPROJECT_ROOT}/third_party/srtp/include
+  ${PJPROJECT_ROOT}/third_party/srtp/crypto/include
+)
+target_compile_definitions(srtp PRIVATE HAVE_CONFIG_H=1)
+# arm-none-eabi <stdint.h> defines uint32_t as unsigned long (not unsigned
+# int); libsrtp assumes uint32_t == unsigned int and mixes the two types,
+# which GCC 14+ rejects as hard errors (-Wincompatible-pointer-types /
+# conflicting types).  Override the compiler's fixed-width type macros ONLY
+# for this third-party lib (scope = this target) so libsrtp sees
+# uint32_t == unsigned int.  -Wno-builtin-macro-redefined silences the
+# harmless "macro redefined" note.
+target_compile_options(srtp PRIVATE
+  "-D__UINT32_TYPE__=unsigned int"
+  "-D__INT32_TYPE__=int"
+  -Wno-builtin-macro-redefined
+)
+target_link_libraries(srtp PUBLIC pjlib)
+
 # pjmedia (full framework trial: SDP + RTP + RTCP + event + codec mgr...)
 # ##############################################################################
 add_library(pjmedia STATIC
@@ -315,13 +364,22 @@ add_library(pjmedia STATIC
   src/codec_stub.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/txt_stream.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_ice.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_srtp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/audio_codecs.c
 )
 target_include_directories(pjmedia PUBLIC
   ${PJPROJECT_ROOT}/pjmedia/include
   ${PJPROJECT_ROOT}/pjnath/include
 )
-target_link_libraries(pjmedia PUBLIC pjlib speex PRIVATE pjlib-util)
+target_link_libraries(pjmedia PUBLIC pjlib speex srtp PRIVATE pjlib-util)
+
+# transport_srtp.c includes the libsrtp headers and must see the same
+# uint32_t == unsigned int as the srtp lib (same type-macro override).
+set_source_files_properties(
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_srtp.c
+  PROPERTIES COMPILE_OPTIONS
+    "-D__UINT32_TYPE__=unsigned int;-D__INT32_TYPE__=int;-Wno-builtin-macro-redefined"
+)
 
 # ##############################################################################
 # pjsip-ua (INVITE session + REGISTER client; needs pjmedia/SDP)

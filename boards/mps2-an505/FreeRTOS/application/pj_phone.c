@@ -847,6 +847,12 @@ int pj_phone_init(void) {
     acc_cfg.reg_timeout = 90;
     acc_cfg.reg_first_retry_interval = 5;
     acc_cfg.reg_retry_interval = 5;
+    /* M1 security: encrypt the RTP media with SDES SRTP (FreeSWITCH
+     * internal-lo is configured with inbound/outbound-srtp-negotiation=
+     * optional, so it answers RTP/SAVP with a crypto suite).  Signaling stays
+     * plaintext for now (srtp_secure_signaling needs a TLS transport). */
+    acc_cfg.use_srtp = PJMEDIA_SRTP_MANDATORY;
+    acc_cfg.srtp_secure_signaling = 0;
     st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
     if (st != PJ_SUCCESS) {
         printf("pj_phone: acc_add failed (%d)\r\n", st);

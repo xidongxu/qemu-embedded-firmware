@@ -76,7 +76,7 @@
  * pjmedia/config.h uses #ifndef so defining these here (config_site.h is
  * included first) overrides defaults. */
 #define PJMEDIA_HAS_VIDEO               0
-#define PJMEDIA_HAS_SRTP                0
+#define PJMEDIA_HAS_SRTP                1   /* SDES SRTP via bundled libsrtp */
 #define PJMEDIA_HAS_FFMPEG              0
 #define PJMEDIA_HAS_LIBYUV              0
 #define PJMEDIA_HAS_SPEEX_AEC           1   /* bundled Speex AEC (third_party/speex) */
