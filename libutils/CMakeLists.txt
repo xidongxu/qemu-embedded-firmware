@@ -45,6 +45,10 @@ if(TARGET_PROJECT STREQUAL "FreeRTOS")
 
     include(${LWIP_DIR}/src/Filelists.cmake)
 
+    # SNTP client (boot time sync for mbedtls X.509 validity checks).  The
+    # apps live in separate *_SRCS vars; fold the SNTP one into lwipcore.
+    target_sources(lwipcore PRIVATE ${lwipsntp_SRCS})
+
     if(LWIP_OS_ENABLED)
         # FreeRTOS sys_arch backend (semaphores/mailboxes/threads/mutexes).
         target_sources(lwipcore PRIVATE ${LWIP_DIR}/ports/freertos/sys_arch.c)

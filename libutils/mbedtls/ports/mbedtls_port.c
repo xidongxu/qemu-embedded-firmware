@@ -39,28 +39,33 @@
 
 #if defined(MBEDTLS_PLATFORM_MS_TIME_ALT)
 
+/* Boot-time SNTP-synced real epoch (seconds; 0 = not synced yet). */
+extern time_t sntp_sync_get_epoch(void);
+
 mbedtls_ms_time_t mbedtls_ms_time(void)
 {
-    /* No RTC on this board: report a fixed epoch inside the test CA
-     * certificate's validity window (2026-09-01T00:00Z) + uptime ms, so the
-     * x509 notBefore/notAfter checks pass during the TLS handshake.
-     * (证书有效期: 2026-08-30 ~ 2036-08-27; 板子无 RTC, 时间基准从启动算起,
-     * 需落到有效期内.)  Replace with a real RTC source if available. */
+    /* Use the SNTP-synced real clock if available, else fall back to a fixed
+     * epoch inside the test CA validity window.  (证书有效期: 2026-08-30 ~
+     * 2036-08-27; 板子无 RTC, 开机经 SNTP 同步真实时间, 未同步前用固定基准.) */
     const mbedtls_ms_time_t BOOT_EPOCH_MS = 1788220800000LL;
-    return BOOT_EPOCH_MS +
+    time_t ep = sntp_sync_get_epoch();
+    mbedtls_ms_time_t base = (ep > 0) ? ((mbedtls_ms_time_t) ep * 1000)
+                                      : BOOT_EPOCH_MS;
+    return base +
            (mbedtls_ms_time_t) xTaskGetTickCount() * (mbedtls_ms_time_t) portTICK_PERIOD_MS;
 }
 
 #endif /* MBEDTLS_PLATFORM_MS_TIME_ALT */
 
 #if defined(MBEDTLS_PLATFORM_TIME_MACRO)
-/* mbedtls_time() replacement: bare-metal time() returns 0 (1970), which
- * makes every x509 cert look not-yet-valid.  Return a fixed epoch inside
- * the test CA validity window + uptime seconds (see mbedtls_ms_time). */
+/* mbedtls_time() replacement: use the SNTP-synced real epoch when available,
+ * else the fixed fallback epoch (bare-metal time() returns 0 = 1970). */
 mbedtls_time_t mbedtls_platform_time_alt(mbedtls_time_t *timer)
 {
     const mbedtls_time_t BOOT_EPOCH_S = 1788220800L; /* 2026-09-01T00:00Z */
-    mbedtls_time_t now = BOOT_EPOCH_S +
+    time_t ep = sntp_sync_get_epoch();
+    mbedtls_time_t base = (ep > 0) ? (mbedtls_time_t) ep : BOOT_EPOCH_S;
+    mbedtls_time_t now = base +
         (mbedtls_time_t)(xTaskGetTickCount() / (TickType_t) portTICK_PERIOD_MS / 1000);
     if (timer != NULL) {
         *timer = now;

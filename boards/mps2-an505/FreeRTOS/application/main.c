@@ -164,6 +164,13 @@ static void main_task_entry(void *parameters) {
      * 不自动拨号 - 由 LVGL 电话 UI 通过触摸屏发起呼叫/接听/挂断）。
      * 稍等让 tcpip_init 完成，再启动 pjsua。 */
     vTaskDelay(1000);
+    /* Boot-time NTP sync so mbedtls X509 certificate validity checks use the
+     * real clock (host NTP server at 172.16.23.1:123; falls back to a fixed
+     * epoch until the first SNTP response arrives). */
+    {
+        extern void sntp_sync_init(void);
+        sntp_sync_init();
+    }
     {
         /* High-prio watchdog to observe system state if pjsua stalls. */
         extern void phone_watchdog(void *arg);

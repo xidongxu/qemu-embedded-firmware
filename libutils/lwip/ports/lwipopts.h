@@ -334,6 +334,20 @@ a lot of data that needs to be copied, this should be set high. */
 #define UDP_RECV_BUFSIZE        (60 * 1500)
 
 
+/* ---------- SNTP client (boot time sync) ---------- */
+/* Sync real time at boot so mbedtls X.509 certificate validity checks use
+ * the actual clock instead of a fixed fallback epoch.  The callback updates
+ * the guest's RTC epoch (sntp_sync.c); the NTP server is the host tap0
+ * address (see sntp_sync_init()).  Port 12345 (non-standard) so the host
+ * does not need Administrator to run works/tools/sntp_server.py and does
+ * not clash with the Windows time service on :123. */
+#define LWIP_SNTP               1
+#define SNTP_PORT               12345
+#define SNTP_UPDATE_DELAY       3600000
+#define SNTP_SET_SYSTEM_TIME(sec) sntp_sync_set_system_time((unsigned int)(sec))
+void sntp_sync_set_system_time(unsigned int sec);
+
+
 /* ---------- RAW options ---------- */
 #define LWIP_RAW                1
 
