@@ -41,11 +41,17 @@
 
 #define THIS_FILE               "mpsx_dev.c"
 
-#define MPSX_CLOCK_RATE         8000    /* 8 kHz, matches media clock      */
+#define MPSX_CLOCK_RATE         8000    /* default 8 kHz                   */
 #define MPSX_CHANNELS           1
 #define MPSX_FRAME_MS           20      /* pjmedia default ptime           */
 #define MPSX_SAMPLES_PER_FRAME  (MPSX_CLOCK_RATE * MPSX_FRAME_MS / 1000) /*160*/
 #define MPSX_FRAME_BYTES        (MPSX_SAMPLES_PER_FRAME * 2)  /* S16 mono */
+/* Maximum supported rate / frame capacity (QEMU device accepts up to
+ * 192 kHz; buffers are sized for the largest frame we expect: 48 kHz @
+ * 20 ms = 960 samples). */
+#define MPSX_MAX_CLOCK_RATE         48000
+#define MPSX_MAX_SAMPLES_PER_FRAME  (MPSX_MAX_CLOCK_RATE * MPSX_FRAME_MS / 1000)
+#define MPSX_MAX_FRAME_BYTES        (MPSX_MAX_SAMPLES_PER_FRAME * 2)
 #define MPSX_TASK_PRIO          3
 #define MPSX_TASK_STACK         2048
 
@@ -84,15 +90,20 @@ struct mpsx_stream
     SemaphoreHandle_t            cap_sem;
     volatile int                 running;
 
-    /* Frame timestamp tracking (monotonic 8 kHz sample counters) */
+    /* Frame timestamp tracking (monotonic sample counters) */
     pj_uint64_t                  ts_play;
     pj_uint64_t                  ts_cap;
 
+    /* Runtime clock / frame geometry (from pjmedia_aud_param.clock_rate) */
+    unsigned                     clock_rate;
+    unsigned                     samples_per_frame;
+    unsigned                     frame_bytes;
+
     /* DMA buffers (physical == virtual on MPS2 RAM); the audio device
      * loops play_buf, the mic device fills cap_buf. */
-    int16_t                      play_buf[MPSX_SAMPLES_PER_FRAME]
+    int16_t                      play_buf[MPSX_MAX_SAMPLES_PER_FRAME]
                                  __attribute__((aligned(64)));
-    int16_t                      cap_buf[MPSX_SAMPLES_PER_FRAME]
+    int16_t                      cap_buf[MPSX_MAX_SAMPLES_PER_FRAME]
                                  __attribute__((aligned(64)));
 };
 
@@ -183,14 +194,14 @@ static void mpsx_play_task(void *arg)
     pjmedia_frame f;
 
     f.type = PJMEDIA_FRAME_TYPE_AUDIO;
-    f.size = MPSX_FRAME_BYTES;
+    f.size = strm->frame_bytes;
 
     while (strm->running) {
         if (xSemaphoreTake(strm->play_sem, pdMS_TO_TICKS(200)) != pdTRUE)
             continue;
         f.buf = strm->play_buf;
         f.timestamp.u64 = strm->ts_play;
-        strm->ts_play += MPSX_SAMPLES_PER_FRAME;
+        strm->ts_play += strm->samples_per_frame;
         if (strm->play_cb)
             strm->play_cb(strm->user_data, &f);
         /* play_buf content updated in place; device loops the same buffer */
@@ -206,14 +217,14 @@ static void mpsx_cap_task(void *arg)
     pjmedia_frame f;
 
     f.type = PJMEDIA_FRAME_TYPE_AUDIO;
-    f.size = MPSX_FRAME_BYTES;
+    f.size = strm->frame_bytes;
 
     while (strm->running) {
         if (xSemaphoreTake(strm->cap_sem, pdMS_TO_TICKS(200)) != pdTRUE)
             continue;
         f.buf = strm->cap_buf;   /* mic DMA wrote this buffer */
         f.timestamp.u64 = strm->ts_cap;
-        strm->ts_cap += MPSX_SAMPLES_PER_FRAME;
+        strm->ts_cap += strm->samples_per_frame;
         if (strm->rec_cb)
             strm->rec_cb(strm->user_data, &f);
     }
@@ -348,6 +359,11 @@ static pj_status_t mpsx_factory_create_stream(pjmedia_aud_dev_factory *f,
     strm->play_cb = play_cb;
     strm->user_data = user_data;
 
+    /* Runtime clock geometry from the requested sample rate. */
+    strm->clock_rate = param->clock_rate;
+    strm->samples_per_frame = param->clock_rate * MPSX_FRAME_MS / 1000;
+    strm->frame_bytes = strm->samples_per_frame * 2;
+
     strm->base.op = &stream_op;
     *p_aud_strm = &strm->base;
 
@@ -413,9 +429,9 @@ static pj_status_t mpsx_stream_start(pjmedia_aud_stream *s)
         AUDIO_INT_STATUS = AUDIO_INT_DONE;
         AUDIO_INT_EN = AUDIO_INT_DONE;
         AUDIO_FORMAT = AUDIO_FORMAT_S16;
-        AUDIO_SAMPLE_RATE = MPSX_CLOCK_RATE;
+        AUDIO_SAMPLE_RATE = strm->clock_rate;
         AUDIO_BUF_ADDR = (uint32_t)(uintptr_t)strm->play_buf;
-        AUDIO_BUF_LEN = MPSX_FRAME_BYTES;
+        AUDIO_BUF_LEN = strm->frame_bytes;
         NVIC_ClearPendingIRQ((IRQn_Type)AUDIO_IRQ);
         NVIC_EnableIRQ((IRQn_Type)AUDIO_IRQ);
         __DSB();
@@ -443,9 +459,9 @@ static pj_status_t mpsx_stream_start(pjmedia_aud_stream *s)
         MIC_INT_STATUS = MIC_INT_DONE | MIC_INT_OVERRUN;
         MIC_INT_EN = MIC_INT_DONE;
         MIC_FORMAT = MIC_FORMAT_S16;
-        MIC_SAMPLE_RATE = MPSX_CLOCK_RATE;
+        MIC_SAMPLE_RATE = strm->clock_rate;
         MIC_BUF_ADDR = (uint32_t)(uintptr_t)strm->cap_buf;
-        MIC_BUF_LEN = MPSX_FRAME_BYTES;
+        MIC_BUF_LEN = strm->frame_bytes;
         NVIC_ClearPendingIRQ((IRQn_Type)MIC_IRQ);
         NVIC_EnableIRQ((IRQn_Type)MIC_IRQ);
         __DSB();

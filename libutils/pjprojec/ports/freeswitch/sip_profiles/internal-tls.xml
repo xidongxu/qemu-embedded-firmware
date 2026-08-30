@@ -40,8 +40,11 @@
     <param name="tls-only" value="true"/>
     <param name="tls-cert-dir" value="$${base_dir}/cert"/>
     <param name="tls-version" value="tlsv1.2"/>
-    <!-- SRTP (compiled into core/mod_sofia): optional -> fall back to RTP. -->
-    <param name="inbound-srtp-negotiation" value="optional"/>
-    <param name="outbound-srtp-negotiation" value="optional"/>
+    <!-- SRTP (compiled into core/mod_sofia): mandatory so the guest's
+         use_srtp=MANDATORY media is accepted on inbound calls (with
+         "optional" FreeSWITCH does not offer SRTP as caller, and the guest
+         rejects the resulting plain-RTP media with 488 Not Acceptable). -->
+    <param name="inbound-srtp-negotiation" value="mandatory"/>
+    <param name="outbound-srtp-negotiation" value="mandatory"/>
   </settings>
 </profile>

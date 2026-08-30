@@ -36,9 +36,12 @@
 ## 2. 阶段一：通话功能补全（功能完整性 · 核心）
 
 ### 2.1 宽带语音（决定音质与 DTMF 采样率根因）
-- [ ] G.722（16k）交叉编译进 `libutils/pjprojec/ports/`（`PJMEDIA_HAS_G722_CODEC=1`），`snd_clock_rate` 8k→16k 链路打通
-- [ ] Opus（全频）交叉编译（`PJMEDIA_HAS_OPUS_CODEC=1`），作为首选宽带 codec
-- [ ] SDP 协商验证：双 QEMU 与 Android 分别协商出 G.722/Opus，双向 RTP 正常
+- [x] G.722（16k）交叉编译进 `ports`（`PJMEDIA_HAS_G722_CODEC=1` + `resample=LIBRESAMPLE` + `third_party/resample`），注册 `prio -> 0`
+- [x] **mpsx 设备可变采样率**：`mpsx_dev.c` 用 `param.clock_rate` 配置 QEMU 设备 `REG_SAMPLE_RATE`（QEMU 已原生支持 1000-192kHz，零改动）；媒体链路 `clock_rate=snd_clock_rate=16000`
+- [x] SDP 协商验证：拨 FS echo(9196)，`audio stream #0: G722 (sendrecv)` + SDES SRTP（`AES_256_CM_HMAC_SHA1_80`）
+- [x] **G.722 双向音频验证**：pcap 铁证——guest→FS 5408 包 / FS→guest 5393 包，持续 108s 零丢包（20ms 帧 ≈50包/s）。注：FS 残留状态曾致入站 ~1590 包停（RX-STALL），`hupall`+干净环境后稳定，非 G.722 问题
+- [x] G.711 fallback：G.711 恢复 NORMAL 作为窄带备选（设备 16k 下由 pjsua 自动 resample 处理 8k codec）
+- [ ] Opus（全频）交叉编译（`PJMEDIA_HAS_OPUS_CODEC=1`），作为首选宽带 codec（16k 路径已就绪）
 - [ ] 验证：`verify_audio.py`/`analyze_call_audio.py` 测主频与响度；DTMF 采样率不一致根因消除
 
 ### 2.2 语音质量处理

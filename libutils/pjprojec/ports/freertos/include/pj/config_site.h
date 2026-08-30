@@ -80,10 +80,13 @@
 #define PJSIP_HAS_TLS_TRANSPORT         1   /* SIPS over mbedtls (pjlib SSL) */
 
 /* ---- PJMEDIA (full-framework trial, stage 14) ----------------------- */
-/* No external media backends / codecs on this embedded target; keep only
- * the built-in G.711 (PCMU/PCMA) codec and the bundled Speex AEC.
- * pjmedia/config.h uses #ifndef so defining these here (config_site.h is
- * included first) overrides defaults. */
+/* No external media backends on this embedded target; keep the built-in
+ * G.711 (PCMU/PCMA) and G.722 (wideband 16k) codecs plus the bundled
+ * Speex AEC.  G.722 needs no external lib (ITU reference impl ships in
+ * pjmedia-codec/g722/).  G.722 is compiled in and negotiable, but its
+ * media stream needs a 16k audio path (see WORKLOG 08-30 roadmap 2.1):
+ * the 8k mpsx device cannot run it yet (conf 16k + snd 8k stalls).
+ * pjmedia/config.h uses #ifndef so defining these here overrides. */
 #define PJMEDIA_HAS_VIDEO               0
 #define PJMEDIA_HAS_SRTP                1   /* SDES SRTP via bundled libsrtp */
 #define PJMEDIA_HAS_FFMPEG              0
@@ -91,7 +94,10 @@
 #define PJMEDIA_HAS_SPEEX_AEC           1   /* bundled Speex AEC (third_party/speex) */
 #define PJMEDIA_HAS_WEBRTC_AEC          0
 #define PJMEDIA_HAS_WEBRTC_AEC3         0
-#define PJMEDIA_RESAMPLE_IMP            PJMEDIA_RESAMPLE_NONE
+/* Resample: libresample is required once a 16k codec (G.722) is compiled
+ * in (pjsua_aud sound-open creates a resample port when a 16k codec is
+ * present; NONE fails with "Error creating resample port"). */
+#define PJMEDIA_RESAMPLE_IMP            PJMEDIA_RESAMPLE_LIBRESAMPLE
 #define PJMEDIA_HAS_G711_CODEC          1
 /* Use the standard 101 for the telephone-event RTP payload so outbound DTMF
  * interoperates with normal SIP endpoints (FreeSWITCH / Linphone negotiate
@@ -100,7 +106,7 @@
  * remote phone could not display DTMF sent by the guest (FS log showed
  * "a=rtpmap:120 telephone-event" for the guest leg vs 101 for the phone). */
 #define PJMEDIA_RTP_PT_TELEPHONE_EVENTS 101
-#define PJMEDIA_HAS_G722_CODEC          0
+#define PJMEDIA_HAS_G722_CODEC          1   /* wideband 16k (pjmedia-codec/g722) */
 #define PJMEDIA_HAS_G7221_CODEC         0
 #define PJMEDIA_HAS_L16_CODEC           0
 #define PJMEDIA_HAS_ILBC_CODEC          0

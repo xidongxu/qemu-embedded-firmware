@@ -370,6 +370,10 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/plc_common.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/resample_port.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/resample_resample.c
+  # ---- libresample core (resample_resample.c's LIBRESAMPLE branch calls
+  # res_* from resamplesubs.c; include path needs PJPROJECT_ROOT so
+  # <third_party/resample/include/resamplesubs.h> resolves) ----
+  ${PJPROJECT_ROOT}/third_party/resample/src/resamplesubs.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wav_player.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wav_writer.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/wave.c
@@ -382,10 +386,17 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_ice.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia/transport_srtp.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/audio_codecs.c
+  # ---- G.722 wideband codec (ITU reference impl in pjmedia-codec/g722/) ----
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722/g722_enc.c
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722/g722_dec.c
 )
 target_include_directories(pjmedia PUBLIC
   ${PJPROJECT_ROOT}/pjmedia/include
   ${PJPROJECT_ROOT}/pjnath/include
+  ${PJPROJECT_ROOT}
+  ${PJPROJECT_ROOT}/third_party/resample/src
+  ${PJPROJECT_ROOT}/third_party/resample/include
 )
 target_link_libraries(pjmedia PUBLIC pjlib speex srtp PRIVATE pjlib-util)
 

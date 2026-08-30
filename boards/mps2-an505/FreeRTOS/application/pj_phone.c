@@ -65,22 +65,28 @@
  * binary) and decrypted at runtime via cred_get_password() - see
  * pj_crypto.c / works/tools/encrypt_cred.py. */
 
-/* Dial host/port: where to reach SIP peers.  This must match FreeSWITCH's
- * default domain ($${local_ip_v4} = the host LAN IP 192.168.23.7) so the
- * guest's AOR (1000@<dial_host>) resolves to the directory user.  The
- * REGISTER/proxy still go to FS_HOST = 172.16.23.1 (the tap0 address where
- * FreeSWITCH's internal-lo profile listens).  Can be overridden at runtime
- * with pj_phone_set_dial_host() + pj_phone_reregister() so an IP change
- * needs no rebuild. */
+/* Dial host/port: the SIP domain FreeSWITCH expects for this account's AOR
+ * ($${local_ip_v4} = 192.168.23.7, the directory realm).  The guest only
+ * reaches the host at 172.16.23.1 over tap0, so outbound requests are
+ * actually sent through the account's outbound proxy (sips:172.16.23.1:5061
+ * TLS) - the AOR/domain stays 192.168.23.7 for auth to match.  Can be
+ * overridden at runtime with pj_phone_set_dial_host() +
+ * pj_phone_reregister(). */
 #define PJ_PHONE_DIAL_HOST "192.168.23.7"
 #define PJ_PHONE_DIAL_PORT 5060
 
 /* Optional auto-dial for scripted testing (no UI). */
 #ifndef PJ_PHONE_AUTO_DIAL
-#define PJ_PHONE_AUTO_DIAL 0
+#define PJ_PHONE_AUTO_DIAL 1
 #endif
 #ifndef PJ_PHONE_DEFAULT_NUMBER
-#define PJ_PHONE_DEFAULT_NUMBER "1005"
+#define PJ_PHONE_DEFAULT_NUMBER "9196"  /* FreeSWITCH echo test extension */
+#endif
+
+/* Optional auto-answer for scripted testing / media verification (no UI).
+ * 0 = ring and wait for the user to pick up. */
+#ifndef PJ_PHONE_AUTO_ANSWER
+#define PJ_PHONE_AUTO_ANSWER 1
 #endif
 
 /* Auto-hangup once inbound media has stalled this long while in a call
@@ -528,6 +534,12 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
     strncpy(g_peer, tmp, sizeof(g_peer) - 1);
     g_peer[sizeof(g_peer) - 1] = '\0';
     taskEXIT_CRITICAL();
+#if PJ_PHONE_AUTO_ANSWER
+    printf("pj_phone: auto-answer call %d (200)\r\n", (int)call_id);
+    if (pjsua_call_answer(call_id, 200, NULL, NULL) != PJ_SUCCESS) {
+        printf("pj_phone: auto-answer FAILED for call %d\r\n", (int)call_id);
+    }
+#endif
     phone_notify();
 }
 
@@ -760,8 +772,12 @@ int pj_phone_init(void) {
     log_cfg.console_level = 2;
 
     pjsua_media_config_default(&media_cfg);
-    media_cfg.clock_rate = 8000;
-    media_cfg.snd_clock_rate = 8000;
+    /* Wideband: conf-bridge, sound device and codec all run at 16k
+     * (mpsx_dev now configures the QEMU device sample rate from
+     * param.clock_rate).  Keeping clock_rate == snd_clock_rate avoids the
+     * pjsua_aud resample path entirely. */
+    media_cfg.clock_rate = 16000;
+    media_cfg.snd_clock_rate = 16000;
     media_cfg.channel_count = 1;
     media_cfg.ec_options = 0;
     /* Disable VAD so the guest keeps sending (silence) and the RTP path
@@ -781,6 +797,21 @@ int pj_phone_init(void) {
         return -1;
     }
     printf("pj_phone: pjsua_init OK\r\n");
+
+    /* Prefer G.722 (wideband 16k) for audio quality; G.711 stays as the
+     * narrowband fallback.  mpsx_dev configures the device to 16k from
+     * snd_clock_rate, so the wideband media path runs without resample. */
+    {
+        pj_str_t cid = pj_str("G722/16000");
+        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_HIGHEST);
+        printf("pj_phone: codec G722/16000 prio -> %d\r\n", (int)st);
+        cid = pj_str("PCMU/8000");
+        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
+        printf("pj_phone: codec PCMU/8000 prio -> %d\r\n", (int)st);
+        cid = pj_str("PCMA/8000");
+        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
+        printf("pj_phone: codec PCMA/8000 prio -> %d\r\n", (int)st);
+    }
 
 #if PJMEDIA_AUDIO_DEV_HAS_MPSX
     /* Register the mpsx audio factory at runtime using the public
