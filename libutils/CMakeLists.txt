@@ -66,6 +66,17 @@ endif()
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     add_subdirectory(littlefs)
     add_subdirectory(fatfs)
+    # libopus (wideband/fullband codec via pjmedia-codec/opus.c).
+    # FIXED_POINT for Cortex-M33 (no float path); intrinsics off (no NEON
+    # on M33); static library only.  Built before pjprojec so pjmedia can
+    # link it.
+    set(OPUS_FIXED_POINT ON CACHE BOOL "opus fixed point" FORCE)
+    set(OPUS_DISABLE_INTRINSICS ON CACHE BOOL "opus no intrinsics" FORCE)
+    set(OPUS_ENABLE_FLOAT_API OFF CACHE BOOL "opus no float api" FORCE)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "opus static only" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "opus no programs" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "opus no tests" FORCE)
+    add_subdirectory(opus opus_build)
     # mbedtls 4.2 (TLS/X509/crypto, 含 TF-PSA-Crypto) FreeRTOS port.
     # 配置集中在 libutils/mbedtls/ports/（含裸机时间/熵对接）。
     add_subdirectory(mbedtls/ports)

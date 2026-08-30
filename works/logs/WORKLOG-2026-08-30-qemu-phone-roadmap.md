@@ -41,8 +41,11 @@
 - [x] SDP 协商验证：拨 FS echo(9196)，`audio stream #0: G722 (sendrecv)` + SDES SRTP（`AES_256_CM_HMAC_SHA1_80`）
 - [x] **G.722 双向音频验证**：pcap 铁证——guest→FS 5408 包 / FS→guest 5393 包，持续 108s 零丢包（20ms 帧 ≈50包/s）。注：FS 残留状态曾致入站 ~1590 包停（RX-STALL），`hupall`+干净环境后稳定，非 G.722 问题
 - [x] G.711 fallback：G.711 恢复 NORMAL 作为窄带备选（设备 16k 下由 pjsua 自动 resample 处理 8k codec）
-- [ ] Opus（全频）交叉编译（`PJMEDIA_HAS_OPUS_CODEC=1`），作为首选宽带 codec（16k 路径已就绪）
-- [ ] 验证：`verify_audio.py`/`analyze_call_audio.py` 测主频与响度；DTMF 采样率不一致根因消除
+- [x] **Opus 交叉编译 + 集成**（`PJMEDIA_HAS_OPUS_CODEC=1` + `libutils/opus` libopus 1.6.1 `OPUS_FIXED_POINT=ON` + `ports/include/opus/opus.h` 转发头）；注册 `opus/48000/2`，`PJMEDIA_CODEC_OPUS_DEFAULT_COMPLEXITY=0`
+- [x] **SIP 信令大包修复（Opus 引入的关键）**：Opus SDP 使 INVITE 达 2118B，而 lwIP `TCP_SND_BUF=2048` 只发出 2048B（截断）→ FS 等 body 超时 RST（503）。改 `libutils/lwip/ports/lwipopts.h` `TCP_SND_BUF 2048→8192`、`MEMP_NUM_TCP_SEG 16→40` 后 INVITE 完整发送 → 呼叫建立（`100→200 OK→CONFIRMED`）
+- [x] **Opus 48k 协商验证**：media clock 48k 下 FS 通道 `read=opus rate=48000`（SDES SRTP），`audio updated: stream #0: opus (sendrecv)`
+- [x] **Opus 48k 媒体在 QEMU/TCG 不可行（平台限制，留真机）**：25MHz M33 下 48k Opus 编码（即使 complexity 0）占满 CPU → 串口/解码/播放线程饿死 → 媒体静音（wav 全 0）、卡 CONNECTING（无 wd）。且 media clock 16k 时 RFC 7587 的 48000 RTP 时钟与 16k 不匹配 → Opus 不 offer（FS 落 PCMA）。**QEMU 宽带默认 G.722 16k（稳定已验证）；Opus 48k 全频需真机**（真机把 `media_cfg.clock_rate` 改回 48000 即可）
+- [x] **16k 全链路回归**：G.722 16k @ 16k clock 双向 RTP 零丢包（rx_pkt≈tx_pkt 持续增长）、conf sig 有信号、wav 有 1kHz 回放
 
 ### 2.2 语音质量处理
 - [ ] 自适应 jitter buffer 按工业场景调优（jbuf 参数 + `tc netem` 突发/延迟回归）

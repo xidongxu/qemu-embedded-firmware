@@ -390,6 +390,8 @@ add_library(pjmedia STATIC
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722/g722_enc.c
   ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/g722/g722_dec.c
+  # ---- Opus codec (libutils/opus, FIXED_POINT) ----
+  ${PJPROJECT_ROOT}/pjmedia/src/pjmedia-codec/opus.c
 )
 target_include_directories(pjmedia PUBLIC
   ${PJPROJECT_ROOT}/pjmedia/include
@@ -397,8 +399,11 @@ target_include_directories(pjmedia PUBLIC
   ${PJPROJECT_ROOT}
   ${PJPROJECT_ROOT}/third_party/resample/src
   ${PJPROJECT_ROOT}/third_party/resample/include
+  ${CMAKE_SOURCE_DIR}/libutils/opus/ports/include
+  ${CMAKE_SOURCE_DIR}/libutils/opus
+  ${CMAKE_SOURCE_DIR}/libutils/opus/include
 )
-target_link_libraries(pjmedia PUBLIC pjlib speex srtp PRIVATE pjlib-util)
+target_link_libraries(pjmedia PUBLIC pjlib speex srtp opus PRIVATE pjlib-util)
 
 # transport_srtp.c includes the libsrtp headers and must see the same
 # uint32_t == unsigned int as the srtp lib (same type-macro override).

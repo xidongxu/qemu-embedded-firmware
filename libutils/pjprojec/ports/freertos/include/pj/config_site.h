@@ -112,7 +112,20 @@
 #define PJMEDIA_HAS_ILBC_CODEC          0
 #define PJMEDIA_HAS_GSM_CODEC           0
 #define PJMEDIA_HAS_SPEEX_CODEC         0
-#define PJMEDIA_HAS_OPUS_CODEC          0
+#define PJMEDIA_HAS_OPUS_CODEC          1   /* fullband via libutils/opus */
+/* Opus: 48k fullband.  RFC 7587 fixes the Opus RTP clock at 48000, so the
+ * media clock (conf/snd) runs at 48k to match with no resample (mpsx_dev
+ * supports up to 48k). */
+/* Opus: 48k fullband for real HW.  RFC 7587 fixes the Opus RTP clock at
+ * 48000, so real-HW media clock must be 48000.  NOTE: under QEMU/TCG a
+ * 48k Opus encode saturates the 25 MHz M33 and starves every other task,
+ * so the QEMU build runs G.722 16k instead (see pj_phone.c). */
+#define PJMEDIA_CODEC_OPUS_DEFAULT_SAMPLE_RATE 48000
+#define PJMEDIA_CODEC_OPUS_DEFAULT_BIT_RATE    32000
+/* Opus encoding at 48k is heavy for a 25 MHz M33 under QEMU/TCG (a
+ * complexity-5 encode can saturate the core and starve every other task).
+ * Use complexity 0 (fastest) so the media thread keeps up in real time. */
+#define PJMEDIA_CODEC_OPUS_DEFAULT_COMPLEXITY  0
 #define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 0
 #define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 0
 #define PJMEDIA_HAS_SILK_CODEC          0

@@ -225,8 +225,9 @@ static void mpsx_cap_task(void *arg)
         f.buf = strm->cap_buf;   /* mic DMA wrote this buffer */
         f.timestamp.u64 = strm->ts_cap;
         strm->ts_cap += strm->samples_per_frame;
-        if (strm->rec_cb)
+        if (strm->rec_cb) {
             strm->rec_cb(strm->user_data, &f);
+        }
     }
     vTaskDelete(NULL);
 }
@@ -443,7 +444,7 @@ static pj_status_t mpsx_stream_start(pjmedia_aud_stream *s)
             return PJ_ENOMEM;
         }
         PJ_LOG(4, (THIS_FILE, "mpsx playback started (buf=%p len=%u)",
-                   (void *)strm->play_buf, (unsigned)MPSX_FRAME_BYTES));
+                   (void *)strm->play_buf, (unsigned)strm->frame_bytes));
     }
 
     /* ---- Capture: mpsx-simple-mic (IRQ 50) ---- */
@@ -473,7 +474,7 @@ static pj_status_t mpsx_stream_start(pjmedia_aud_stream *s)
             return PJ_ENOMEM;
         }
         PJ_LOG(4, (THIS_FILE, "mpsx capture started (buf=%p len=%u)",
-                   (void *)strm->cap_buf, (unsigned)MPSX_FRAME_BYTES));
+                   (void *)strm->cap_buf, (unsigned)strm->frame_bytes));
     }
 
     return PJ_SUCCESS;

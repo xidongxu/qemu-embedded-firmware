@@ -204,8 +204,9 @@ a lot of data that needs to be copied, this should be set high. */
    connections. */
 #define MEMP_NUM_TCP_PCB_LISTEN 8
 /* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
-   segments. */
-#define MEMP_NUM_TCP_SEG        16
+   segments.  Must be >= TCP_SND_QUEUELEN (4 * TCP_SND_BUF/TCP_MSS
+   = 4 * 8192/1024 = 32) or lwIP's sanity check aborts. */
+#define MEMP_NUM_TCP_SEG        40
 /* MEMP_NUM_SYS_TIMEOUT: the number of simultaneously active
    timeouts. */
 #define MEMP_NUM_SYS_TIMEOUT    32
@@ -262,8 +263,14 @@ a lot of data that needs to be copied, this should be set high. */
 /* TCP Maximum segment size. */
 #define TCP_MSS                 1024
 
-/* TCP sender buffer space (bytes). */
-#define TCP_SND_BUF             2048
+/* TCP sender buffer space (bytes).
+   Must be larger than the biggest SIP request that is written in a single
+   pjsua send: an INVITE offering the Opus codec carries a ~2118-byte SDP
+   (opus/48000 fmtp), and with the old 2048-byte buffer lwIP only accepted
+   the first 2048 bytes -> the INVITE went out truncated and FreeSWITCH
+   waited for the missing body until the connection timed out.  8192 leaves
+   headroom for the TLS record overhead too. */
+#define TCP_SND_BUF             8192
 
 /* TCP sender buffer space (pbufs). This must be at least = 2 *
    TCP_SND_BUF/TCP_MSS for things to work. */
