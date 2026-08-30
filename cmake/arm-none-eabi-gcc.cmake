@@ -11,6 +11,7 @@ set(CMAKE_OBJCOPY ${ARM_GCC_PREFIX}-objcopy)
 set(CMAKE_EXECUTABLE_SUFFIX "" CACHE STRING "Executable suffix")
 
 set(CMAKE_C_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mcmse -Wall -fdata-sections -ffunction-sections -fno-exceptions")
+set(CMAKE_CXX_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mcmse -Wall -fdata-sections -ffunction-sections -fno-exceptions -fno-rtti")
 set(CMAKE_ASM_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mcmse -x assembler-with-cpp")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mcmse --specs=nosys.specs -Wl,-gc-sections")
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(qemu_embedded_firmware VERSION 1.0 LANGUAGES C ASM)
+project(qemu_embedded_firmware VERSION 1.0 LANGUAGES C CXX ASM)
 
 set(BOARD mps2-an505 CACHE STRING "Target board")
 set(PROJECT FreeRTOS CACHE STRING "Target project")
@@ -13,8 +13,22 @@ add_compile_options(-O2)
 
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     set(FREERTOS_PORT GCC_ARM_CM33_NTZ_NONSECURE CACHE STRING "FreeRTOS port")
-    set(FREERTOS_HEAP 4 CACHE STRING "FreeRTOS heap implementation")
+    # Unified TLSF allocator (libmem/tlsf): C malloc/new + FreeRTOS kernel
+    # heap share one TLSF pool.  Enabled by default on mps2-an505.
+    if(BOARD STREQUAL "mps2-an505")
+        set(TLSF_MALLOC ON CACHE BOOL "Use unified TLSF allocator (malloc/new + FreeRTOS heap)")
+    else()
+        set(TLSF_MALLOC OFF CACHE BOOL "Use unified TLSF allocator (malloc/new + FreeRTOS heap)")
+    endif()
+    if(TLSF_MALLOC)
+        # Route the FreeRTOS kernel heap (pvPortMalloc) through TLSF too.
+        set(FREERTOS_HEAP ${CMAKE_SOURCE_DIR}/libmem/tlsf/ports/freertos/tlsf_freertos.c CACHE STRING "FreeRTOS heap implementation" FORCE)
+    else()
+        set(FREERTOS_HEAP 4 CACHE STRING "FreeRTOS heap implementation")
+    endif()
     message(STATUS "Using FreeRTOS port: ${FREERTOS_PORT}")
+    message(STATUS "TLSF_MALLOC: ${TLSF_MALLOC}")
+    message(STATUS "FreeRTOS heap: ${FREERTOS_HEAP}")
 endif()
 if(TARGET_PROJECT STREQUAL "threadx")
     add_compile_definitions(
@@ -26,5 +40,6 @@ if(TARGET_PROJECT STREQUAL "threadx")
 endif()
 
 add_subdirectory(librtos)
+add_subdirectory(libmem)
 add_subdirectory(libutils)
 add_subdirectory(boards/${BOARD})

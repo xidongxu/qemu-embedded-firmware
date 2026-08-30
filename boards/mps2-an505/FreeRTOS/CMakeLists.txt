@@ -18,6 +18,15 @@ file(GLOB APP_SOURCES
     "application/*.c"
 )
 
+# Unified TLSF allocator: replace the stock CubeMX sysmem.c (_sbrk over the
+# whole main heap) with sysmem_tlsf.c (separate small backing pool for libc
+# internals) so the TLSF pool never overlaps newlib's _sbrk region.
+if(TLSF_MALLOC)
+    list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/application/sysmem.c")
+else()
+    list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/application/sysmem_tlsf.c")
+endif()
+
 # Dual-role-only tests (#error without PJ_DUAL_ROLE_*): exclude them in the
 # normal (non-dual) single-instance build, which runs the pjlab experiments
 # (pj_test..pj_call).  pj_sip_dual_test.c already lives in pjlab/ and is
@@ -123,6 +132,13 @@ target_link_options(${TARGET} PRIVATE
     -lm
 )
 
+if(TLSF_MALLOC)
+    # Unified memory: route C malloc/free/calloc/realloc/memalign through TLSF
+    target_link_options(${TARGET} PRIVATE
+        -Wl,--wrap=malloc,--wrap=free,--wrap=calloc,--wrap=realloc,--wrap=memalign
+    )
+endif()
+
 target_link_libraries(${TARGET} PRIVATE
     rtos
     utils
@@ -140,6 +156,10 @@ target_link_libraries(${TARGET} PRIVATE
     pjsip-ua
     pjsua-lib
 )
+
+if(TLSF_MALLOC)
+    target_link_libraries(${TARGET} PRIVATE tlsf)
+endif()
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")
 set(BIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.bin")

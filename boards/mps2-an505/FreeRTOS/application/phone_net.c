@@ -17,6 +17,7 @@
 #include "lwip/stats.h"
 #include "pj/os.h"
 #include "pj_phone.h"
+#include "tlsf_port.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -100,6 +101,13 @@ static void pnet_exec(const char *line, char *resp, int rsize)
                  (unsigned)lwip_stats.memp[MEMP_PBUF]->err,
                  (unsigned)lwip_stats.udp.xmit,
                  (unsigned)lwip_stats.udp.recv);
+    } else if (strcmp(cmd, "mem") == 0) {
+        /* Unified TLSF allocator usage (used/free/min-free/total). */
+        snprintf(resp, rsize, "tlsf pool=%u used=%u free=%u minfree=%u",
+                 (unsigned)tlsf_port_get_total_size(),
+                 (unsigned)tlsf_port_get_used_size(),
+                 (unsigned)tlsf_port_get_free_size(),
+                 (unsigned)tlsf_port_get_min_free_size());
     } else if (strcmp(cmd, "status") == 0) {
         snprintf(resp, rsize,
                  "reg=%d call=%s peer=%s dur=%lu last=%d(%s) stall=%d host=%s",
