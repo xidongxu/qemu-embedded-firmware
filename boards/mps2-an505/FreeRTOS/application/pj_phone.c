@@ -34,6 +34,7 @@
 #include <pjsua-lib/pjsua.h>
 #include "mpsx_dev.h"
 #include "ca_cert.h"
+#include "pj_crypto.h"
 
 /* SIPS/TLS: register over a TLS transport (FreeSWITCH internal-tls :5061),
  * verifying the server certificate against the embedded CA (ca_cert.h).
@@ -60,7 +61,9 @@
 
 /* Extension registered on FreeSWITCH. */
 #define REG_USER "1000"
-#define REG_PASSWORD "1234"
+/* Registration password is stored AES-encrypted (no plaintext in the
+ * binary) and decrypted at runtime via cred_get_password() - see
+ * pj_crypto.c / works/tools/encrypt_cred.py. */
 
 /* Dial host/port: where to reach SIP peers.  This must match FreeSWITCH's
  * default domain ($${local_ip_v4} = the host LAN IP 192.168.23.7) so the
@@ -890,7 +893,7 @@ int pj_phone_init(void) {
     acc_cfg.cred_info[0].scheme = pj_str("digest");
     acc_cfg.cred_info[0].username = pj_str(REG_USER);
     acc_cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
-    acc_cfg.cred_info[0].data = pj_str(REG_PASSWORD);
+    acc_cfg.cred_info[0].data = pj_str((char *)cred_get_password());
     /* Media SDP: no public_addr override -> the SDP c= advertises the guest's
      * own 172.16.23.50.  FreeSWITCH sends RTP directly to the guest over the
      * tap0 segment (no hostfwd, no 127.0.0.1 loopback trick). */
