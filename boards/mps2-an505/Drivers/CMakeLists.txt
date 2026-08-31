@@ -22,5 +22,4 @@ target_link_options(${TARGET} PRIVATE
 
 target_link_libraries(${TARGET} PRIVATE
     rtos
-    utils
 )

@@ -292,8 +292,7 @@ C_INCLUDES =  \
 -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy \
 -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include \
 -I../Drivers/CMSIS/Include \
--I../../../libutils/fault-dump/inc \
--I../../../libutils/fault-dump/cpu/cortex-m4 \
+-I../../../libutils/tracer \
 -I./application \
 -I../../../librtos/threadx/common/inc 
 

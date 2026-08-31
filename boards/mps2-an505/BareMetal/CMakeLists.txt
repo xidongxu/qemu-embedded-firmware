@@ -32,6 +32,7 @@ target_include_directories(${TARGET} PRIVATE
     ../Drivers/CMSIS_5/CMSIS/Core/Include
     ../Drivers/CMSIS_5/Device/ARM/ARMCM33/Include
     ../Drivers/CMSIS_5/CMSIS/Core/Include
+    ${CMAKE_SOURCE_DIR}/libutils/tracer
 )
 
 target_compile_definitions(${TARGET} PRIVATE
@@ -58,8 +59,10 @@ target_link_options(${TARGET} PRIVATE
     -lm
 )
 
+# tracer fault vectors are STRONG symbols that override the WEAK startup
+# defaults; a static lib is only pulled in if referenced, so force it in.
 target_link_libraries(${TARGET} PRIVATE
-    utils
+    -Wl,--whole-archive tracer -Wl,--no-whole-archive
 )
 
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.hex")

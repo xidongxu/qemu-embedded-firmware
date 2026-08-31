@@ -112,8 +112,7 @@ C_SOURCES =  \
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal.c \
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c \
 ../Core/Src/system_stm32f4xx.c \
-../../../libutils/fault-dump/src/fault-dump.c \
-../../../libutils/fault-dump/cpu/cortex-m4/fault-hal.c 
+../../../libutils/tracer/tracer.c 
 
 
 ifeq ($(tool), gcc)
@@ -127,17 +126,17 @@ endif
 ifeq ($(tool), gcc)
 ASM_SOURCES =  \
 ./startup/gcc/startup_stm32f405xx.s \
-../../../libutils/fault-dump/cpu/cortex-m4/fault-gcc.s
+../../../libutils/tracer/tracer_gnugcc.s
 endif
 ifeq ($(tool), iar)
 ASM_SOURCES =  \
 ./startup/iar/startup_stm32f405xx.s \
-../../../libutils/fault-dump/cpu/cortex-m4/fault-iar.s
+../../../libutils/tracer/tracer_iccarm.s
 endif
 ifeq ($(tool), mdk)
 ASM_SOURCES =  \
 ./startup/mdk/startup_stm32f405xx.s \
-../../../libutils/fault-dump/cpu/cortex-m4/fault-mdk.s
+../../../libutils/tracer/tracer_armcc.s
 endif
 
 
@@ -267,8 +266,7 @@ C_INCLUDES =  \
 -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy \
 -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include \
 -I../Drivers/CMSIS/Include \
--I../../../libutils/fault-dump/inc \
--I../../../libutils/fault-dump/cpu/cortex-m4 
+-I../../../libutils/tracer 
 
 
 #######################################

@@ -1,4 +1,4 @@
-add_subdirectory(fault-dump)
+add_subdirectory(tracer)
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/boards/${BOARD}/${PROJECT}/application/lv_conf.h CACHE FILEPATH "" FORCE)
     set(LVGL_ROOT_DIR ${CMAKE_SOURCE_DIR}/libutils/lvgl/ CACHE FILEPATH "" FORCE)

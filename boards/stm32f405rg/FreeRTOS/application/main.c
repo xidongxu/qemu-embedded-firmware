@@ -17,7 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "fault-dump.h"
+#include "tracer.h"
 
 #include <FreeRTOS.h>
 #include <task.h>
@@ -50,10 +50,18 @@ size_t __write(int handle, const unsigned char * buffer, size_t size) {
 #error "io port does not support current compiler."
 #endif
 
+/* tracer hook: print the faulting FreeRTOS task name before the dump. */
+void tracer_on_fault(const tracer_fault_t *f) {
+    (void)f;
+    TaskHandle_t h = xTaskGetCurrentTaskHandle();
+    if (h != NULL) {
+        printf("  CurrentTask: %s\r\n", pcTaskGetName(h));
+    }
+}
+
 void test0(void) {
     printf("this is %s.\r\n", __func__);
-    extern void fault_dump_unalign(void);
-    fault_dump_unalign();
+    tracer_trigger_unalign();
 }
 
 void test1(void) {
@@ -111,9 +119,7 @@ int main(void) {
     MX_GPIO_Init();
     MX_USART1_UART_Init();
 
-    fault_dump_init();
-    extern int freertos_stack_parser(unsigned int *buffer, size_t length, unsigned int *stack_point, unsigned int *stack_start);
-    fault_dump_psp_stack_parser(freertos_stack_parser);
+    tracer_init();
     main_task_init();
 
     while (1) {

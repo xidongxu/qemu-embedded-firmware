@@ -73,6 +73,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
     ${CMAKE_SOURCE_DIR}/libutils/pjprojec/pjnath/include
+    ${CMAKE_SOURCE_DIR}/libutils/tracer
 )
 if(LWIP_OS STREQUAL "FreeRTOS")
     # OS mode pulls in arch/sys_arch.h via lwip/sys.h (local port copy).
@@ -124,6 +125,7 @@ target_compile_options(${TARGET} PRIVATE
     -Wall
     -fdata-sections
     -ffunction-sections
+    -funwind-tables
     -specs=nano.specs
 )
 
@@ -145,7 +147,6 @@ endif()
 
 target_link_libraries(${TARGET} PRIVATE
     rtos
-    utils
     lvgl
     lwipcore
     littlefs
@@ -160,6 +161,18 @@ target_link_libraries(${TARGET} PRIVATE
     pjsip-ua
     pjsua-lib
 )
+# tracer fault vectors are STRONG symbols meant to override the WEAK defaults
+# in the startup file, but a static lib is only pulled in if referenced, and
+# the vector-table references are already satisfied by the weak definitions.
+# Force every tracer object in so its strong handlers win at link time.
+target_link_libraries(${TARGET} PRIVATE
+    -Wl,--whole-archive tracer -Wl,--no-whole-archive
+)
+# Opt in to tracer's .ARM.exidx exact backtrace (see tracer.h TRACER_USE_EXIDX
+# and libutils/tracer/CMakeLists.txt).  -funwind-tables for the tracer library
+# itself is provided there; this app target also compiles its own sources with
+# -funwind-tables (above) so the unwind chain spans the app frames.
+target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)
 
 if(TLSF_MALLOC)
     target_link_libraries(${TARGET} PRIVATE tlsf)

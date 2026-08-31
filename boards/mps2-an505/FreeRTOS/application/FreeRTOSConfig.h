@@ -126,6 +126,7 @@
 #define INCLUDE_uxTaskGetStackHighWaterMark    1
 #define INCLUDE_xTaskGetIdleTaskHandle         1
 #define INCLUDE_eTaskGetState                  1
+#define INCLUDE_vTaskGetInfo                   1
 #define INCLUDE_xEventGroupSetBitFromISR       1
 #define INCLUDE_xTimerPendFunctionCall         1
 #define INCLUDE_xTaskAbortDelay                1

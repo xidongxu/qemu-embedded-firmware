@@ -21,7 +21,7 @@
 #include "uart.h"
 #include "printf.h"
 #include "ARMCM33_DSP_FP.h"
-#include "fault-dump.h"
+#include "tracer.h"
 #include "FreeRTOSConfig.h"
 #include <FreeRTOS.h>
 #include <task.h>
@@ -42,27 +42,36 @@ void vApplicationIdleHook(void) {
     __WFI();
 }
 
-void dump_callstack(void) {
-    unsigned int buffer[FD_STACK_DUMP_DEPTH_MAX] = {0};
-    unsigned int point = fault_dump_bm_stack_point();
-    unsigned int start = fault_dump_bm_stack_start();
-    int count = fault_dump_callstack(buffer, FD_STACK_DUMP_DEPTH_MAX, (unsigned int*)point, (unsigned int*)start);
-    if (count < 0) {
-        printf("CallStack dump error: %d\r\n", count);
-    } else {
-        printf("CallStack:[ ");
-        for (int i = 0; i < count; i++) {
-            printf("%08X ", buffer[i]);
-        }
-        printf("] \r\n");
+/* tracer hook: print the faulting FreeRTOS task name before the dump. */
+void tracer_on_fault(const tracer_fault_t *f) {
+    (void)f;
+    TaskHandle_t h = xTaskGetCurrentTaskHandle();
+    if (h != NULL) {
+        printf("  CurrentTask: %s\r\n", pcTaskGetName(h));
     }
+}
+
+/* tracer hook: the faulting task's stack top (Thread-mode faults scan the
+ * task's PSP stack).  Returning 0 makes tracer fall back to the main-stack
+ * top when no task is active. */
+uint32_t tracer_stack_limit(void) {
+    TaskStatus_t st = {0};
+    TaskHandle_t h = xTaskGetCurrentTaskHandle();
+    if (h == NULL) {
+        return 0u;
+    }
+    vTaskGetInfo(h, &st, pdTRUE, eInvalid);
+    return (uint32_t)st.pxEndOfStack;
+}
+
+void dump_callstack(void) {
+    tracer_dump_callstack();
 }
 
 void test0(void) {
     printf("this is %s.\r\n", __func__);
     dump_callstack();
-    extern void fault_dump_unalign(void);
-    fault_dump_unalign();
+    tracer_trigger_unalign();
 }
 
 void test1(void) {
@@ -97,7 +106,6 @@ extern void lwip_os_task_init(void);
 extern void lwip_task_init(void);
 #endif
 static void main_task_entry(void *parameters) {
-
     lcd_init();
     touch_init();
     audio_init();
@@ -275,9 +283,7 @@ int main(void) {
     uart_init();
     lan9118_open();
     printf("Start\r\n");
-    fault_dump_init();
-    extern int freertos_stack_parser(unsigned int *buffer, size_t length, unsigned int *stack_point, unsigned int *stack_start);
-    fault_dump_psp_stack_parser(freertos_stack_parser);
+    tracer_init();
     main_task_init();
 
     while (1) {

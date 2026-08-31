@@ -23,6 +23,13 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+/* tracer fault dump exports strong handlers; make these CubeMX defaults
+ * weak so the tracer overrides them at link time (no tracer = defaults). */
+#if defined(__GNUC__)
+  #define TRACER_WEAK __attribute__((weak))
+#else
+  #define TRACER_WEAK
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,7 +76,7 @@ extern TIM_HandleTypeDef htim2;
 /**
   * @brief This function handles Non maskable interrupt.
   */
-void NMI_Handler(void)
+void TRACER_WEAK NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
   printf("this is %s.\r\n", __func__);
@@ -99,7 +106,7 @@ void HardFault_Handler_Legency(void)
 /**
   * @brief This function handles Memory management fault.
   */
-void MemManage_Handler(void)
+void TRACER_WEAK MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
   printf("this is %s.\r\n", __func__);
@@ -114,7 +121,7 @@ void MemManage_Handler(void)
 /**
   * @brief This function handles Pre-fetch fault, memory access fault.
   */
-void BusFault_Handler(void)
+void TRACER_WEAK BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
   printf("this is %s.\r\n", __func__);
@@ -129,7 +136,7 @@ void BusFault_Handler(void)
 /**
   * @brief This function handles Undefined instruction or illegal state.
   */
-void UsageFault_Handler(void)
+void TRACER_WEAK UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
   printf("this is %s.\r\n", __func__);

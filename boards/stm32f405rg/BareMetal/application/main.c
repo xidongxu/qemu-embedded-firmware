@@ -17,7 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "fault-dump.h"
+#include "tracer.h"
 
 void SystemClock_Config(void);
 
@@ -46,8 +46,7 @@ size_t __write(int handle, const unsigned char * buffer, size_t size) {
 
 void test0(void) {
     printf("this is %s.\r\n", __func__);
-    extern void fault_dump_unalign(void);
-    fault_dump_unalign();
+    tracer_trigger_unalign();
 }
 
 void test1(void) {
@@ -81,7 +80,7 @@ int main(void) {
     MX_GPIO_Init();
     MX_USART1_UART_Init();
 
-    fault_dump_init();
+    tracer_init();
     test5();
 
     while (1) {

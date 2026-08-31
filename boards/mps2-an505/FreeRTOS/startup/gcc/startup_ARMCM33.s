@@ -190,21 +190,7 @@ Reset_Handler:
                 .weak    HardFault_Handler
                 .fnstart
 HardFault_Handler:
-                /* Dump the fault context via fault-dump (temporary debug):
-                 * r0 = exception stack frame pointer, r1 = EXC_RETURN. */
-                movs    r0, #4
-                mov     r1, lr
-                tst     r0, r1
-                beq     HardFault_UseMSP
-                mrs     r0, psp
-                b       HardFault_Call
-HardFault_UseMSP:
-                mrs     r0, msp
-HardFault_Call:
-                mov     r1, lr
-                ldr     r2, =fault_dump_handler
-                blx     r2
-                b       .
+                b        .
                 .fnend
                 .size    HardFault_Handler, . - HardFault_Handler
 
