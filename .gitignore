@@ -71,3 +71,5 @@ Testing/
 # Test run logs (works/logs) - WORKLOG-*.md stays tracked
 works/logs/*.err
 works/logs/*.txt
+works/logs/*.wav
+works/logs/*.pcap

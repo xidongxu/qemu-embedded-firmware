@@ -106,6 +106,10 @@ if(PJ_PHONE)
     # unaffected (their pj_phone.c falls back to the null sound device).
     target_compile_definitions(${TARGET} PRIVATE PJ_PHONE=1 PJMEDIA_AUDIO_DEV_HAS_MPSX=1)
 endif()
+option(PJ_PHONE_OPUS_BENCH "Run the standalone Opus encode/decode benchmark only (no pjsua)" OFF)
+if(PJ_PHONE_OPUS_BENCH)
+    target_compile_definitions(${TARGET} PRIVATE PJ_PHONE_OPUS_BENCH=1)
+endif()
 if(LWIP_OS STREQUAL "FreeRTOS")
     # Flip NO_SYS=0 for this target too so lan9118_netif.c (Core/Src) and
     # lwip_os_test.c build in OS mode (input = tcpip_input, etc.).

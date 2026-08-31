@@ -53,7 +53,13 @@
 #define MPSX_MAX_SAMPLES_PER_FRAME  (MPSX_MAX_CLOCK_RATE * MPSX_FRAME_MS / 1000)
 #define MPSX_MAX_FRAME_BYTES        (MPSX_MAX_SAMPLES_PER_FRAME * 2)
 #define MPSX_TASK_PRIO          3
-#define MPSX_TASK_STACK         2048
+/* Task stack in WORDS (xTaskCreate units).  Must cover the deepest media
+ * call chain: pjsua snd callback -> conf bridge -> stream put_frame ->
+ * codec encode -> opus_encode -> silk (48k resampling uses a ~2 KB dynamic
+ * alloca).  The 48k Opus path under pjsua needs well over 16 KB (measured:
+ * still HardFaulted at sub sp,sp,r2 with a 4096-word stack); 8192 words is
+ * the safe headroom for real-HW too. */
+#define MPSX_TASK_STACK         8192
 
 /* Device info */
 struct mpsx_dev_info

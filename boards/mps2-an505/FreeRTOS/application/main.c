@@ -103,6 +103,18 @@ static void main_task_entry(void *parameters) {
     audio_init();
     audio_irq_enable();
     mic_init();
+#if defined(PJ_PHONE_OPUS_BENCH)
+    /* Standalone Opus encode/decode benchmark: dedicated CPU, no pjsua /
+     * lwIP / LVGL, so the raw libopus per-frame cost on this M33/TCG is
+     * measured in isolation (see opus_bench.c). */
+    {
+        extern void opus_bench_start(void);
+        opus_bench_start();
+    }
+    while (1) {
+        vTaskDelay(1000);
+    }
+#endif
 #if defined(PJ_PHONE)
     /* PJSUA phone: the looping arpeggio test and the 1s blocking mic test
      * would fight the real call audio (mpsx_dev reconfigures both devices
@@ -172,9 +184,11 @@ static void main_task_entry(void *parameters) {
         sntp_sync_init();
     }
     {
-        /* High-prio watchdog to observe system state if pjsua stalls. */
+        /* High-prio watchdog to observe system state if pjsua stalls.
+         * Priority 4 = highest legal (configMAX_PRIORITIES-1) so it can
+         * preempt a runaway media thread and still print task states. */
         extern void phone_watchdog(void *arg);
-        xTaskCreate(phone_watchdog, "wd", 2048, NULL, 5U, NULL);
+        xTaskCreate(phone_watchdog, "wd", 2048, NULL, 4U, NULL);
     }
     pj_phone_init();
     /* UDP command server (hostfwd udp::15000-:15000): lets a host script

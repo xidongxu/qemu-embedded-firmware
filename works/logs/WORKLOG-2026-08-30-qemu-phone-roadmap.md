@@ -44,7 +44,7 @@
 - [x] **Opus 交叉编译 + 集成**（`PJMEDIA_HAS_OPUS_CODEC=1` + `libutils/opus` libopus 1.6.1 `OPUS_FIXED_POINT=ON` + `ports/include/opus/opus.h` 转发头）；注册 `opus/48000/2`，`PJMEDIA_CODEC_OPUS_DEFAULT_COMPLEXITY=0`
 - [x] **SIP 信令大包修复（Opus 引入的关键）**：Opus SDP 使 INVITE 达 2118B，而 lwIP `TCP_SND_BUF=2048` 只发出 2048B（截断）→ FS 等 body 超时 RST（503）。改 `libutils/lwip/ports/lwipopts.h` `TCP_SND_BUF 2048→8192`、`MEMP_NUM_TCP_SEG 16→40` 后 INVITE 完整发送 → 呼叫建立（`100→200 OK→CONFIRMED`）
 - [x] **Opus 48k 协商验证**：media clock 48k 下 FS 通道 `read=opus rate=48000`（SDES SRTP），`audio updated: stream #0: opus (sendrecv)`
-- [x] **Opus 48k 媒体在 QEMU/TCG 不可行（平台限制，留真机）**：25MHz M33 下 48k Opus 编码（即使 complexity 0）占满 CPU → 串口/解码/播放线程饿死 → 媒体静音（wav 全 0）、卡 CONNECTING（无 wd）。且 media clock 16k 时 RFC 7587 的 48000 RTP 时钟与 16k 不匹配 → Opus 不 offer（FS 落 PCMA）。**QEMU 宽带默认 G.722 16k（稳定已验证）；Opus 48k 全频需真机**（真机把 `media_cfg.clock_rate` 改回 48000 即可）
+- [x] **Opus 48k 全频可用（根因=栈溢出，已修复）**：卡 CONNECTING/无 wd/媒体静音的根因是 **mpsx_play 任务栈太小**——Opus 48k 编码在 pjsua 深度调用链（`play_cb→conf→stream→codec_encode→opus_encode→silk_resampler` 动态 alloca）下栈需求 >16KB。8KB 崩、16KB 仍崩、**`MPSX_TASK_STACK 2048→8192`（32KB）成功**。独立 bench（`opus_bench.c`）证明 48k 编码仅 ~1-2ms/帧（5-10% 预算），**CPU 完全够**（非平台限制）。验证：`state=5 CONFIRMED`、双向 RTP 零丢包（rx≈tx 持续增长）、conf sig 有信号、**wav 主频 1001Hz**（1kHz 回声清晰）。注意：media clock 16k 时 Opus 不 offer（RFC 7587 48000 时钟不匹配），Opus 必须 `clock_rate=48000`
 - [x] **16k 全链路回归**：G.722 16k @ 16k clock 双向 RTP 零丢包（rx_pkt≈tx_pkt 持续增长）、conf sig 有信号、wav 有 1kHz 回放
 
 ### 2.2 语音质量处理

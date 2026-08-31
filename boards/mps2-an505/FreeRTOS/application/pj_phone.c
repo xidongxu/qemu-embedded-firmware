@@ -767,18 +767,18 @@ int pj_phone_init(void) {
     cfg.cb.on_dtmf_digit = &on_dtmf_digit;
 
     pjsua_logging_config_default(&log_cfg);
-    /* Level 5 = full SDP/media negotiation trace (bring-up only).  Level 2
-     * is the runtime default; higher levels flood the serial port with
-     * per-frame media logs which dominates guest CPU under TCG. */
-    log_cfg.console_level = 5;
+    /* Level 2 = warnings+errors only; higher levels flood the serial port
+     * with per-frame media logs which dominates guest CPU under TCG. */
+    log_cfg.console_level = 2;
 
     pjsua_media_config_default(&media_cfg);
-    /* 16k media clock: stable in QEMU/TCG.  Opus 48k fullband (RFC 7587
-     * RTP clock 48000) needs clock_rate 48000, but a 48k Opus encode is
-     * too heavy for the 25 MHz M33 under TCG (starves every other task),
-     * so G.722 16k is the QEMU wideband codec; Opus is kept for real HW. */
-    media_cfg.clock_rate = 16000;
-    media_cfg.snd_clock_rate = 16000;
+    /* 48k fullband: Opus needs clock_rate 48000 (RFC 7587 fixes the RTP
+     * clock at 48000).  Verified working on this M33 under QEMU/TCG (a
+     * standalone libopus benchmark shows ~1-2 ms/frame encode, and the
+     * mpsx audio tasks were given a 32 KB stack for the pjsua call chain
+     * + SILK's dynamic alloca). */
+    media_cfg.clock_rate = 48000;
+    media_cfg.snd_clock_rate = 48000;
     media_cfg.channel_count = 1;
     media_cfg.ec_options = 0;
     /* Disable VAD so the guest keeps sending (silence) and the RTP path
@@ -799,24 +799,16 @@ int pj_phone_init(void) {
     }
     printf("pj_phone: pjsua_init OK\r\n");
 
-    /* Prefer Opus (wideband 16k) for audio quality, then G.722; G.711 as
-     * narrowband fallback.  mpsx_dev configures the device to 16k from
-     * snd_clock_rate.  Opus runs at 16k (PJMEDIA_CODEC_OPUS_DEFAULT_*). */
+    /* Prefer Opus (fullband 48k) for audio quality, then G.722; G.711 as
+     * narrowband fallback.  mpsx_dev configures the device from
+     * snd_clock_rate (48k). */
     {
         pj_str_t cid;
-        unsigned ci, cn = 16;
-        pjsua_codec_info ck[16];
-        if (pjsua_enum_codecs(ck, &cn) == PJ_SUCCESS) {
-            for (ci = 0; ci < cn; ++ci) {
-                printf("pj_phone: codec[%u] = %.*s\n", ci,
-                       (int)ck[ci].codec_id.slen, ck[ci].codec_id.ptr);
-            }
-        }
         cid = pj_str("opus/48000");
-        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
+        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_HIGHEST);
         printf("pj_phone: codec opus/48000 prio -> %d\r\n", (int)st);
         cid = pj_str("G722/16000");
-        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_HIGHEST);
+        st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
         printf("pj_phone: codec G722/16000 prio -> %d\r\n", (int)st);
         cid = pj_str("PCMU/8000");
         st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
