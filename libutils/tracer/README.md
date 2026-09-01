@@ -22,7 +22,7 @@ BusFault / UsageFault / MemManage / NMI / SecureFault 时，打印完整的现�
 | `tracer_iccarm.s` | 汇编入口（**IAR EWARM** 用） |
 | `tracer_armcc.s` | 汇编入口（**MDK armasm / ARMCC5** 用） |
 | `CMakeLists.txt` | CMake 构建（自动按编译器选汇编入口 + 工具链守卫） |
-| `tracer_parser.py` | 离线解析工具（把 dump 日志 + ELF → 符号化调用链） |
+| `tracer_parser.py` | 离线解析工具：dump 日志 + ELF → 符号化调用链，**并支持 `.ARM.exidx` 离线逐帧展开** |
 | `README.md` | 本文档 |
 
 > `works/tools/tracer_decode.py` 是 `tracer_parser.py` 的仓库级副本（保持同步）。
@@ -71,7 +71,7 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 | **.ARM.exidx 精确回溯** | `TRACER_USE_EXIDX=1` | GCC/armclang | 需 `-funwind-tables`；-O2 下精确，**推荐** |
 | **帧指针链** | `TRACER_USE_FP=1` | A32/IAR | Cortex-M(Thumb) 上仅最内层帧，**不推荐** |
 | **动态函数轨迹** | `TRACER_USE_FINSTRUMENT=1` | GCC/armclang | 崩溃前函数进出回放，需 `-finstrument-functions` |
-| **离线解析** | 无（事后用脚本） | 所有工具链 | `tracer_parser.py` 把 dump + ELF → 符号化调用链 |
+| **离线解析** | 无（事后用脚本） | 所有工具链 | `tracer_parser.py` 把 dump + ELF → 符号化调用链；带 PC+SP+原始栈时还会用 `.ARM.exidx` 在**主机上逐帧展开**出精确调用链 |
 
 优先级：`exidx > FP > 扫描`（主动 dump 用）；fault handler 路径固定用扫描；
 动态轨迹 / 原始栈 dump 是与回溯**正交**的增强，可同时开启。
@@ -206,7 +206,16 @@ Function trace (last 15):                      ← 崩溃前执行路径
 
 Raw stack return-address candidates:           ← 栈上残留的返回地址
   [80215268] 100019A0  tracer_stack_limit+0x3F
+
+Exidx offline unwind (exact, from PC + raw stack):  ← 离线 .ARM.exidx 展开
+  100BFB3A  tracer_trigger_unalign  ->  1000196C  main_task_entry
+  1000196C  main_task_entry        ->  10006224  pj_test_run
 ```
+
+> `.ARM.exidx` 离线展开说明：`tracer_parser.py` 读 ELF 的 `.ARM.exidx/.ARM.extab`
+> （EHABI），从 dump 的 PC/SP/LR + Raw stack 出发在**主机上逐帧展开**，无启发式误报，
+> 比扫描法精确（能体现 -O2 内联后的真实调用关系）。展开深度受 `TRACER_STACK_DUMP_BYTES`
+> 限制——原始栈越大展开越深。这是无 exidx 运行时（IAR/ARMCC5）获得精确回溯的路径。
 
 ### 3. 定位流程（按优先级）
 1. **看 PC**：`tracer_parser.py` 输出的 `PC =xxx func+0x偏移` 就是崩溃指令所在函数；

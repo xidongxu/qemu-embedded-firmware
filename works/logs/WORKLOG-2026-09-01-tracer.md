@@ -315,5 +315,48 @@ M boards/mps2-an505/FreeRTOS/CMakeLists.txt  # 按文件开启的说明注释（
 建议提交：
 ```bash
 git add libutils/tracer/tracer.c libutils/tracer/tracer.h works/tools/tracer_decode.py boards/mps2-an505/FreeRTOS/CMakeLists.txt works/logs/WORKLOG-2026-09-01-tracer.md
+
+---
+
+# 追加：离线 .ARM.exidx 展开（主机侧精确回溯）（同日会话）
+
+## 目标
+`tracer_parser.py` 之前只做"符号查找"；本次加 **离线 .ARM.exidx 逐帧展开**：
+读 ELF 的 `.ARM.exidx/.ARM.extab`（EHABI），从 dump 的 PC/SP/LR + Raw stack 在主机上逐帧还原调用链。
+无启发式误报，比扫描法精确（体现 -O2 内联后的真实调用关系）；是无 exidx 运行时（IAR/ARMCC5）的精确回溯路径。
+
+## 实现（tracer_parser.py 新增 ExidxUnwind 类）
+- 解析 `.ARM.exidx`（8 字节/条：word0=prel31 起始地址、word1）+ `.ARM.extab`。
+- prel31 解码（有符号 31 位，bit30 符号扩展）。
+- 指令解码 + 展开器：跟踪 vsp、从栈恢复 r14/LR → 返回地址 `&~1`。
+- 无帧函数（finish 且未 pop r14）：用当前 LR 寄存器贯穿（EHABI 语义）。
+- 展开起点：pc=fault PC，sp=f.sp+32（跳过异常帧），LR=dump 的 LR。
+
+## 三个关键坑（都以 `readelf -u` 为 ground truth 实测踩过）
+1. **prel31 是"有符号"31 位**：bit30=1 需符号扩展成负数，否则 start 全错（如 0x90000850）。
+2. **word1 的 bit31 语义是"反"的**（相对常见文档）：**bit31=1 → 内联 3 条指令**（低 24 位，如 `0x80b0b0b0` → `[0xb0,0xb0,0xb0]`）；**bit31=0 → prel31 指向 .ARM.extab**（如 `test5: w1=0x7ffffe58` → `0x101cd484`）。extab 第一字节是 compact model，需跳过。
+3. **无帧函数**（如 `tracer_trigger_unalign`，exidx 只有 finish 不 pop LR）：展开应返回"当前 LR"（函数没改 LR 则贯穿），否则展开直接停。
+
+## 验证（QEMU，test5→UsageFault，Raw stack 48B）
+```
+Exidx offline unwind (exact, from PC + raw stack):
+  100BFB3A  tracer_trigger_unalign  ->  1000196C  main_task_entry
+  1000196C  main_task_entry        ->  10006224  pj_test_run
+```
+比扫描法准：fault LR=`main_task_entry+0x8` 证明 test 链 -O2 内联，由 main_task_entry 直接调 tracer_trigger_unalign；
+扫描法报的 test5 是栈残留误报。展开深度受 `TRACER_STACK_DUMP_BYTES` 限制（Raw stack 越大越深）。
+
+## 本次变更文件
+```
+M works/tools/tracer_decode.py      # ExidxUnwind 离线展开 + prel31/指令解码
+M libutils/tracer/tracer_parser.py  # 同步副本
+M libutils/tracer/README.md         # 离线 exidx 展开说明
+```
+
+建议提交：
+```bash
+git add works/tools/tracer_decode.py libutils/tracer/tracer_parser.py libutils/tracer/README.md works/logs/WORKLOG-2026-09-01-tracer.md
+git commit -m "feat(tracer): tracer_parser 离线 .ARM.exidx 逐帧展开（主机侧精确回溯）"
+```
 git commit -m "feat(tracer): 动态函数轨迹（-finstrument-functions 环形缓冲 + fault 回放 + tracer_decode 解析）"
 ```
