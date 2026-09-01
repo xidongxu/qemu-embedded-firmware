@@ -186,6 +186,11 @@ uint32_t TRACER_WEAK tracer_stack_limit(void) {
     return TRACER_STACK_TOP;
 }
 
+void TRACER_WEAK tracer_dump_tasks(void) {
+    /* RTOS adapter hook: override to list all tasks (e.g. FreeRTOS
+     * vTaskList) right after the faulting task name.  Core is RTOS-agnostic. */
+}
+
 void tracer_init(void) {
     TRACER_PRINTF("Tracer: Cortex-M fault dump ready\r\n");
     TRACER_PRINTF("  text  [%08lX - %08lX]\r\n",
@@ -405,8 +410,30 @@ uint32_t tracer_get_callstack(uint32_t *buf, uint32_t size) {
  * no_instrument_function to avoid re-entrancy, and they only touch the ring
  * buffer (no printf / malloc), so they are safe from IRQ context too. */
 #if TRACER_USE_FINSTRUMENT
-static volatile uint32_t s_trace_buf[TRACER_TRACE_DEPTH];
-static volatile uint32_t s_trace_head = 0u;  /* next free slot */
+/* Time source: SysTick current value (counts DOWN).  The delta between two
+ * consecutive entries is the elapsed SysTick cycles -- a cheap relative
+ * timing of each call step.  Requires the SysTick timer to be running (as it
+ * is under FreeRTOS).  Raw cycles; convert with configCPU_CLOCK_HZ. */
+#define TRACER_SYSTICK_VAL  (*(volatile uint32_t *)0xE000E018u)
+#define TRACER_SYSTICK_LOAD (*(volatile uint32_t *)0xE000E014u)
+
+typedef struct {
+    /* bit0 = 0 entered / 1 exited, upper = function address */
+    uint32_t fn;
+    /* SysTick->VAL at the moment of the event */
+    uint32_t ts;
+} tracer_trace_t;
+
+static volatile tracer_trace_t s_trace[TRACER_TRACE_DEPTH];
+/* next free slot */
+static volatile uint32_t s_trace_head = 0u;
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+static uint32_t tracer_trace_ts(void) {
+    return TRACER_SYSTICK_VAL;
+}
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((no_instrument_function))
@@ -414,7 +441,9 @@ __attribute__((no_instrument_function))
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     (void)call_site;
     uint32_t i = s_trace_head;
-    s_trace_buf[i] = (uint32_t)this_fn & ~1u; /* bit0 = 0 -> entered */
+    /* bit0 = 0 -> entered */
+    s_trace[i].fn = (uint32_t)this_fn & ~1u;
+    s_trace[i].ts = tracer_trace_ts();
     s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
 }
 
@@ -424,7 +453,9 @@ __attribute__((no_instrument_function))
 void __cyg_profile_func_exit(void *this_fn, void *call_site) {
     (void)call_site;
     uint32_t i = s_trace_head;
-    s_trace_buf[i] = ((uint32_t)this_fn & ~1u) | 1u; /* bit0 = 1 -> exited */
+    /* bit0 = 1 -> exited */
+    s_trace[i].fn = ((uint32_t)this_fn & ~1u) | 1u;
+    s_trace[i].ts = tracer_trace_ts();
     s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
 }
 #endif /* TRACER_USE_FINSTRUMENT */
@@ -493,8 +524,9 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     f.mmfar = TRACER_MMFAR;
     f.bfar = TRACER_BFAR;
 
-    /* User hook first (e.g. RTOS task name), then the built-in dump. */
+    /* User hooks first: faulting task name, then all-tasks list. */
     tracer_on_fault(&f);
+    tracer_dump_tasks();
 
     /* Dump. */
     {
@@ -549,19 +581,34 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     TRACER_PRINTF("\r\n");
 
 #if TRACER_USE_FINSTRUMENT
-    /* Dynamic function trace: replay the last calls before the fault. */
-    TRACER_PRINTF(" Function trace (last %lu):\r\n",
+    /* Dynamic function trace: replay the last calls before the fault.
+     * The +delta column is the SysTick cycles elapsed since the previous
+     * entry (SysTick counts down, so prev - current). */
+    TRACER_PRINTF(" Function trace (last %lu, +delta = SysTick cycles):\r\n",
                   (unsigned long)TRACER_TRACE_DEPTH);
     {
         uint32_t start = s_trace_head;
+        uint32_t load = TRACER_SYSTICK_LOAD;
+        uint32_t prev = 0u;
+        int have_prev = 0;
         for (uint32_t n = 0u; n < TRACER_TRACE_DEPTH; n++) {
             uint32_t idx = (start + n) % TRACER_TRACE_DEPTH;
-            uint32_t v = s_trace_buf[idx];
-            if (v == 0u) {
+            uint32_t v = s_trace[idx].fn;
+            uint32_t ts = s_trace[idx].ts;
+            if (v == 0u && ts == 0u) {
                 continue;
             }
-            TRACER_PRINTF("  %s %08lX\r\n", (v & 1u) ? "<-" : "->",
-                          (unsigned long)(v & ~1u));
+            if (have_prev) {
+                /* SysTick counts down; correct for one reload (prev < ts). */
+                uint32_t d = (prev >= ts) ? (prev - ts) : (prev + (load - ts));
+                TRACER_PRINTF("  %s %08lX  +%lu\r\n", (v & 1u) ? "<-" : "->",
+                              (unsigned long)(v & ~1u), (unsigned long)d);
+            } else {
+                TRACER_PRINTF("  %s %08lX\r\n", (v & 1u) ? "<-" : "->",
+                              (unsigned long)(v & ~1u));
+            }
+            prev = ts;
+            have_prev = 1;
         }
     }
 #endif /* TRACER_USE_FINSTRUMENT */

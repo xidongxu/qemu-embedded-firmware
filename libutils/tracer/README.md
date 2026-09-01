@@ -63,6 +63,7 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 |---|---|---|
 | `tracer_on_fault(&f)` | 空 | fault 时先调用，可打印当前 FreeRTOS 任务名 |
 | `tracer_stack_limit()` | 主栈顶 | 返回扫描上界；FreeRTOS 下返回当前任务栈顶 `pxEndOfStack` |
+| `tracer_dump_tasks()` | 空 | fault 时列出所有任务（状态/栈水位）；RTOS 适配（FreeRTOS: `vTaskList`），核心保持 RTOS 无关 |
 
 ### 4. 多种调用栈回溯方式（按需/按工具链）
 | 方式 | 开关 | 适用 | 说明 |
@@ -70,7 +71,7 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 | **栈扫描**（BL/BLX） | 默认兜底 | 所有工具链 | 零依赖；-O2 高度优化下可能 0 帧 |
 | **.ARM.exidx 精确回溯** | `TRACER_USE_EXIDX=1` | GCC/armclang | 需 `-funwind-tables`；-O2 下精确，**推荐** |
 | **帧指针链** | `TRACER_USE_FP=1` | A32/IAR | Cortex-M(Thumb) 上仅最内层帧，**不推荐** |
-| **动态函数轨迹** | `TRACER_USE_FINSTRUMENT=1` | GCC/armclang | 崩溃前函数进出回放，需 `-finstrument-functions` |
+| **动态函数轨迹** | `TRACER_USE_FINSTRUMENT=1` | GCC/armclang | 崩溃前函数进出回放（`+delta` = SysTick 周期，相对耗时），需 `-finstrument-functions` |
 | **离线解析** | 无（事后用脚本） | 所有工具链 | `tracer_parser.py` 把 dump + ELF → 符号化调用链；带 PC+SP+原始栈时还会用 `.ARM.exidx` 在**主机上逐帧展开**出精确调用链 |
 
 优先级：`exidx > FP > 扫描`（主动 dump 用）；fault handler 路径固定用扫描；
@@ -186,6 +187,10 @@ cat dump.log | python tracer_parser.py <你的.elf> -
 # 或直接符号化几个地址
 python tracer_parser.py <你的.elf> 0x1000196D 0x100BFB3A
 ```
+
+> 若检测到 `arm-none-eabi-addr2line`（或设 `TRACER_ADDR2LINE` 环境变量指向它），
+> 输出会**附加源码行号** `(file:line)`（-O2 下部分地址无精确行号会显示 `?`）。
+> 建议 ELF 保留 `-g` 调试信息以获得完整行号。
 输出示例：
 ```
 === tracer fault dump decode ===

@@ -170,6 +170,10 @@ void tracer_on_fault(const tracer_fault_t *func);
 /* Upper bound for the call-stack scan.  Default = end of the main stack;
  * on FreeRTOS override with the current task's stack top (pxEndOfStack). */
 uint32_t tracer_stack_limit(void);
+/* Called after tracer_on_fault, e.g. to list all RTOS tasks (state / stack
+ * high-water).  Weak, default empty: the core stays RTOS-agnostic, RTOS
+ * adapters override it (FreeRTOS: vTaskList). */
+void tracer_dump_tasks(void);
 
 /* Dump the current call stack by scanning from the live SP for Thumb-2
  * BL/BLX return addresses (replaces fault-dump's fault_dump_callstack).

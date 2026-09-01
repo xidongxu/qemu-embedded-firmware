@@ -356,6 +356,49 @@ M libutils/tracer/README.md         # 离线 exidx 展开说明
 建议提交：
 ```bash
 git add works/tools/tracer_decode.py libutils/tracer/tracer_parser.py libutils/tracer/README.md works/logs/WORKLOG-2026-09-01-tracer.md
+
+---
+
+# 追加：三项低成本高回报增强（同日会话）
+
+用户选定三条低成本高回报项落地。
+
+## 1. 离线行号解析（tracer_parser.py）
+- 新增 `LineResolver`：批量调 `arm-none-eabi-addr2line`（`TRACER_ADDR2LINE` 可覆盖），对 dump 里所有地址（PC/LR/Call stack/轨迹/Raw/exidx unwind）附加 `(file:line)`。
+- 验证：输出 `main_task_entry+0xF (main.c:?)`、`pj_test_run (port.c:?)`；-O2 下部分地址行号为 `?`（建议保留 `-g`）。
+
+## 2. finstrument 轨迹加时间戳（tracer.c）
+- 回调条目从 `uint32` → `{fn, ts}` 结构体；`ts = SysTick->VAL`（0xE000E018 裸地址，倒计数）。
+- fault 打印 `+delta = SysTick cycles`（相邻条目相对耗时；跨重载用 LOAD 修正，读 0xE000E014）。
+- 验证：`+19998`≈1 tick、`+5994/+2654` 等合理周期值；跨重载不再出现 `4294967295`。
+- 注意：delta 是"相对"耗时非绝对时间；换算用 `configCPU_CLOCK_HZ`；需 SysTick 运行。
+
+## 3. 全任务信息（RTOS 适配准备）
+- tracer 核心新增 **weak hook `tracer_dump_tasks()`**（默认空）→ 核心保持 RTOS 无关，fault handler 在 `tracer_on_fault` 后调用。
+- FreeRTOS 适配（mps2 main.c）：覆盖 `tracer_dump_tasks()` 调 `vTaskList(buf)`+`printf`。
+- FreeRTOSConfig.h：`configUSE_STATS_FORMATTING_FUNCTIONS` 0→1。
+- **坑**：V11 的 `vTaskList` 需要**非空 buffer**（内部 `vTaskListTasks(buffer,len)` 构造，不调 `configPRINT_STRING`）；`vTaskList(NULL)` 无输出。buffer 要够大（`static char[1024]`）。
+- 验证：fault dump 显示全部任务（`main_task X / IDLE R / Tmr Svc B` + 栈水位）。
+
+## 验证
+QEMU test5→UsageFault：CurrentTask + 任务列表 + Call stack + Function trace(+delta) + Raw stack 齐全。三功能全部通过；boot 回归干净。
+
+## 本次变更文件
+```
+M libutils/tracer/tracer.h      # weak hook tracer_dump_tasks 声明
+M libutils/tracer/tracer.c      # 任务 hook + 轨迹时间戳({fn,ts}+SysTick+delta 修正)
+M boards/mps2-an505/FreeRTOS/application/main.c  # tracer_dump_tasks(vTaskList) 适配
+M boards/mps2-an505/FreeRTOS/application/FreeRTOSConfig.h  # STATS_FORMATTING=1
+M works/tools/tracer_decode.py  # LineResolver 行号解析
+M libutils/tracer/tracer_parser.py  # 同步副本
+M libutils/tracer/README.md     # 三功能说明
+```
+
+建议提交：
+```bash
+git add libutils/tracer/tracer.c libutils/tracer/tracer.h libutils/tracer/tracer_parser.py libutils/tracer/README.md works/tools/tracer_decode.py boards/mps2-an505/FreeRTOS/application/main.c boards/mps2-an505/FreeRTOS/application/FreeRTOSConfig.h works/logs/WORKLOG-2026-09-01-tracer.md
+git commit -m "feat(tracer): 离线行号解析 + 轨迹时间戳 + 全任务信息（RTOS 适配 hook）"
+```
 git commit -m "feat(tracer): tracer_parser 离线 .ARM.exidx 逐帧展开（主机侧精确回溯）"
 ```
 git commit -m "feat(tracer): 动态函数轨迹（-finstrument-functions 环形缓冲 + fault 回放 + tracer_decode 解析）"

@@ -23,7 +23,9 @@ import argparse
 import bisect
 import os
 import re
+import shutil
 import struct
+import subprocess
 import sys
 
 try:
@@ -141,6 +143,44 @@ def raw_return_candidates(info, sym):
         if (val & 1) and (ts <= (val & ~1) < te):
             out.append((addr, val & ~1))
     return out
+
+
+# --------------------------------------------------------------------------
+# Source-line lookup (arm-none-eabi-addr2line)
+# --------------------------------------------------------------------------
+class LineResolver:
+    """Batch source-line lookup via addr2line, so output can include
+    "file:line".  Disabled (with a note) if the tool is not found; override
+    the executable with the TRACER_ADDR2LINE env var."""
+
+    def __init__(self, elf_path, addr2line=None):
+        self.elf = elf_path
+        self.cache = {}
+        cmd = addr2line or os.environ.get("TRACER_ADDR2LINE") or "arm-none-eabi-addr2line"
+        self.cmd = cmd
+        self.available = shutil.which(cmd) is not None
+        if not self.available:
+            sys.stderr.write("note: '%s' not found; source lines disabled "
+                             "(set TRACER_ADDR2LINE)\n" % cmd)
+
+    def resolve(self, addrs):
+        todo = sorted({a for a in addrs if a not in self.cache})
+        if not todo or not self.available:
+            return
+        try:
+            p = subprocess.run([self.cmd, "-f", "-C", "-e", self.elf] +
+                               ["0x%x" % a for a in todo],
+                               capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            self.available = False
+            return
+        if p.returncode != 0:
+            self.available = False
+            return
+        out = p.stdout.splitlines()
+        for i, a in enumerate(todo):
+            loc = out[2 * i + 1].strip() if 2 * i + 1 < len(out) else "??"
+            self.cache[a] = loc
 
 
 # --------------------------------------------------------------------------
@@ -367,19 +407,24 @@ def main():
     args = ap.parse_args()
 
     sym = SymbolMap(args.elf)
+    lines = LineResolver(args.elf)
 
-    def show(addr):
-        return sym.resolve(addr)
+    def fmt_addr(addr):
+        base = _fmt(sym.resolve(addr))
+        loc = lines.cache.get(addr)
+        if loc and loc not in ("??", "??:0", "??:?"):
+            return "%s  (%s)" % (base, loc)
+        return base
 
     # Distinguish "log file / stdin" from "bare address list":
     # a single argument that is '-' or an existing file is a dump log;
     # otherwise every argument is treated as a bare address.
     if args.dump and not (len(args.dump) == 1 and
                           (args.dump[0] == "-" or os.path.isfile(args.dump[0]))):
-        for a in args.dump:
-            addr = int(a, 0)
-            hit = sym.resolve(addr)
-            print("%08X  %s" % (addr, _fmt(hit)))
+        addrs = [int(a, 0) for a in args.dump]
+        lines.resolve(addrs)
+        for a in addrs:
+            print("%08X  %s" % (a, fmt_addr(a)))
         return
 
     if args.dump and args.dump[0] == "-":
@@ -394,39 +439,51 @@ def main():
     info = parse_log(log)
     ts, te = info["text"]
 
+    regs = info["regs"]
+    cands = raw_return_candidates(info, sym)
+    chain = exidx_unwind(args.elf, info)
+
+    # collect every address for a single batch source-line lookup
+    all_addrs = set()
+    if regs:
+        all_addrs.update((regs["pc"], regs["lr"]))
+    all_addrs.update(info["callstack"])
+    all_addrs.update(a for _, a in info["trace"])
+    all_addrs.update(pc for _, pc in cands)
+    all_addrs.update(pc for pc, _ in chain)
+    all_addrs.update(npc for _, npc in chain)
+    lines.resolve(all_addrs)
+
     print("=== tracer fault dump decode ===")
     print("ELF: %s" % args.elf)
     print("text [%08X - %08X]" % (ts, te))
     print()
 
-    regs = info["regs"]
     if regs:
-        print("PC  =%08X  %s" % (regs["pc"], _fmt(show(regs["pc"]))))
-        print("LR  =%08X  %s" % (regs["lr"], _fmt(show(regs["lr"]))))
+        print("PC  =%08X  %s" % (regs["pc"], fmt_addr(regs["pc"])))
+        print("LR  =%08X  %s" % (regs["lr"], fmt_addr(regs["lr"])))
         print("SP  =%08X" % regs["sp"])
 
     if info["callstack"]:
         print("\nCall stack (from tracer):")
         for a in info["callstack"]:
-            print("  %08X  %s" % (a, _fmt(show(a))))
+            print("  %08X  %s" % (a, fmt_addr(a)))
 
     if info["trace"]:
         print("\nFunction trace (last %d):" % len(info["trace"]))
         for d, a in info["trace"]:
-            print("  %s %08X  %s" % (d, a, _fmt(sym.resolve(a))))
+            print("  %s %08X  %s" % (d, a, fmt_addr(a)))
 
-    cands = raw_return_candidates(info, sym)
     if cands:
         print("\nRaw stack return-address candidates:")
         for addr, pc in cands:
-            print("  [%08X] %08X  %s" % (addr, pc, _fmt(show(pc))))
+            print("  [%08X] %08X  %s" % (addr, pc, fmt_addr(pc)))
 
-    chain = exidx_unwind(args.elf, info)
     if chain:
         print("\nExidx offline unwind (exact, from PC + raw stack):")
         for pc, npc in chain:
-            print("  %08X  %s  ->  %08X  %s" % (pc, _fmt(sym.resolve(pc)),
-                                                 npc, _fmt(sym.resolve(npc))))
+            print("  %08X  %s  ->  %08X  %s" % (pc, fmt_addr(pc),
+                                                 npc, fmt_addr(npc)))
 
     if not (regs or info["callstack"] or info["trace"] or cands or chain):
         sys.stderr.write("warning: no tracer dump structure recognized in input\n")

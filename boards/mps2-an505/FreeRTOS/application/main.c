@@ -64,6 +64,15 @@ uint32_t tracer_stack_limit(void) {
     return (uint32_t)st.pxEndOfStack;
 }
 
+/* tracer hook: list all FreeRTOS tasks (state / stack high-water mark).
+ * V11 vTaskList() formats into a caller buffer (no internal print), so we
+ * provide one and printf it.  Stack-high-water is in StackType_t words. */
+void tracer_dump_tasks(void) {
+    static char buf[1024];
+    vTaskList(buf);
+    printf("%s", buf);
+}
+
 void dump_callstack(void) {
     tracer_dump_callstack();
 }

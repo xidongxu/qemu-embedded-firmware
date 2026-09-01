@@ -101,8 +101,12 @@
 
 #define configGENERATE_RUN_TIME_STATS           0
 #define configUSE_TRACE_FACILITY                1
-#define configUSE_STATS_FORMATTING_FUNCTIONS    0
+#define configUSE_STATS_FORMATTING_FUNCTIONS    1
 #define configKERNEL_PROVIDED_STATIC_MEMORY     1
+
+/* vTaskList()/vTaskGetRunTimeStats() output sink. */
+#include <stdio.h>
+#define configPRINT_STRING( x )  printf( "%s", x )
 
 /******************************************************************************/
 /* Definitions that include or exclude functionality. *************************/
