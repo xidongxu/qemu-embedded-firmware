@@ -272,3 +272,48 @@ M .gitignore                   # 忽略 __pycache__/ *.pyc
 git add libutils/tracer/tracer.c libutils/tracer/tracer.h works/tools/tracer_decode.py .gitignore works/logs/WORKLOG-2026-09-01-tracer.md
 git commit -m "feat(tracer): 离线解析 crash dump→符号（raw stack dump + tracer_decode.py）；修复扫描法 RTOS clamp"
 ```
+
+---
+
+# 追加：动态函数轨迹（-finstrument-functions）已实现（次日完善会话 2）
+
+## 背景
+"未实现方案"里的 **`-finstrument-functions` 动态轨迹**——记录函数进出流，fault 时回放"崩溃前怎么走到这"。与栈回溯互补：栈回溯是"某时刻快照"，动态轨迹是"一段时间的时间线"。
+
+## 实现
+1. **tracer.h**：`TRACER_USE_FINSTRUMENT`（默认 0）+ `TRACER_TRACE_DEPTH`（默认 128）。
+2. **tracer.c**：
+   - `__cyg_profile_func_enter/exit` 回调（`no_instrument_function` 防重入）写入环形缓冲；
+     编码：bit0=0 进入 / 1 退出，其余位 = 函数地址（去 Thumb bit）；回调只碰环形缓冲（无 printf/malloc），IRQ 安全；
+   - fault handler 在 Call stack 后、Raw stack 前打印 `Function trace (last N):` + 逐行 `  -> ADDR` / `  <- ADDR`。
+3. **tracer_decode.py**：解析 `Function trace` 块并符号化。
+4. **使用**：`TRACER_USE_FINSTRUMENT` 必须定义在 **tracer 库目标**（同 exidx 的坑）；`-finstrument-functions` **只加在要跟踪的源文件**（`set_source_files_properties` 按文件），避免 printf/ISR 噪声与栈/性能代价。
+
+## 验证（QEMU，只对 main.c instrument + test5 触发 UsageFault）
+```
+Function trace (last 15):
+  -> main_task_init → dump_callstack → test5 → test4 → test3 → test2 → test1 → test0 → main
+  -> tracer_stack_limit / vApplicationIdleHook / vApplicationStackOverflowHook
+```
+应用逻辑链完整可见；Call stack（扫描 clamp 修复后）也正确显示 test 链。
+> 注意 `vApplicationStackOverflowHook` 出现 = instrument 增大栈占用触发 FreeRTOS 溢出检测 → **全量 instrument 有栈/性能代价，必须按需开启**。
+
+## 关键坑/注意
+1. **同 exidx**：`TRACER_USE_FINSTRUMENT` 宏必须定义在 tracer 库目标，否则回调不编译 → 链接错误。
+2. **全 app instrument 会记录 printf 实现**（本项目 = LVGL 的 `lv_sprintf_builtin` 的 `_out_char` 等）→ 轨迹被输出链刷屏；正确做法是"按文件 instrument"。
+3. instrument 增加**栈占用 + 每函数 2 次回调**，紧凑任务栈可能触发溢出检测。
+4. 回调必须 `no_instrument_function` 防递归；只碰环形缓冲（中断安全）。
+
+## 本次变更文件
+```
+M libutils/tracer/tracer.c      # __cyg_profile_* 回调 + 环形缓冲 + fault 轨迹打印
+M libutils/tracer/tracer.h      # TRACER_USE_FINSTRUMENT / TRACER_TRACE_DEPTH 宏
+M works/tools/tracer_decode.py  # 解析 Function trace 块
+M boards/mps2-an505/FreeRTOS/CMakeLists.txt  # 按文件开启的说明注释（默认关闭）
+```
+
+建议提交：
+```bash
+git add libutils/tracer/tracer.c libutils/tracer/tracer.h works/tools/tracer_decode.py boards/mps2-an505/FreeRTOS/CMakeLists.txt works/logs/WORKLOG-2026-09-01-tracer.md
+git commit -m "feat(tracer): 动态函数轨迹（-finstrument-functions 环形缓冲 + fault 回放 + tracer_decode 解析）"
+```

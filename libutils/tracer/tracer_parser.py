@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-tracer_decode.py -- offline symbol resolution for tracer fault dumps.
+tracer_parser.py -- offline symbol resolution for tracer fault dumps.
+
+This file is the library-shipped copy of works/tools/tracer_decode.py
+(keep both in sync when changing one).
 
 Turns a tracer dump (serial log) + the ELF into a readable call chain:
 
-    python tracer_decode.py <elf> <dump.log>
-    python tracer_decode.py <elf> -          # read dump from stdin
-    python tracer_decode.py <elf> <pc> ...   # just symbolize address(es)
+    python tracer_parser.py <elf> <dump.log>
+    python tracer_parser.py <elf> -          # read dump from stdin
+    python tracer_parser.py <elf> <pc> ...   # just symbolize address(es)
 
-It parses the "text [..]" banner, the register block, "Call stack:" and the
-"Raw stack" hex dump emitted by libutils/tracer, then maps every PC (and any
-word inside .text found in the raw stack) to `function+0xoffset` using the
-ELF symbol table (pyelftools).  This is the "offline decode" backtrace path:
-works for ANY toolchain (GCC / IAR / ARMCC5) and is exact when the project
-keeps symbols, without needing .ARM.exidx at runtime.
+It parses the "text [..]" banner, the register block, "Call stack:",
+"Function trace" and the "Raw stack" hex dump emitted by libutils/tracer,
+then maps every PC (and any word inside .text found in the raw stack) to
+`function+0xoffset` using the ELF symbol table (pyelftools).  This is the
+"offline decode" backtrace path: works for ANY toolchain (GCC / IAR / ARMCC5)
+and is exact when the project keeps symbols, without needing .ARM.exidx at
+runtime.
 
 Requires: pip install pyelftools
 """
@@ -175,7 +179,7 @@ def main():
         with open(args.dump[0], "r", encoding="utf-8", errors="replace") as f:
             log = f.read()
     else:
-        sys.stderr.write("usage: tracer_decode.py <elf> <dump.log|-> [pc ...]\n")
+        sys.stderr.write("usage: tracer_parser.py <elf> <dump.log|-> [pc ...]\n")
         sys.exit(2)
 
     info = parse_log(log)

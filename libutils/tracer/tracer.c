@@ -395,6 +395,40 @@ uint32_t tracer_get_callstack(uint32_t *buf, uint32_t size) {
 #endif
 }
 
+/* ===== Dynamic function trace (optional, -finstrument-functions) =====
+ * When TRACER_USE_FINSTRUMENT is on and the consuming project compiles code
+ * with -finstrument-functions, GCC/Clang call these two hooks at every
+ * function entry/exit.  We record (fn address, direction) in a small ring
+ * buffer; the fault dump prints the last TRACER_TRACE_DEPTH entries so you
+ * can replay how execution reached the fault.  bit0 = 0 entered / 1 exited,
+ * upper bits = function address (Thumb bit cleared).  Both hooks are marked
+ * no_instrument_function to avoid re-entrancy, and they only touch the ring
+ * buffer (no printf / malloc), so they are safe from IRQ context too. */
+#if TRACER_USE_FINSTRUMENT
+static volatile uint32_t s_trace_buf[TRACER_TRACE_DEPTH];
+static volatile uint32_t s_trace_head = 0u;  /* next free slot */
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+void __cyg_profile_func_enter(void *this_fn, void *call_site) {
+    (void)call_site;
+    uint32_t i = s_trace_head;
+    s_trace_buf[i] = (uint32_t)this_fn & ~1u; /* bit0 = 0 -> entered */
+    s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+void __cyg_profile_func_exit(void *this_fn, void *call_site) {
+    (void)call_site;
+    uint32_t i = s_trace_head;
+    s_trace_buf[i] = ((uint32_t)this_fn & ~1u) | 1u; /* bit0 = 1 -> exited */
+    s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
+}
+#endif /* TRACER_USE_FINSTRUMENT */
+
 void tracer_trigger_unalign(void) {
     TRACER_CCR |= TRACER_CCR_UNALIGN_TRP;
 #if defined(__GNUC__)
@@ -513,6 +547,24 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     }
     tracer_walk_callstack(scan, limit, NULL, TRACER_STACK_DEPTH);
     TRACER_PRINTF("\r\n");
+
+#if TRACER_USE_FINSTRUMENT
+    /* Dynamic function trace: replay the last calls before the fault. */
+    TRACER_PRINTF(" Function trace (last %lu):\r\n",
+                  (unsigned long)TRACER_TRACE_DEPTH);
+    {
+        uint32_t start = s_trace_head;
+        for (uint32_t n = 0u; n < TRACER_TRACE_DEPTH; n++) {
+            uint32_t idx = (start + n) % TRACER_TRACE_DEPTH;
+            uint32_t v = s_trace_buf[idx];
+            if (v == 0u) {
+                continue;
+            }
+            TRACER_PRINTF("  %s %08lX\r\n", (v & 1u) ? "<-" : "->",
+                          (unsigned long)(v & ~1u));
+        }
+    }
+#endif /* TRACER_USE_FINSTRUMENT */
 
     /* Raw stack dump for offline symbol resolution by
      * works/tools/tracer_decode.py: dump the words under the faulting frame

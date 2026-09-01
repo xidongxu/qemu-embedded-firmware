@@ -73,18 +73,37 @@ extern "C" {
 #define TRACER_USE_EXIDX 0
 #endif
 
+/* Record a dynamic function call trace via -finstrument-functions
+ * (__cyg_profile_func_enter/exit into a ring buffer) and print the last
+ * entries in the fault dump, so you can see how execution reached the fault
+ * ("crash trace replay").  On Cortex-M this is far more useful than the FP
+ * chain below (which yields only the innermost frame).  Define to 1 to
+ * enable; the consuming project must ALSO compile the code to be traced with
+ * -finstrument-functions (exclude hot/ISR code with
+ * __attribute__((no_instrument_function))).  The hooks themselves are
+ * implemented in tracer.c and marked no_instrument_function.
+ * Define to 1 to enable (default 0). */
+#ifndef TRACER_USE_FINSTRUMENT
+#define TRACER_USE_FINSTRUMENT 0
+#endif
+
+/* Ring-buffer depth for the function trace (TRACER_USE_FINSTRUMENT). */
+#ifndef TRACER_TRACE_DEPTH
+#define TRACER_TRACE_DEPTH 128u
+#endif
+
 /* Use a frame-pointer-chain backtrace (via __builtin_return_address) instead
  * of the BL/BLX scan.  Requires the WHOLE project to be compiled with
  * -fno-omit-frame-pointer.  GCC/armclang only.
  *
- * LIMITATION on Cortex-M (Thumb): GCC/armclang keep r7 (not AAPCS r11) as
- * the frame pointer with a non-standard per-frame layout, and on ARM
+ * NOT RECOMMENDED on Cortex-M: GCC/armclang keep r7 (not AAPCS r11) as the
+ * frame pointer with a non-standard per-frame layout, and on ARM
  * __builtin_return_address is only fully reliable at level 0 -- so on
- * Cortex-M this yields only the innermost frame(s).  Use TRACER_USE_EXIDX
- * for a complete exact backtrace; this FP option is a cheap upgrade over the
- * scan when -funwind-tables is unavailable.  Precedence when several are
- * enabled: TRACER_USE_EXIDX > TRACER_USE_FP > scan.  Define to 1 to enable
- * (default 0). */
+ * Cortex-M this yields only the innermost frame(s).  Prefer TRACER_USE_EXIDX
+ * (complete exact backtrace) or TRACER_USE_FINSTRUMENT (trace replay) over
+ * this option.  It only makes sense on A32 (r11 standard chain) or IAR.
+ * Precedence when several are enabled: TRACER_USE_EXIDX > TRACER_USE_FP >
+ * scan.  Define to 1 to enable (default 0). */
 #ifndef TRACER_USE_FP
 #define TRACER_USE_FP 0
 #endif

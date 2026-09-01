@@ -174,6 +174,18 @@ target_link_libraries(${TARGET} PRIVATE
 # -funwind-tables (above) so the unwind chain spans the app frames.
 target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)
 
+# Dynamic function trace (optional, see tracer.h TRACER_USE_FINSTRUMENT):
+# the hooks are compiled into the tracer library (macro on the tracer target,
+# like TRACER_USE_EXIDX), while -finstrument-functions on SELECTED sources
+# makes them call the hooks.  Scope it narrowly (per-file, e.g. main.c or a
+# module under debug) to avoid tracing printf/ISR noise and the extra stack/
+# cycle cost (-finstrument-functions adds 2 calls per function; on a tight
+# task stack it can trip the FreeRTOS overflow check).  Enable like this:
+#   target_compile_definitions(tracer PRIVATE TRACER_USE_FINSTRUMENT=1)
+#   set_source_files_properties(<file.c> PROPERTIES COMPILE_OPTIONS "-finstrument-functions")
+# Leave disabled by default; the fault dump then prints the last TRACER_TRACE_DEPTH
+# function entries/exits so you can replay how execution reached the fault.
+
 if(TLSF_MALLOC)
     target_link_libraries(${TARGET} PRIVATE tlsf)
 endif()
