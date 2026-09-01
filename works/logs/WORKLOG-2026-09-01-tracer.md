@@ -205,3 +205,70 @@ M works/logs/WORKLOG-2026-09-01-tracer.md  # 本文档
 git add libutils/tracer/CMakeLists.txt libutils/tracer/tracer.c libutils/tracer/tracer.h works/logs/WORKLOG-2026-09-01-tracer.md
 git commit -m "feat(tracer): .ARM.exidx 精确回溯 + 工具链守卫 + 帧指针链；补充 WORKLOG 业界方案全景"
 ```
+
+---
+
+# 追加：离线解析（crash dump → 符号）已实现（次日完善会话）
+
+## 背景
+前面"未实现方案"中最有价值的是**离线解析**——把 fault dump 的 PC + 原始栈转成可读调用链，
+且对无 exidx 的 IAR / ARMCC5 是获得精确回溯的唯一可行路径。今天落地。
+
+## 实现
+1. **tracer.c fault handler 新增 "Raw stack" hex dump**：
+   - 新宏 `TRACER_STACK_DUMP_BYTES`（tracer.h，默认 256，0=关闭）；
+   - 从 `f.sp` 起 dump N 字节，截断到 `tracer_stack_limit()`/栈顶（防越界）；
+   - 格式：`Raw stack (0xADDR, N bytes):` + 逐行 `  ADDR: xx xx ...`。
+2. **顺带修复扫描法 RTOS clamp 隐患**（前面"顺便暴露"那条）：
+   - 删掉 `tracer_walk_callstack` 的 `if (scan < TRACER_STACK_BASE) scan = TRACER_STACK_BASE;`；
+   - 原因：RTOS 任务栈在 ucHeap（0x8020xxxx）**远低于主栈 `_sstack=0x80ffeff0`**，
+     clamp 会把 scan 抬到主栈底 → 任务栈 fault 扫描 0 帧；scan 总来自真实 SP/异常帧，无需 clamp。
+3. **新工具 `works/tools/tracer_decode.py`**（依赖 pyelftools：`pip install pyelftools`）：
+   - 解析 dump 日志：`text [..]` 范围 / 寄存器块 / `Call stack:` / `Raw stack`；
+   - pyelftools 读 ELF `.symtab` 构建函数区间表，二分查找 PC → `函数名+偏移`；
+   - Raw stack 按 **4 字节组合 little-endian**，筛出 `.text` 内的 Thumb 返回地址候选并符号化；
+   - 用法：
+     ```
+     python tracer_decode.py <elf> <dump.log>   # 解析日志
+     python tracer_decode.py <elf> -            # 从 stdin
+     python tracer_decode.py <elf> <pc> ...     # 裸地址快速符号化
+     ```
+
+## 验证（QEMU mps2-an505，临时 `test5()` 触发 UsageFault）
+```
+PC  =100BFB3A  tracer_trigger_unalign+0x11
+LR  =1000196D  main_task_entry+0x8
+Call stack: 100BFAF4 tracer_dump_callstack / 1000193E test5 / 1000196C main_task_entry
+Raw stack return-address candidates:
+  [802150A8] 10001964  test5+0x5B        ← 扫描法遗漏的调用链证据
+```
+验证后移除 test5 触发；`build-phone` / `build-baremetal` 回归干净（boot 正常，无 fault）。
+
+## 脚本开发踩到的三个小坑
+1. **参数判断**：日志文件被误判为裸地址 → 改为"单个参数且是 `-` 或存在的文件 = 日志，否则全部当地址"。
+2. **Raw stack 正则**：`\s*` 贪婪吞换行 + `{47}` 长度错位导致 group 空 → 改逐行扫描解析。
+3. **字节 vs 字**：Raw stack 必须按 4 字节组合成 little-endian uint32 才能判返回地址（按单字节会全漏）。
+
+## 业界方案状态更新
+| 方案 | 状态 |
+|---|---|
+| 栈扫描（BL/BLX） | ✅ 兜底 |
+| `.ARM.exidx` 展开表 | ✅ GCC/armclang |
+| 帧指针链 | ⚠️ Cortex-M 受限 |
+| **离线解析 crash dump → 符号** | ✅ **今天已实现**（`tracer_decode.py`） |
+| 影子栈 | 未实现（需编译器/硬件，非本库范畴） |
+| `-finstrument-functions` 动态轨迹 | 未实现（目标不同，需要时再做） |
+
+## 本次变更文件
+```
+M libutils/tracer/tracer.c     # Raw stack hex dump + 扫描 clamp 修复
+M libutils/tracer/tracer.h     # TRACER_STACK_DUMP_BYTES 宏
+A works/tools/tracer_decode.py # 离线符号化工具（pyelftools）
+M .gitignore                   # 忽略 __pycache__/ *.pyc
+```
+
+建议提交：
+```bash
+git add libutils/tracer/tracer.c libutils/tracer/tracer.h works/tools/tracer_decode.py .gitignore works/logs/WORKLOG-2026-09-01-tracer.md
+git commit -m "feat(tracer): 离线解析 crash dump→符号（raw stack dump + tracer_decode.py）；修复扫描法 RTOS clamp"
+```

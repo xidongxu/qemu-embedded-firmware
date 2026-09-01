@@ -44,6 +44,10 @@ build/
 Build/
 build-*/
 
+# Python (works/tools/)
+__pycache__/
+*.pyc
+
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt

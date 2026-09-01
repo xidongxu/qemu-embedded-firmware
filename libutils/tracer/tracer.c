@@ -200,9 +200,10 @@ void tracer_init(void) {
 static uint32_t tracer_walk_callstack(uint32_t scan, uint32_t limit,
                                       uint32_t *buf, uint32_t size) {
     uint32_t depth = 0;
-    if (scan < TRACER_STACK_BASE) {
-        scan = TRACER_STACK_BASE;
-    }
+    /* No lower-bound clamp on purpose: RTOS task stacks live in the FreeRTOS
+     * heap, which is usually far BELOW TRACER_STACK_BASE (the main/MSP
+     * stack).  scan always comes from a real SP / exception frame, so it is
+     * a valid stack address; the (scan+8 <= limit) check caps the walk. */
     while ((scan + 8u) <= limit && depth < size) {
         uint32_t ret = *(volatile uint32_t *)scan;
         uint32_t pc = 0u;
@@ -511,7 +512,35 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
         limit = TRACER_STACK_TOP;
     }
     tracer_walk_callstack(scan, limit, NULL, TRACER_STACK_DEPTH);
-    TRACER_PRINTF("\r\n===== End of dump =====\r\n");
+    TRACER_PRINTF("\r\n");
+
+    /* Raw stack dump for offline symbol resolution by
+     * works/tools/tracer_decode.py: dump the words under the faulting frame
+     * so a host tool can re-walk them with the ELF (symbols + .ARM.exidx)
+     * and produce a readable chain (IAR/ARMCC5 path to exact backtraces). */
+#if TRACER_STACK_DUMP_BYTES
+    {
+        uint32_t base = f.sp;
+        uint32_t bytes = TRACER_STACK_DUMP_BYTES;
+        if (base >= limit) {
+            bytes = 0u;
+        } else if (base + bytes > limit) {
+            bytes = limit - base;
+        }
+        TRACER_PRINTF(" Raw stack (0x%08lX, %lu bytes):\r\n",
+                      (unsigned long)base, (unsigned long)bytes);
+        for (uint32_t i = 0u; i < bytes; i += 16u) {
+            uint32_t a = base + i;
+            TRACER_PRINTF("  %08lX:", (unsigned long)a);
+            for (uint32_t j = 0u; j < 16u && (i + j) < bytes; j++) {
+                TRACER_PRINTF(" %02X",
+                              (unsigned)*(volatile uint8_t *)(a + j));
+            }
+            TRACER_PRINTF("\r\n");
+        }
+    }
+#endif /* TRACER_STACK_DUMP_BYTES */
+    TRACER_PRINTF("===== End of dump =====\r\n");
 
     /* Trap. */
     for (;;) {}

@@ -53,6 +53,14 @@ extern "C" {
 #define TRACER_STACK_DEPTH 32u
 #endif
 
+/* Number of raw stack bytes dumped after the fault frame, so a host tool
+ * (works/tools/tracer_decode.py) can re-walk them with the ELF (symbols +
+ * .ARM.exidx) and turn the addresses into a readable call chain -- this is
+ * how non-exidx toolchains (IAR / ARMCC5) get an exact backtrace.  0 disables. */
+#ifndef TRACER_STACK_DUMP_BYTES
+#define TRACER_STACK_DUMP_BYTES 256u
+#endif
+
 /* Use .ARM.exidx + _Unwind_Backtrace for exact on-demand backtraces
  * (tracer_get_callstack/tracer_dump_callstack) instead of the heuristic
  * BL/BLX stack scan.  Available on GCC and armclang (ARM Compiler 6) only:
