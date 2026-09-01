@@ -27,6 +27,7 @@
     EXTERN  tracer_fault_handler
 
 NMI_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}                    ; save core regs on handler stack
     MOV     R2, SP                      ; R2 = &core_regs (r4..r11)
     MOVS    R0, #4                      ; EXC_RETURN bit2: 0=MSP 1=PSP
@@ -45,6 +46,7 @@ nmi_go
     B       nmi_go                      ; safety
 
 HardFault_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}
     MOV     R2, SP
     MOVS    R0, #4
@@ -63,6 +65,7 @@ hard_go
     B       hard_go
 
 MemManage_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}
     MOV     R2, SP
     MOVS    R0, #4
@@ -81,6 +84,7 @@ mem_go
     B       mem_go
 
 BusFault_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}
     MOV     R2, SP
     MOVS    R0, #4
@@ -99,6 +103,7 @@ bus_go
     B       bus_go
 
 UsageFault_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}
     MOV     R2, SP
     MOVS    R0, #4
@@ -117,6 +122,7 @@ usage_go
     B       usage_go
 
 SecureFault_Handler
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}
     MOV     R2, SP
     MOVS    R0, #4

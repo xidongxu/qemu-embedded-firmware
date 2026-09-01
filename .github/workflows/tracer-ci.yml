@@ -1,0 +1,36 @@
+name: tracer-ci
+
+# Host CI for libutils/tracer: compiles tracer.c with the host gcc and runs
+# the pure-logic unit tests + the offline-parser tests.  No ARM toolchain or
+# firmware build needed (the on-device/QEMU path is exercised manually).
+
+on:
+  push:
+    paths:
+      - 'libutils/tracer/**'
+      - 'works/tools/tracer_decode.py'
+      - '.github/workflows/tracer-ci.yml'
+  pull_request:
+    paths:
+      - 'libutils/tracer/**'
+      - 'works/tools/tracer_decode.py'
+      - '.github/workflows/tracer-ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install pyelftools
+
+      - name: Build and run host unit tests
+        working-directory: libutils/tracer
+        run: |
+          gcc -std=c99 -Wall -Wextra -I. tests/test_tracer.c -o /tmp/test_tracer
+          /tmp/test_tracer
+
+      - name: Run offline parser tests
+        working-directory: libutils/tracer
+        run: python3 tests/test_parser.py

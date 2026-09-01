@@ -24,6 +24,9 @@
     .type \name, %function
     .globl \name
 \name:
+    cpsid i                             /* IRQs off: the dump must not be
+                                           preempted (NMI still can -- the
+                                           C re-entrancy guard catches it) */
     push {r4-r11}                       /* save core regs on handler stack    */
     mov  r2, sp                         /* r2 = &core_regs (r4..r11)          */
     movs r0, #4                         /* EXC_RETURN bit2: 0=MSP 1=PSP       */

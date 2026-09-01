@@ -26,6 +26,7 @@
     MACRO
     TRACER_FAULT_HANDLER $name
 $name
+    CPSID   I                           ; IRQs off during the dump
     PUSH    {R4-R11}                    ; save core regs on handler stack
     MOV     R2, SP                      ; R2 = &core_regs (r4..r11)
     MOVS    R0, #4                      ; EXC_RETURN bit2: 0=MSP 1=PSP

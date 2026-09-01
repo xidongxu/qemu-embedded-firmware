@@ -86,7 +86,11 @@ class SymbolMap:
 def parse_log(text):
     """Extract text range, regs, call-stack PCs, raw-stack words and the
     dynamic function trace (-finstrument-functions)."""
-    info = {"text": (0, 0), "regs": {}, "callstack": [], "raw": [], "trace": []}
+    info = {"text": (0, 0), "regs": {}, "callstack": [], "raw": [],
+            "trace": [], "fw": None, "fpu": {}}
+    m = re.search(r"FW\s+:\s*(\S+)", text)
+    if m:
+        info["fw"] = m.group(1)
     m = re.search(r"text\s+\[([0-9A-Fa-f]+) - ([0-9A-Fa-f]+)\]", text)
     if m:
         info["text"] = (int(m.group(1), 16), int(m.group(2), 16))
@@ -136,6 +140,21 @@ def parse_log(text):
             if not mm:
                 break
             info["trace"].append((mm.group(1), int(mm.group(2), 16)))
+
+    # FPU context (extended frame): lines "  S0=.. S1=.." and " FPSCR=..".
+    m = re.search(r"FPU \(extended frame\):", text)
+    if m:
+        for line in text[m.end():].splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "====" in line:
+                break
+            for mm in re.finditer(r"S(\d+)\s*=\s*([0-9A-Fa-f]{8})", line):
+                info["fpu"][int(mm.group(1))] = int(mm.group(2), 16)
+            mf = re.search(r"FPSCR\s*=\s*([0-9A-Fa-f]{8})", line)
+            if mf:
+                info["fpu"][16] = int(mf.group(1), 16)
     return info
 
 
@@ -467,6 +486,21 @@ def main():
         print("PC  =%08X  %s" % (regs["pc"], fmt_addr(regs["pc"])))
         print("LR  =%08X  %s" % (regs["lr"], fmt_addr(regs["lr"])))
         print("SP  =%08X" % regs["sp"])
+
+    if info.get("fw"):
+        print("FW  =%s" % info["fw"])
+
+    if info.get("fpu"):
+        print("\nFPU registers (extended frame):")
+        fpu = info["fpu"]
+        for k in range(0, 16, 4):
+            row = []
+            for j in range(4):
+                v = fpu.get(k + j, 0)
+                f = struct.unpack("<f", struct.pack("<I", v))[0]
+                row.append("S%d=%08X (%.3g)" % (k + j, v, f))
+            print("  " + "  ".join(row))
+        print("  FPSCR=%08X" % fpu.get(16, 0))
 
     if info["callstack"]:
         print("\nCall stack (from tracer):")

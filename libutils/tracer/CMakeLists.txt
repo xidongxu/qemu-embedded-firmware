@@ -77,3 +77,15 @@ endif()
 #   target_compile_options(tracer PRIVATE -fno-omit-frame-pointer)
 #   target_compile_options(<app> PRIVATE -fno-omit-frame-pointer)
 # Precedence: TRACER_USE_EXIDX > TRACER_USE_FP > BL/BLX scan.
+
+# --- Export a modern alias target: consumers can link tracer::tracer. ---
+add_library(tracer::tracer ALIAS tracer)
+
+# --- Optional host unit tests (tracer.c pure logic + offline parser). -------
+# Enable with -DTRACER_BUILD_TESTS=ON.  Tests build and run on the HOST
+# (gcc/clang + python3), no ARM toolchain / firmware needed.
+option(TRACER_BUILD_TESTS "Build tracer host unit tests" OFF)
+if(TRACER_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

@@ -3,8 +3,14 @@
  *
  * Self-contained (no CMSIS / RTOS / printf dependency).  To build for a
  * specific core just compile with that core's -mcpu (e.g. -mcpu=cortex-m85
- * -mthumb).  TrustZone/FPU/MVE cores are detected at compile time and their
- * extra fields are only decoded where available.
+ * -mthumb).  When the faulting context used the FPU/MVE (M4F/M7/M33/M55/M85)
+ * the hardware saves S0..S15 + FPSCR in the extended exception frame and
+ * tracer decodes them (S16..S31 are not stacked by the hardware and are not
+ * captured).  TrustZone secure state is reported from EXC_RETURN.
+ *
+ * Fault dumps are re-entrancy protected and IRQ-masked: the assembly entry
+ * runs `cpsid i`, and a fault that fires while a dump is already in progress
+ * (e.g. an NMI, which cannot be masked) is only logged, never recursed.
  *
  * Wiring:
  *  1. Add the two sources to your build and link this library.
@@ -108,6 +114,30 @@ extern "C" {
 #define TRACER_USE_FP 0
 #endif
 
+/* Firmware version string printed by tracer_init() and at the top of every
+ * dump, so a crash log can be matched to a specific build.  Override with
+ * -DTRACER_FW_VERSION="v1.2.3" (or in a header included before this one). */
+#ifndef TRACER_FW_VERSION
+#define TRACER_FW_VERSION "0.0.0"
+#endif
+
+/* Milliseconds to wait after a dump/assert before issuing a system reset
+ * (SCB->AIRCR.SYSRESETREQ).  0 = trap forever (default).  Set >0 so a field
+ * unit recovers automatically instead of hanging until the watchdog fires.
+ * The delay lets the dump finish flushing on the output line first. */
+#ifndef TRACER_AUTO_RESET_MS
+#define TRACER_AUTO_RESET_MS 0u
+#endif
+
+/* Assertion that routes through the tracer: a failure prints the expression,
+ * file:line and the current call stack, then auto-resets (if
+ * TRACER_AUTO_RESET_MS>0) or traps forever -- instead of a bare hardfault.
+ * Define TRACER_ASSERT to your own macro to override. */
+#ifndef TRACER_ASSERT
+#define TRACER_ASSERT(expr) \
+    ((expr) ? (void)0 : tracer_assert_fail(#expr, __FILE__, __LINE__))
+#endif
+
 /* Memory-map bounds constraining the text/stack scan.  Defaults come from
  * linker-script symbols in tracer.c (GNU: _stext/_etext/_sstack/_estack;
  * ARMCC: Image$$ER_IROM1$$/STACK$$; IAR: __section_begin/__section_end).
@@ -154,6 +184,17 @@ typedef struct {
     uint32_t bfar;
     /* Exception number from xPSR. */
     unsigned ipsr;
+    /* FPU/MVE context.  When the faulting context had the FPU/MVE active
+     * (EXC_RETURN bit4 is CLEAR) the hardware reserved the 26-word extended
+     * frame (S0..S15 + FPSCR) above the basic frame.  Under lazy stacking
+     * (FPCCR.LSPEN=1, the RTOS default) the values are only written when the
+     * FPU is touched, so tracer forces the lazy save and reads the context
+     * from FPCAR: 'fpu' points at S0 (fpu[0..15] = S0..S15, fpu[16] =
+     * FPSCR) and fpu_words is 17.  NULL/0 when there is no extended frame or
+     * tracer.c is compiled without FPU support.  S16..S31 are not saved by
+     * the hardware and are not captured. */
+    const uint32_t *fpu;
+    unsigned fpu_words;
 } tracer_fault_t;
 
 /* Print build-time configuration (text/stack bounds).  Call once at boot. */
@@ -174,6 +215,13 @@ uint32_t tracer_stack_limit(void);
  * high-water).  Weak, default empty: the core stays RTOS-agnostic, RTOS
  * adapters override it (FreeRTOS: vTaskList). */
 void tracer_dump_tasks(void);
+/* Print a full on-demand diagnostic snapshot (version, tasks, call stack and,
+ * if enabled, the function trace).  Call from a debug command / shell. */
+void tracer_dump_all(void);
+/* Assertion failure path used by TRACER_ASSERT: prints the expression,
+ * file:line and the current call stack, then auto-resets (if
+ * TRACER_AUTO_RESET_MS>0) or traps forever.  Never returns. */
+void tracer_assert_fail(const char *expr, const char *file, int line);
 
 /* Dump the current call stack by scanning from the live SP for Thumb-2
  * BL/BLX return addresses (replaces fault-dump's fault_dump_callstack).

@@ -103,6 +103,60 @@ extern uint32_t STACK$$Length;
 /* CCR flags used by tracer_trigger_unalign(). */
 #define TRACER_CCR_UNALIGN_TRP  0x00000008u
 
+/* Set while a fault/assert dump is in progress.  A re-entrant fault (e.g. a
+ * BusFault from the stack scan hitting unmapped memory, or an NMI firing
+ * during a HardFault dump) is caught here and only logged -- never recursed.
+ * The assembly entry also masks IRQs (cpsid i), but NMI cannot be masked,
+ * so this flag is the backstop for NMI re-entry. */
+static volatile uint32_t s_tracer_dumping = 0u;
+
+/* SCB application interrupt and reset control register (SYSRESETREQ). */
+#define TRACER_AIRCR (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x0Cu))
+#define TRACER_SYSRESETREQ_VAL 0x05FA0004u
+
+#if TRACER_AUTO_RESET_MS
+/* Delay ~'ms' milliseconds before resetting, so the dump can flush on the
+ * output.  Uses SysTick wrap events when SysTick is running (assumes the
+ * reload period is ~1 ms, the CMSIS/FreeRTOS default; the exact pause length
+ * is not critical for a reset delay).  Falls back to a rough busy loop when
+ * SysTick is not running. */
+static void tracer_delay_ms(uint32_t ms) {
+    volatile uint32_t *ctrl = (volatile uint32_t *)0xE000E010u;
+    volatile uint32_t *val  = (volatile uint32_t *)0xE000E018u;
+    uint32_t wraps = 0u;
+    uint32_t prev = 0xFFFFFFFFu;
+    if ((*ctrl & 1u) != 0u) {
+        while (wraps < ms) {
+            uint32_t now = *val;
+            if (now > prev) {
+                wraps++; /* counter wrapped (counts down) */
+            }
+            prev = now;
+        }
+    } else {
+        /* No SysTick: rough loop (order of magnitude, adequate for a reset
+         * delay). */
+        volatile uint32_t n = ms * 4000u;
+        while (n != 0u) {
+            n--;
+        }
+    }
+}
+
+/* Issue a system reset (SCB->AIRCR.SYSRESETREQ) via a raw address. */
+static void tracer_system_reset(void) {
+    TRACER_AIRCR = TRACER_SYSRESETREQ_VAL;
+    for (;;) {}
+}
+#endif /* TRACER_AUTO_RESET_MS */
+
+/* Print the common dump header (kind + firmware version). */
+static void tracer_dump_header(const char *kind) {
+    (void)kind; /* used only when TRACER_PRINTF is a real output */
+    TRACER_PRINTF("\r\n===== Tracer: %s Fault Dump =====\r\n", kind);
+    TRACER_PRINTF("FW     : %s\r\n", TRACER_FW_VERSION);
+}
+
 static const char *tracer_exc_name(unsigned ipsr) {
     switch (ipsr) {
     case 2:
@@ -152,9 +206,12 @@ static const char *tracer_fault_name(const tracer_fault_t *f) {
 
 /* Fetch a 32-bit word byte-wise.  This never triggers an unaligned-access
  * fault, which matters when CCR.UNALIGN_TRP is set (e.g. re-entered from a
- * fault that tracer_trigger_unalign() caused). */
+ * fault that tracer_trigger_unalign() caused).  The byte reads MUST be
+ * volatile: otherwise the compiler folds them back into a single unaligned
+ * `ldr.w` and the whole point is lost (observed with -O2 on arm-none-eabi
+ * GCC: one misaligned candidate address -> UsageFault -> Lockup). */
 static inline uint32_t tracer_load32(uint32_t addr) {
-    const uint8_t *p = (const uint8_t *)addr;
+    const volatile uint8_t *p = (const volatile uint8_t *)addr;
     return ((uint32_t)p[0]) | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -192,7 +249,8 @@ void TRACER_WEAK tracer_dump_tasks(void) {
 }
 
 void tracer_init(void) {
-    TRACER_PRINTF("Tracer: Cortex-M fault dump ready\r\n");
+    TRACER_PRINTF("Tracer: Cortex-M fault dump ready (fw %s)\r\n",
+                  TRACER_FW_VERSION);
     TRACER_PRINTF("  text  [%08lX - %08lX]\r\n",
                   (unsigned long)TRACER_TEXT_START, (unsigned long)TRACER_TEXT_END);
     TRACER_PRINTF("  stack [%08lX - %08lX]\r\n",
@@ -230,12 +288,14 @@ static uint32_t tracer_walk_callstack(uint32_t scan, uint32_t limit,
     return depth;
 }
 
-/* Best-effort current SP: inline asm on GCC/Clang (accurate), address of a
- * local elsewhere (approximate).  `&sp` alone is unreliable under -O2 where
- * the local may be hoisted to the top of the frame. */
+/* Best-effort current SP: inline asm on ARM GCC/Clang (accurate), address of
+ * a local elsewhere (approximate; `&sp` alone is unreliable under -O2 where
+ * the local may be hoisted to the top of the frame).  The asm is guarded to
+ * ARM/Thumb so this file also compiles for host unit tests. */
 static inline uint32_t tracer_current_sp(void) {
     uint32_t sp = 0u;
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && \
+    (defined(__arm__) || defined(__thumb__))
     __asm volatile ("mov %0, sp" : "=r" (sp));
 #else
     sp = (uint32_t)&sp;
@@ -458,6 +518,42 @@ void __cyg_profile_func_exit(void *this_fn, void *call_site) {
     s_trace[i].ts = tracer_trace_ts();
     s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
 }
+
+/* Print the recorded function trace (last TRACER_TRACE_DEPTH entries).
+ * The +delta column is the SysTick cycles elapsed since the previous entry
+ * (SysTick counts down, so prev - current). */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+static void tracer_dump_trace(void) {
+    TRACER_PRINTF(" Function trace (last %lu, +delta = SysTick cycles):\r\n",
+                  (unsigned long)TRACER_TRACE_DEPTH);
+    {
+        uint32_t start = s_trace_head;
+        uint32_t load = TRACER_SYSTICK_LOAD;
+        uint32_t prev = 0u;
+        int have_prev = 0;
+        for (uint32_t n = 0u; n < TRACER_TRACE_DEPTH; n++) {
+            uint32_t idx = (start + n) % TRACER_TRACE_DEPTH;
+            uint32_t v = s_trace[idx].fn;
+            uint32_t ts = s_trace[idx].ts;
+            if (v == 0u && ts == 0u) {
+                continue;
+            }
+            if (have_prev) {
+                /* SysTick counts down; correct for one reload (prev < ts). */
+                uint32_t d = (prev >= ts) ? (prev - ts) : (prev + (load - ts));
+                TRACER_PRINTF("  %s %08lX  +%lu\r\n", (v & 1u) ? "<-" : "->",
+                              (unsigned long)(v & ~1u), (unsigned long)d);
+            } else {
+                TRACER_PRINTF("  %s %08lX\r\n", (v & 1u) ? "<-" : "->",
+                              (unsigned long)(v & ~1u));
+            }
+            prev = ts;
+            have_prev = 1;
+        }
+    }
+}
 #endif /* TRACER_USE_FINSTRUMENT */
 
 void tracer_trigger_unalign(void) {
@@ -483,6 +579,15 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     uint32_t bfsr = 0u;
     uint32_t scan = 0u;
     uint32_t limit = 0u;
+
+    /* Re-entrancy guard: a fault while a dump is already in progress (e.g. a
+     * BusFault from the stack scan, or an NMI during a HardFault dump) must
+     * never recurse into another dump.  Note and stop. */
+    if (s_tracer_dumping != 0u) {
+        TRACER_PRINTF("\r\n===== Tracer: fault while dumping, ignored =====\r\n");
+        for (;;) {}
+    }
+    s_tracer_dumping = 1u;
 
     /* Decode context. */
     f.r0 = exc->r0;
@@ -524,6 +629,33 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     f.mmfar = TRACER_MMFAR;
     f.bfar = TRACER_BFAR;
 
+    /* FPU/MVE context.  When the faulting context used the FPU the hardware
+     * reserves the 26-word extended frame and clears EXC_RETURN bit4.  Under
+     * lazy stacking (FPCCR.LSPEN=1, the RTOS default) the S0..S15+FPSCR
+     * values are NOT written into the frame until the FPU is touched in the
+     * handler -- so we force the lazy save with a no-op FPU instruction and
+     * read the context from FPCAR (0xE000EF38).  Under eager stacking
+     * (LSPEN=0) FPCAR is 0 and the data is on the stack below the basic
+     * frame; fall back to that.  S16..S31 are not saved by the hardware. */
+    f.fpu = NULL;
+    f.fpu_words = 0u;
+    /* FPU instructions can only be emitted when the toolchain FPU ISA is
+     * enabled: __ARM_FP (GCC with -mfpu, ARMCC/armclang) or __VFP__ (IAR).
+     * __VFP_FP__ is NOT enough -- this GCC defines it for -mcpu=cortex-m33
+     * even with no -mfpu, yet the assembler then rejects VFP instructions. */
+#if (defined(__ARM_FP) && (__ARM_FP)) || defined(__VFP__)
+    if ((exc_return & 0x10u) == 0u) {
+        __asm volatile ("vmov s0, s0" ::: "memory"); /* force lazy save */
+        uint32_t fpc = *(volatile uint32_t *)0xE000EF38u; /* FPCAR */
+        if (fpc != 0u) {
+            f.fpu = (const uint32_t *)fpc; /* S0..S15 | FPSCR */
+        } else {
+            f.fpu = (const uint32_t *)exc - 17u; /* eager: below basic frame */
+        }
+        f.fpu_words = 17u;
+    }
+#endif
+
     /* User hooks first: faulting task name, then all-tasks list. */
     tracer_on_fault(&f);
     tracer_dump_tasks();
@@ -531,7 +663,7 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     /* Dump. */
     {
         const char *name = tracer_fault_name(&f);
-        TRACER_PRINTF("\r\n===== Tracer: %s Fault Dump =====\r\n", name);
+        tracer_dump_header(name);
         TRACER_PRINTF("Exception : %s (IPSR=%u)\r\n", name, f.ipsr);
         TRACER_PRINTF("EXC_RETURN: 0x%08lX  [%s mode, %s, %s]\r\n",
                       (unsigned long)exc_return,
@@ -552,6 +684,19 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
                       (unsigned long)f.r12, (unsigned long)f.sp,
                       (unsigned long)f.lr, (unsigned long)f.pc);
         TRACER_PRINTF(" xPSR=%08lX\r\n", (unsigned long)f.xpsr);
+    }
+
+    /* FPU register block (extended frame). */
+    if (f.fpu != NULL) {
+        TRACER_PRINTF(" FPU (extended frame):\r\n");
+        for (unsigned i = 0u; i < 16u; i += 4u) {
+            TRACER_PRINTF("  S%-2u=%08lX S%-2u=%08lX S%-2u=%08lX S%-2u=%08lX\r\n",
+                          i,      (unsigned long)f.fpu[i],
+                          i + 1u, (unsigned long)f.fpu[i + 1u],
+                          i + 2u, (unsigned long)f.fpu[i + 2u],
+                          i + 3u, (unsigned long)f.fpu[i + 3u]);
+        }
+        TRACER_PRINTF(" FPSCR=%08lX\r\n", (unsigned long)f.fpu[16u]);
     }
 
     /* Fault status.  CFSR = MMFSR[7:0] | BFSR[15:8] | UFSR[31:16]. */
@@ -581,36 +726,8 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     TRACER_PRINTF("\r\n");
 
 #if TRACER_USE_FINSTRUMENT
-    /* Dynamic function trace: replay the last calls before the fault.
-     * The +delta column is the SysTick cycles elapsed since the previous
-     * entry (SysTick counts down, so prev - current). */
-    TRACER_PRINTF(" Function trace (last %lu, +delta = SysTick cycles):\r\n",
-                  (unsigned long)TRACER_TRACE_DEPTH);
-    {
-        uint32_t start = s_trace_head;
-        uint32_t load = TRACER_SYSTICK_LOAD;
-        uint32_t prev = 0u;
-        int have_prev = 0;
-        for (uint32_t n = 0u; n < TRACER_TRACE_DEPTH; n++) {
-            uint32_t idx = (start + n) % TRACER_TRACE_DEPTH;
-            uint32_t v = s_trace[idx].fn;
-            uint32_t ts = s_trace[idx].ts;
-            if (v == 0u && ts == 0u) {
-                continue;
-            }
-            if (have_prev) {
-                /* SysTick counts down; correct for one reload (prev < ts). */
-                uint32_t d = (prev >= ts) ? (prev - ts) : (prev + (load - ts));
-                TRACER_PRINTF("  %s %08lX  +%lu\r\n", (v & 1u) ? "<-" : "->",
-                              (unsigned long)(v & ~1u), (unsigned long)d);
-            } else {
-                TRACER_PRINTF("  %s %08lX\r\n", (v & 1u) ? "<-" : "->",
-                              (unsigned long)(v & ~1u));
-            }
-            prev = ts;
-            have_prev = 1;
-        }
-    }
+    /* Dynamic function trace: replay the last calls before the fault. */
+    tracer_dump_trace();
 #endif /* TRACER_USE_FINSTRUMENT */
 
     /* Raw stack dump for offline symbol resolution by
@@ -641,6 +758,56 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
 #endif /* TRACER_STACK_DUMP_BYTES */
     TRACER_PRINTF("===== End of dump =====\r\n");
 
-    /* Trap. */
+    /* Auto-reset (optional) or trap forever.  The delay lets the dump flush
+     * on the output line before the reset is issued. */
+#if TRACER_AUTO_RESET_MS
+    TRACER_PRINTF("===== End of dump: reset in %lu ms =====\r\n",
+                  (unsigned long)TRACER_AUTO_RESET_MS);
+    tracer_delay_ms((uint32_t)TRACER_AUTO_RESET_MS);
+    tracer_system_reset();
+#else
+    TRACER_PRINTF("===== End of dump (trapped) =====\r\n");
     for (;;) {}
+#endif
+}
+
+/* ===== Assertion + on-demand snapshot ===== */
+
+void tracer_assert_fail(const char *expr, const char *file, int line) {
+    (void)expr; /* used only when TRACER_PRINTF is a real output */
+    (void)file;
+    (void)line;
+    if (s_tracer_dumping != 0u) {
+        TRACER_PRINTF("\r\n===== Tracer: assert while dumping, ignored =====\r\n");
+        for (;;) {}
+    }
+    s_tracer_dumping = 1u;
+    TRACER_PRINTF("\r\n===== Tracer: Assert Failed =====\r\n");
+    TRACER_PRINTF("FW     : %s\r\n", TRACER_FW_VERSION);
+    TRACER_PRINTF("Assert : %s\r\n", (expr != NULL) ? expr : "?");
+    TRACER_PRINTF("At     : %s:%d\r\n", (file != NULL) ? file : "?", line);
+    tracer_dump_callstack();
+#if TRACER_USE_FINSTRUMENT
+    tracer_dump_trace();
+#endif
+#if TRACER_AUTO_RESET_MS
+    TRACER_PRINTF("===== End of assert: reset in %lu ms =====\r\n",
+                  (unsigned long)TRACER_AUTO_RESET_MS);
+    tracer_delay_ms((uint32_t)TRACER_AUTO_RESET_MS);
+    tracer_system_reset();
+#else
+    TRACER_PRINTF("===== End of assert (trapped) =====\r\n");
+    for (;;) {}
+#endif
+}
+
+void tracer_dump_all(void) {
+    TRACER_PRINTF("\r\n===== Tracer: on-demand snapshot (fw %s) =====\r\n",
+                  TRACER_FW_VERSION);
+    tracer_dump_tasks();
+    tracer_dump_callstack();
+#if TRACER_USE_FINSTRUMENT
+    tracer_dump_trace();
+#endif
+    TRACER_PRINTF("===== End of snapshot =====\r\n");
 }

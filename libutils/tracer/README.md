@@ -17,12 +17,14 @@ BusFault / UsageFault / MemManage / NMI / SecureFault 时，打印完整的现�
 | 文件 | 说明 |
 |---|---|
 | `tracer.h` | 公共头文件：配置宏、数据结构、API、weak hooks |
-| `tracer.c` | 核心逻辑：寄存器/异常解码、调用栈、原始栈、轨迹、trap |
+| `tracer.c` | 核心逻辑：寄存器/异常解码、FPU 上下文、调用栈、原始栈、轨迹、断言、自动复位、trap |
 | `tracer_gnugcc.s` | 汇编入口（**GCC / Clang / armclang / ARMCC6** 用） |
 | `tracer_iccarm.s` | 汇编入口（**IAR EWARM** 用） |
 | `tracer_armcc.s` | 汇编入口（**MDK armasm / ARMCC5** 用） |
-| `CMakeLists.txt` | CMake 构建（自动按编译器选汇编入口 + 工具链守卫） |
-| `tracer_parser.py` | 离线解析工具：dump 日志 + ELF → 符号化调用链，**并支持 `.ARM.exidx` 离线逐帧展开** |
+| `CMakeLists.txt` | CMake 构建（自动按编译器选汇编入口 + 工具链守卫 + `tracer::tracer` alias） |
+| `tracer_parser.py` | 离线解析工具：dump 日志 + ELF → 符号化调用链，并支持 `.ARM.exidx` 离线逐帧展开、FPU 寄存器转浮点 |
+| `tests/` | host 单测（`test_tracer.c` 纯逻辑 + `test_parser.py` 离线解析），`-DTRACER_BUILD_TESTS=ON` 启用 |
+| `LICENSE` | MIT 许可证 |
 | `README.md` | 本文档 |
 
 > `works/tools/tracer_decode.py` 是 `tracer_parser.py` 的仓库级副本（保持同步）。
@@ -38,9 +40,11 @@ fault 一发生就打印：
 
 ```
 ===== Tracer: UsageFault Fault Dump =====
+FW     : v1.2.3                     ← 固件版本（TRACER_FW_VERSION）
 Exception : UsageFault (IPSR=0)
 EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
  R0..R11 / R12 SP LR PC / xPSR
+ FPU (extended frame): S0..S15 / FPSCR   ← 可选（FPU 活动时自动解码）
  CFSR=01000000  MMFSR=00  BFSR=00  UFSR=0100
  HFSR=40000000  DFSR=00000000
  MMFAR=00000000  BFAR=00000000
@@ -50,20 +54,34 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 ===== End of dump =====
 ```
 
+> dump 全程**关中断**（汇编入口 `cpsid i`）+ **重入保护**（`s_tracer_dumping`）：
+> 扫描/打印期间即使再触发 fault（如 NMI，无法被 `cpsid i` 屏蔽）也只打印 note，绝不递归。
+
 ### 2. 主动调用 API
 | API | 作用 |
 |---|---|
-| `tracer_init()` | 开机调用一次，打印 text/stack 范围（对 addr2line 定位极有用） |
+| `tracer_init()` | 开机调用一次，打印版本 + text/stack 范围（对 addr2line 定位极有用） |
 | `tracer_dump_callstack()` | 主动打印当前调用栈（从调试命令调用） |
 | `tracer_get_callstack(buf, size)` | 把当前调用栈 PC 写入缓冲区（供落盘/协议发送） |
+| `tracer_dump_all()` | 主动打印完整快照（版本 + 任务 + 调用栈 + 轨迹），挂 shell/调试命令 |
 | `tracer_trigger_unalign()` | 主动触发 UsageFault（测试 fault 路径用） |
+| `TRACER_ASSERT(expr)` | 断言：失败打印表达式 + file:line + 调用栈，然后自动复位/或 trap（替代裸 assert） |
+| `tracer_assert_fail(...)` | `TRACER_ASSERT` 的底层实现（一般不直接调） |
 
 ### 3. 可覆盖的 weak hooks
 | Hook | 默认 | 用途 |
 |---|---|---|
-| `tracer_on_fault(&f)` | 空 | fault 时先调用，可打印当前 FreeRTOS 任务名 |
+| `tracer_on_fault(&f)` | 空 | fault 时先调用，可打印当前 FreeRTOS 任务名；`&f` 含 FPU 上下文指针 `fpu`（S0..S15+FPSCR） |
 | `tracer_stack_limit()` | 主栈顶 | 返回扫描上界；FreeRTOS 下返回当前任务栈顶 `pxEndOfStack` |
 | `tracer_dump_tasks()` | 空 | fault 时列出所有任务（状态/栈水位）；RTOS 适配（FreeRTOS: `vTaskList`），核心保持 RTOS 无关 |
+
+### 3.5 FPU/MVE 上下文解码（新增）
+当 faulting 上下文使用了 FPU/MVE（`EXC_RETURN` bit4=0 = 扩展帧）时，dump 自动打印 `S0..S15 + FPSCR`
+（16 进制；离线解析脚本会转成浮点）。**实现要点（QEMU 实测）**：
+- 硬件只在**基本帧上方**预留 72 字节扩展区；在 **lazy stacking**（`FPCCR.LSPEN=1`，RTOS 默认）下，
+  S 寄存器值要等 handler 第一次碰 FPU 才真正写入——所以 tracer 用一条 `vmov s0,s0` 触发 lazy save，
+  再从 **FPCAR**（`0xE000EF38`）读取；eager（LSPEN=0）时回退读栈上扩展区。
+- 需要工具链 FPU ISA 开启（GCC `-mfpu` / IAR），否则 `fpu=NULL`；`S16..S31` 硬件不保存，不采集。
 
 ### 4. 多种调用栈回溯方式（按需/按工具链）
 | 方式 | 开关 | 适用 | 说明 |
@@ -172,6 +190,9 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 | `TRACER_USE_FINSTRUMENT` | 0 | 启用动态函数轨迹 |
 | `TRACER_TRACE_DEPTH` | 128 | 轨迹环形缓冲大小 |
 | `TRACER_USE_FP` | 0 | 帧指针链（Cortex-M 不推荐） |
+| `TRACER_FW_VERSION` | `"0.0.0"` | 固件版本字符串，`tracer_init`/dump 头部打印（现场对版用） |
+| `TRACER_AUTO_RESET_MS` | 0 | >0 时 dump 后延时该毫秒数自动系统复位（0=永久 trap） |
+| `TRACER_ASSERT(expr)` | 见宏 | 断言宏（打印 + 调用栈 + 自动复位/trap） |
 
 ---
 
