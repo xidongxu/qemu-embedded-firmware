@@ -73,6 +73,12 @@ void tracer_dump_tasks(void) {
     printf("%s", buf);
 }
 
+/* tracer hook: system up-time in ms, printed in every dump (crash-to-boot
+ * matching).  Tick rate is usually 1 kHz here, so tick == ms. */
+uint32_t tracer_uptime_ms(void) {
+    return (uint32_t)(xTaskGetTickCount() * (TickType_t)portTICK_PERIOD_MS);
+}
+
 void dump_callstack(void) {
     tracer_dump_callstack();
 }
@@ -276,9 +282,11 @@ static void main_task_init(void) {
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
-    printf("FATAL: stack overflow in task %s\r\n",
-           pcTaskName ? pcTaskName : "?");
-    while (1) { }
+    /* Route through the tracer: prints the message + current call stack and
+     * then auto-resets (TRACER_AUTO_RESET_MS) or traps.  The overflowed task's
+     * own stack is already blown, so the backtrace is best-effort. */
+    tracer_assert_fail(pcTaskName ? pcTaskName : "stack overflow",
+                       "vApplicationStackOverflowHook", __LINE__);
 }
 
 void vApplicationMallocFailedHook(void)

@@ -31,6 +31,12 @@ jobs:
           gcc -std=c99 -Wall -Wextra -I. tests/test_tracer.c -o /tmp/test_tracer
           /tmp/test_tracer
 
+      - name: Mini-printf (crash-safe output) tests
+        working-directory: libutils/tracer
+        run: |
+          gcc -std=c99 -Wall -Wextra -I. tests/test_miniprint.c -o /tmp/test_miniprint
+          /tmp/test_miniprint
+
       - name: Run offline parser tests
         working-directory: libutils/tracer
         run: python3 tests/test_parser.py

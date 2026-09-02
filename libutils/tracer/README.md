@@ -5,10 +5,12 @@ BusFault / UsageFault / MemManage / NMI / SecureFault 时，打印完整的现�
 异常状态、调用栈、原始栈、崩溃前函数轨迹），配合离线解析工具把地址还原成可读的函数
 调用链，快速定位崩溃点。
 
-- **零依赖**：不依赖 CMSIS / RTOS / printf（寄存器全部用裸地址访问）。
+- **零依赖**：不依赖 CMSIS / RTOS；寄存器全部裸地址访问。输出默认走 printf，也可定义
+  `TRACER_PUTCHAR` 走库内无锁 mini-printf（此时连 printf 都不链接，fault 路径锁安全）。
 - **单目录**：所有文件放在本目录，便于并入任意工程。
 - **多工具链**：GCC / armclang / IAR / ARMCC 均可编译（按工具链选对应汇编入口）。
-- **多内核**：M3 / M4 / M7 / M23 / M33 / M55 / M85（M0/M0+ 需把汇编里的 `push {r4-r11}` 拆成两次）。
+- **多内核**：M3 / M4 / M7 / M23 / M33 / M55 / M85（**M0/M0+ 不支持**：Thumb-1 无多寄存器 `PUSH`，
+  向量入口无法保存 r4..r11）。
 
 ---
 
@@ -41,6 +43,7 @@ fault 一发生就打印：
 ```
 ===== Tracer: UsageFault Fault Dump =====
 FW     : v1.2.3                     ← 固件版本（TRACER_FW_VERSION）
+Up     : 123456 ms                  ← 系统已运行时长（weak hook tracer_uptime_ms）
 Exception : UsageFault (IPSR=0)
 EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
  R0..R11 / R12 SP LR PC / xPSR
@@ -56,6 +59,11 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 
 > dump 全程**关中断**（汇编入口 `cpsid i`）+ **重入保护**（`s_tracer_dumping`）：
 > 扫描/打印期间即使再触发 fault（如 NMI，无法被 `cpsid i` 屏蔽）也只打印 note，绝不递归。
+>
+> **crash-safe 输出**：定义 `TRACER_PUTCHAR(ch)`（如裸 UART 数据寄存器写 / Segger RTT）后，
+> 整个 dump 由库内**无锁 mini-printf** 逐字符渲染，完全不碰 stdio/printf——即使 fault 打断的是
+> printf 本身或它持有的锁也不会死锁（QEMU 实测输出与 printf 模式逐字一致）。未定义时回退
+> TRACER_PRINTF（默认 printf，简单但 fault 恰在 printf 内时可能死锁）。
 
 ### 2. 主动调用 API
 | API | 作用 |
@@ -74,6 +82,8 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 | `tracer_on_fault(&f)` | 空 | fault 时先调用，可打印当前 FreeRTOS 任务名；`&f` 含 FPU 上下文指针 `fpu`（S0..S15+FPSCR） |
 | `tracer_stack_limit()` | 主栈顶 | 返回扫描上界；FreeRTOS 下返回当前任务栈顶 `pxEndOfStack` |
 | `tracer_dump_tasks()` | 空 | fault 时列出所有任务（状态/栈水位）；RTOS 适配（FreeRTOS: `vTaskList`），核心保持 RTOS 无关 |
+| `tracer_uptime_ms()` | 0 | 系统运行毫秒数，每个 dump 打印 `Up:`；FreeRTOS 覆盖成 `xTaskGetTickCount()*portTICK_PERIOD_MS` |
+| `tracer_watchdog_kick()` | 空 | 喂独立看门狗；`TRACER_AUTO_RESET_MS` 延时期间周期性调用，防止 dump/延时被狗截断（纯 trap 模式不喂，狗作最后兜底） |
 
 ### 3.5 FPU/MVE 上下文解码（新增）
 当 faulting 上下文使用了 FPU/MVE（`EXC_RETURN` bit4=0 = 扩展帧）时，dump 自动打印 `S0..S15 + FPSCR`
@@ -81,7 +91,9 @@ EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, Secure]
 - 硬件只在**基本帧上方**预留 72 字节扩展区；在 **lazy stacking**（`FPCCR.LSPEN=1`，RTOS 默认）下，
   S 寄存器值要等 handler 第一次碰 FPU 才真正写入——所以 tracer 用一条 `vmov s0,s0` 触发 lazy save，
   再从 **FPCAR**（`0xE000EF38`）读取；eager（LSPEN=0）时回退读栈上扩展区。
-- 需要工具链 FPU ISA 开启（GCC `-mfpu` / IAR），否则 `fpu=NULL`；`S16..S31` 硬件不保存，不采集。
+- 需要工具链 FPU ISA 开启（GCC `-mfpu` / IAR），否则 `fpu=NULL`。`S16..S31` 为调用者保存
+  寄存器，异常入口后在 lazy stacking 下处理器不再保留 faulting 上下文的值（QEMU M33 实测读 0），
+  故不采集。
 
 ### 4. 多种调用栈回溯方式（按需/按工具链）
 | 方式 | 开关 | 适用 | 说明 |
@@ -183,7 +195,8 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 ### 配置宏一览（tracer.h，均可 `-D` 覆盖）
 | 宏 | 默认 | 说明 |
 |---|---|---|
-| `TRACER_PRINTF` | `printf` | 输出函数（可重定向） |
+| `TRACER_PRINTF` | `printf` | 常规输出函数（可重定向） |
+| `TRACER_PUTCHAR` | 无 | **crash-safe** 逐字符输出（裸 UART/RTT）；定义后 dump 走无锁 mini-printf，不碰 printf |
 | `TRACER_STACK_DEPTH` | 32 | 调用栈条目上限 |
 | `TRACER_STACK_DUMP_BYTES` | 256 | 原始栈 hex 字节数，0=关闭 |
 | `TRACER_USE_EXIDX` | 0 | 启用 .ARM.exidx 精确回溯 |

@@ -1,15 +1,160 @@
 /*
- * tracer.c -- minimal Cortex-M fault dump library (M3..M85)
+ * tracer.c -- minimal Cortex-M fault dump library
  *
- * See tracer.h for wiring.  Design goals:
- *  - no CMSIS / RTOS / printf dependency (all registers via raw addresses)
+ * Supported cores: Cortex-M3 / M4 / M7 / M23 / M33 / M55 / M85 (M0/M0+ are
+ * NOT supported -- Thumb-1 has no multi-register PUSH).  See tracer.h.
+ *
+ * Design goals:
+ *  - no CMSIS dependency (all registers via raw addresses)
+ *  - no printf() dependency when TRACER_PUTCHAR is provided (crash-safe,
+ *    lock-free output for the fault path); otherwise TRACER_PRINTF is used
  *  - Cortex-M wide: SCB at 0xE000ED00 and the 8-word exception frame are
- *    identical across M3..M85; TrustZone/FPU/MVE are compile-time only
+ *    identical across the supported cores; TrustZone/FPU/MVE are handled
  *  - call-stack recovery, best to worst: .ARM.exidx (TRACER_USE_EXIDX),
  *    AAPCS frame-pointer chain (TRACER_USE_FP), or a Thumb-2 BL/BLX stack
  *    scan (always available as the fallback)
  */
 #include "tracer.h"
+
+/* ---------------------------------------------------------------------------
+ * Crash-safe output (only when the app defines TRACER_PUTCHAR).  In that mode
+ * tracer.h defines TRACER_PRINTF as tracer_xprintf, so every tracer print is
+ * rendered here, one char at a time, through the app's lock-free
+ * TRACER_PUTCHAR -- stdio/printf are never touched, which is safe even if the
+ * fault interrupted printf or its lock.  Without TRACER_PUTCHAR, tracer.h
+ * keeps TRACER_PRINTF = printf (default) and none of this is compiled.
+ * ------------------------------------------------------------------------- */
+#if defined(TRACER_PUTCHAR)
+#include <stdarg.h>
+/* Lock-free mini-printf: supports the format subset tracer emits
+ * (%s %c %d %u %x %X %lu %ld %u with '-'/'0' flags and decimal width). */
+static void tracer_xputc(char c) {
+    TRACER_PUTCHAR(c);
+}
+
+static void tracer_putn(unsigned long v, int base, int upper, int width,
+                        int zero, int left, int neg) {
+    char tmp[12];
+    int n = 0;
+    unsigned long b = (unsigned long)base;
+    do {
+        unsigned d = (unsigned)(v % b);
+        tmp[n++] = (char)((d < 10u) ? ('0' + (int)d)
+                                    : (upper ? ('A' + (int)d - 10)
+                                             : ('a' + (int)d - 10)));
+        v /= b;
+    } while (v != 0u && n < (int)sizeof(tmp));
+
+    if (neg) {
+        tracer_xputc('-');
+    }
+    {
+        int total = n + (neg ? 1 : 0);
+        int pad = (width > total) ? (width - total) : 0;
+        if (!left) {
+            char pc = zero ? '0' : ' ';
+            while (pad-- > 0) {
+                tracer_xputc(pc);
+            }
+        }
+        while (n > 0) {
+            tracer_xputc(tmp[--n]);
+        }
+        if (left) {
+            while (pad-- > 0) {
+                tracer_xputc(' ');
+            }
+        }
+    }
+}
+
+static void tracer_xprintf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    for (const char *p = fmt; *p != '\0'; p++) {
+        if (*p != '%') {
+            tracer_xputc(*p);
+            continue;
+        }
+        p++;
+        int left = 0, zero = 0;
+        for (;;) {
+            if (*p == '-') {
+                left = 1;
+                p++;
+            } else if (*p == '0') {
+                zero = 1;
+                p++;
+            } else {
+                break;
+            }
+        }
+        int width = 0;
+        while (*p >= '0' && *p <= '9') {
+            width = width * 10 + (*p - '0');
+            p++;
+        }
+        int islong = 0;
+        if (*p == 'l') {
+            islong = 1;
+            p++;
+        }
+        char conv = *p;
+        if (conv == '\0') {
+            break;
+        }
+        if (conv == 's') {
+            const char *s = va_arg(ap, const char *);
+            int len = 0;
+            const char *q;
+            if (s == NULL) {
+                s = "(null)";
+            }
+            for (q = s; *q != '\0'; q++) {
+                len++;
+            }
+            {
+                int pad = (width > len) ? (width - len) : 0;
+                if (!left) {
+                    while (pad-- > 0) {
+                        tracer_xputc(' ');
+                    }
+                }
+                while (*s != '\0') {
+                    tracer_xputc(*s++);
+                }
+                if (left) {
+                    while (pad-- > 0) {
+                        tracer_xputc(' ');
+                    }
+                }
+            }
+        } else if (conv == 'c') {
+            tracer_xputc((char)va_arg(ap, int));
+        } else if (conv == 'd' || conv == 'i') {
+            long v = islong ? va_arg(ap, long) : (long)va_arg(ap, int);
+            int neg = (v < 0);
+            tracer_putn(neg ? (unsigned long)(-(v + 1)) + 1u
+                            : (unsigned long)v,
+                        10, 0, width, zero, left, neg);
+        } else if (conv == 'u') {
+            unsigned long v = islong ? va_arg(ap, unsigned long)
+                                     : (unsigned long)va_arg(ap, unsigned int);
+            tracer_putn(v, 10, 0, width, zero, left, 0);
+        } else if (conv == 'x' || conv == 'X') {
+            unsigned long v = islong ? va_arg(ap, unsigned long)
+                                     : (unsigned long)va_arg(ap, unsigned int);
+            tracer_putn(v, 16, (conv == 'X'), width, zero, left, 0);
+        } else {
+            tracer_xputc('%');
+            if (conv != '\0') {
+                tracer_xputc(conv);
+            }
+        }
+    }
+    va_end(ap);
+}
+#endif /* TRACER_PUTCHAR */
 
 /* Weak-symbol attribute, portable across GCC/Clang/ARMCC/IAR.
  * IAR's __weak keyword needs the extended-language option (--eec) that many
@@ -119,7 +264,8 @@ static volatile uint32_t s_tracer_dumping = 0u;
  * output.  Uses SysTick wrap events when SysTick is running (assumes the
  * reload period is ~1 ms, the CMSIS/FreeRTOS default; the exact pause length
  * is not critical for a reset delay).  Falls back to a rough busy loop when
- * SysTick is not running. */
+ * SysTick is not running.  Feeds the hardware watchdog (tracer_watchdog_kick)
+ * every ~64 ms so the delay is not cut short by an IWDG. */
 static void tracer_delay_ms(uint32_t ms) {
     volatile uint32_t *ctrl = (volatile uint32_t *)0xE000E010u;
     volatile uint32_t *val  = (volatile uint32_t *)0xE000E018u;
@@ -130,6 +276,9 @@ static void tracer_delay_ms(uint32_t ms) {
             uint32_t now = *val;
             if (now > prev) {
                 wraps++; /* counter wrapped (counts down) */
+                if ((wraps & 0x3Fu) == 0u) {
+                    tracer_watchdog_kick();
+                }
             }
             prev = now;
         }
@@ -137,8 +286,12 @@ static void tracer_delay_ms(uint32_t ms) {
         /* No SysTick: rough loop (order of magnitude, adequate for a reset
          * delay). */
         volatile uint32_t n = ms * 4000u;
+        uint32_t c = 0u;
         while (n != 0u) {
             n--;
+            if ((++c & 0xFFFFu) == 0u) {
+                tracer_watchdog_kick();
+            }
         }
     }
 }
@@ -150,11 +303,12 @@ static void tracer_system_reset(void) {
 }
 #endif /* TRACER_AUTO_RESET_MS */
 
-/* Print the common dump header (kind + firmware version). */
+/* Print the common dump header (kind + firmware version + up-time). */
 static void tracer_dump_header(const char *kind) {
-    (void)kind; /* used only when TRACER_PRINTF is a real output */
+    (void)kind; /* used only when the output macro is a real sink */
     TRACER_PRINTF("\r\n===== Tracer: %s Fault Dump =====\r\n", kind);
     TRACER_PRINTF("FW     : %s\r\n", TRACER_FW_VERSION);
+    TRACER_PRINTF("Up     : %lu ms\r\n", (unsigned long)tracer_uptime_ms());
 }
 
 static const char *tracer_exc_name(unsigned ipsr) {
@@ -246,6 +400,20 @@ uint32_t TRACER_WEAK tracer_stack_limit(void) {
 void TRACER_WEAK tracer_dump_tasks(void) {
     /* RTOS adapter hook: override to list all tasks (e.g. FreeRTOS
      * vTaskList) right after the faulting task name.  Core is RTOS-agnostic. */
+}
+
+uint32_t TRACER_WEAK tracer_uptime_ms(void) {
+    /* RTOS adapter hook: override to return the system up-time in ms
+     * (FreeRTOS: xTaskGetTickCount() * portTICK_PERIOD_MS).  Printed in every
+     * dump so a crash log can be matched to a boot session. */
+    return 0u;
+}
+
+void TRACER_WEAK tracer_watchdog_kick(void) {
+    /* Hardware-watchdog adapter hook: override to feed an IWDG.  Called
+     * periodically while the pre-reset delay (TRACER_AUTO_RESET_MS) runs, so
+     * the delay is not cut short.  A plain trap never calls it, leaving the
+     * watchdog as the final recovery backstop. */
 }
 
 void tracer_init(void) {
@@ -495,16 +663,49 @@ static uint32_t tracer_trace_ts(void) {
     return TRACER_SYSTICK_VAL;
 }
 
+/* Shortest critical section (PRIMASK) around the ring-buffer write, so a
+ * thread-mode call trace and a (instrumented) ISR trace cannot corrupt each
+ * other.  PRIMASK is cheap and re-entrant-safe; -finstrument-functions is a
+ * debug feature, so the extra cost is acceptable. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+static inline uint32_t tracer_irq_save(void) {
+    uint32_t pm = 0u;
+#if defined(__arm__) || defined(__thumb__)
+    __asm volatile ("mrs %0, primask" : "=r"(pm));
+    __asm volatile ("cpsid i");
+#else
+    (void)0;
+#endif
+    return pm;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_instrument_function))
+#endif
+static inline void tracer_irq_restore(uint32_t pm) {
+#if defined(__arm__) || defined(__thumb__)
+    if ((pm & 1u) == 0u) {
+        __asm volatile ("cpsie i");
+    }
+#else
+    (void)pm;
+#endif
+}
+
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((no_instrument_function))
 #endif
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     (void)call_site;
+    uint32_t pm = tracer_irq_save();
     uint32_t i = s_trace_head;
     /* bit0 = 0 -> entered */
     s_trace[i].fn = (uint32_t)this_fn & ~1u;
     s_trace[i].ts = tracer_trace_ts();
     s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
+    tracer_irq_restore(pm);
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -512,11 +713,13 @@ __attribute__((no_instrument_function))
 #endif
 void __cyg_profile_func_exit(void *this_fn, void *call_site) {
     (void)call_site;
+    uint32_t pm = tracer_irq_save();
     uint32_t i = s_trace_head;
     /* bit0 = 1 -> exited */
     s_trace[i].fn = ((uint32_t)this_fn & ~1u) | 1u;
     s_trace[i].ts = tracer_trace_ts();
     s_trace_head = (i + 1u) % TRACER_TRACE_DEPTH;
+    tracer_irq_restore(pm);
 }
 
 /* Print the recorded function trace (last TRACER_TRACE_DEPTH entries).
@@ -642,7 +845,10 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     /* FPU instructions can only be emitted when the toolchain FPU ISA is
      * enabled: __ARM_FP (GCC with -mfpu, ARMCC/armclang) or __VFP__ (IAR).
      * __VFP_FP__ is NOT enough -- this GCC defines it for -mcpu=cortex-m33
-     * even with no -mfpu, yet the assembler then rejects VFP instructions. */
+     * even with no -mfpu, yet the assembler then rejects VFP instructions.
+     * (S16..S31 are NOT captured: they are caller-saved and not preserved
+     * across exception entry under lazy stacking -- QEMU M33 reads 0 in the
+     * handler, so a capture would be misleading.) */
 #if (defined(__ARM_FP) && (__ARM_FP)) || defined(__VFP__)
     if ((exc_return & 0x10u) == 0u) {
         __asm volatile ("vmov s0, s0" ::: "memory"); /* force lazy save */
@@ -784,6 +990,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
     s_tracer_dumping = 1u;
     TRACER_PRINTF("\r\n===== Tracer: Assert Failed =====\r\n");
     TRACER_PRINTF("FW     : %s\r\n", TRACER_FW_VERSION);
+    TRACER_PRINTF("Up     : %lu ms\r\n", (unsigned long)tracer_uptime_ms());
     TRACER_PRINTF("Assert : %s\r\n", (expr != NULL) ? expr : "?");
     TRACER_PRINTF("At     : %s:%d\r\n", (file != NULL) ? file : "?", line);
     tracer_dump_callstack();
@@ -804,6 +1011,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
 void tracer_dump_all(void) {
     TRACER_PRINTF("\r\n===== Tracer: on-demand snapshot (fw %s) =====\r\n",
                   TRACER_FW_VERSION);
+    TRACER_PRINTF("Up     : %lu ms\r\n", (unsigned long)tracer_uptime_ms());
     tracer_dump_tasks();
     tracer_dump_callstack();
 #if TRACER_USE_FINSTRUMENT

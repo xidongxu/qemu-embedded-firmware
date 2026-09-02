@@ -1,16 +1,23 @@
 /*
- * tracer.h -- minimal Cortex-M fault dump library (M3..M85)
+ * tracer.h -- minimal Cortex-M fault dump library
+ *
+ * Supported cores: Cortex-M3 / M4 / M7 / M23 / M33 / M55 / M85.
+ * Cortex-M0/M0+ are NOT supported (Thumb-1 has no multi-register PUSH, which
+ * the vector entry needs to preserve r4..r11).
  *
  * Self-contained (no CMSIS / RTOS / printf dependency).  To build for a
  * specific core just compile with that core's -mcpu (e.g. -mcpu=cortex-m85
  * -mthumb).  When the faulting context used the FPU/MVE (M4F/M7/M33/M55/M85)
- * the hardware saves S0..S15 + FPSCR in the extended exception frame and
- * tracer decodes them (S16..S31 are not stacked by the hardware and are not
- * captured).  TrustZone secure state is reported from EXC_RETURN.
+ * tracer decodes S0..S15 + FPSCR from the extended frame (via FPCAR after
+ * forcing the lazy save).  TrustZone secure state is reported from EXC_RETURN.
  *
  * Fault dumps are re-entrancy protected and IRQ-masked: the assembly entry
  * runs `cpsid i`, and a fault that fires while a dump is already in progress
  * (e.g. an NMI, which cannot be masked) is only logged, never recursed.
+ *
+ * The fault/assert dump output can be made lock-free and crash-safe by
+ * defining TRACER_PUTCHAR (see below); otherwise it falls back to
+ * TRACER_PRINTF (may deadlock if the fault interrupted printf or its lock).
  *
  * Wiring:
  *  1. Add the two sources to your build and link this library.
@@ -23,16 +30,22 @@
  *     UsageFault_Handler, NMI_Handler, SecureFault_Handler) that override
  *     the weak defaults in the board startup file.
  *  2. (optional) Override the weak hooks:
- *       tracer_on_fault()   - e.g. print the current FreeRTOS task name
- *       tracer_stack_limit()- e.g. return the current task's stack top
- *  3. (optional) Redefine TRACER_PRINTF before including this header if the
- *     project does not provide a standard printf().
+ *       tracer_on_fault()    - e.g. print the current FreeRTOS task name
+ *       tracer_stack_limit() - e.g. return the current task's stack top
+ *       tracer_uptime_ms()   - e.g. FreeRTOS xTaskGetTickCount()*tick_ms
+ *       tracer_watchdog_kick()- feed a hardware IWDG during a long dump/
+ *                               pre-reset delay
+ *  3. (optional) Redefine TRACER_PRINTF / TRACER_PUTCHAR before including
+ *     this header if the project does not provide a standard printf().
  *
  * Output example (serial):
  *   ===== Tracer: Cortex-M33 Fault Dump =====
+ *   FW     : v1.2.3
+ *   Up     : 123456 ms
  *   Exception : HardFault (IPSR=3)
  *   EXC_RETURN: 0xFFFFFFFD  [Thread mode, PSP, NonSecure]
  *   R0..R11 / R12 SP LR PC / xPSR
+ *   FPU (extended frame): S0..S31 / FPSCR
  *   CFSR/HFSR/DFSR/MMFAR/BFAR (+UFSR, valid flags)
  *   Call stack (BL/BLX scan): addr addr ...
  */
@@ -46,12 +59,28 @@
 extern "C" {
 #endif
 
-/* Output function.  Defaults to the standard printf(); redefine before
- * including this header to route output elsewhere (must support printf
- * format strings). */
+/* Output backends.
+ *
+ * 1. Default / non-fault output uses TRACER_PRINTF (standard printf(), or
+ *    your own redefinition before including this header).
+ *
+ * 2. TRACER_PUTCHAR -- optional CRASH-SAFE character output for the fault /
+ *    assert dump.  A fault can strike while the faulting context holds a
+ *    printf lock (or dies inside printf), so the dump must not depend on
+ *    printf.  If you define TRACER_PUTCHAR(c) -- e.g. a bare UART data
+ *    register write or a Segger RTT call -- every tracer print is rendered
+ *    by tracer's own small lock-free mini-printf (defined in tracer.c),
+ *    stdio/printf are never referenced, and a TRACER_PUTCHAR build has no
+ *    printf() dependency at all.  If you do NOT define it, output falls back
+ *    to TRACER_PRINTF (simpler, but can deadlock if the fault interrupted
+ *    printf or its lock). */
+#ifndef TRACER_PUTCHAR
 #ifndef TRACER_PRINTF
 #include <stdio.h>
 #define TRACER_PRINTF printf
+#endif
+#else
+#define TRACER_PRINTF tracer_xprintf /* lock-free mini-printf in tracer.c */
 #endif
 
 /* Maximum number of call-stack entries dumped. */
@@ -191,8 +220,11 @@ typedef struct {
      * FPU is touched, so tracer forces the lazy save and reads the context
      * from FPCAR: 'fpu' points at S0 (fpu[0..15] = S0..S15, fpu[16] =
      * FPSCR) and fpu_words is 17.  NULL/0 when there is no extended frame or
-     * tracer.c is compiled without FPU support.  S16..S31 are not saved by
-     * the hardware and are not captured. */
+     * tracer.c is compiled without FPU support.
+     *
+     * S16..S31 are caller-saved and are NOT preserved across exception
+     * entry on ARMv8-M with lazy stacking (verified on QEMU M33: they read
+     * as 0 inside the fault handler), so tracer does not capture them. */
     const uint32_t *fpu;
     unsigned fpu_words;
 } tracer_fault_t;
@@ -215,6 +247,15 @@ uint32_t tracer_stack_limit(void);
  * high-water).  Weak, default empty: the core stays RTOS-agnostic, RTOS
  * adapters override it (FreeRTOS: vTaskList). */
 void tracer_dump_tasks(void);
+/* System up-time in milliseconds, printed in every dump.  Weak, default 0:
+ * RTOS adapters override it (FreeRTOS: xTaskGetTickCount()*portTICK_PERIOD_MS). */
+uint32_t tracer_uptime_ms(void);
+/* Feed the hardware watchdog during a long dump / pre-reset delay, so it
+ * does not cut the dump short.  Weak, default no-op: apps with an IWDG
+ * override it.  Called periodically while tracer_delay_ms() runs (i.e. during
+ * TRACER_AUTO_RESET_MS).  A plain trap (TRACER_AUTO_RESET_MS=0) does NOT
+ * feed, so the watchdog remains the final recovery backstop. */
+void tracer_watchdog_kick(void);
 /* Print a full on-demand diagnostic snapshot (version, tasks, call stack and,
  * if enabled, the function trace).  Call from a debug command / shell. */
 void tracer_dump_all(void);

@@ -1,0 +1,107 @@
+/* Host unit test for tracer's lock-free mini-printf (TRACER_PUTCHAR mode).
+ *
+ * Compiles tracer.c on the HOST (gcc/clang, no ARM toolchain) and drives its
+ * internal tracer_xprintf against a collecting sink, verifying the exact
+ * format subset the fault dump emits (%s %c %d %u %x %X %lu %ld with
+ * '-'/'0' flags and decimal width).
+ *
+ * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_miniprint.c -o t && ./t
+ * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
+ *
+ * Note: on x86-64 `long` is 64-bit, so values passed as (unsigned long) are
+ * 64-bit; the assertions below only use small values whose low 32 bits are
+ * what the dump prints, so results are identical to the 32-bit ARM target.
+ */
+#include <stdio.h>
+#include <string.h>
+
+static char s_buf[512];
+static size_t s_len = 0;
+static void tr_putc(char c) {
+    if (s_len + 1u < sizeof(s_buf)) {
+        s_buf[s_len++] = c;
+    }
+}
+
+#define TRACER_PUTCHAR tr_putc
+#define TRACER_STACK_DUMP_BYTES 0u
+#include "../tracer.c"
+
+static int s_failures = 0;
+
+static void reset(void) {
+    s_len = 0u;
+    s_buf[0] = '\0';
+}
+
+static void check(const char *expected, const char *what) {
+    s_buf[s_len] = '\0';
+    if (strcmp(s_buf, expected) != 0) {
+        fprintf(stderr, "FAIL %s: got '%s' want '%s'\n", what, s_buf, expected);
+        s_failures++;
+    }
+}
+
+int main(void) {
+    /* Register / frame lines as emitted by the fault dump. */
+    reset();
+    tracer_xprintf(" R12=%08lX  SP =%08lX  LR =%08lX  PC =%08lX\r\n",
+                   (unsigned long)0x35u, (unsigned long)0x380FFF70u,
+                   (unsigned long)0x100008D3u, (unsigned long)0x10002152u);
+    check(" R12=00000035  SP =380FFF70  LR =100008D3  PC =10002152\r\n", "regs");
+
+    reset();
+    tracer_xprintf(" CFSR=%08lX  MMFSR=%02lX  BFSR=%02lX  UFSR=%04lX\r\n",
+                   (unsigned long)0x01000000u, (unsigned long)0u,
+                   (unsigned long)0u, (unsigned long)0x100u);
+    check(" CFSR=01000000  MMFSR=00  BFSR=00  UFSR=0100\r\n", "cfsr");
+
+    /* FPU S-register lines (%-2u left-aligned width 2). */
+    reset();
+    tracer_xprintf("  S%-2u=%08lX S%-2u=%08lX\r\n",
+                   0u, (unsigned long)0x3F800000u,
+                   1u, (unsigned long)0x40000000u);
+    check("  S0 =3F800000 S1 =40000000\r\n", "fpu s0s1");
+
+    reset();
+    tracer_xprintf("  S%-2u=%08lX S%-2u=%08lX\r\n",
+                   10u, (unsigned long)0u, 11u, (unsigned long)0u);
+    check("  S10=00000000 S11=00000000\r\n", "fpu s10s11");
+
+    /* Raw-stack hex bytes. */
+    reset();
+    tracer_xprintf(" %02X", (unsigned)0xAB);
+    check(" AB", "hex byte");
+
+    /* Headers / metadata. */
+    reset();
+    tracer_xprintf("FW     : %s\r\n", "v1.2.3");
+    check("FW     : v1.2.3\r\n", "fw");
+
+    reset();
+    tracer_xprintf("Up     : %lu ms\r\n", (unsigned long)0u);
+    check("Up     : 0 ms\r\n", "uptime");
+
+    reset();
+    tracer_xprintf("At     : %s:%d\r\n", "app/main.c", 42);
+    check("At     : app/main.c:42\r\n", "assert line");
+
+    /* Function trace line. */
+    reset();
+    tracer_xprintf("  %s %08lX  +%lu\r\n", "->",
+                   (unsigned long)0x1000u, (unsigned long)5u);
+    check("  -> 00001000  +5\r\n", "trace");
+
+    /* Address / EXC_RETURN with 0x prefix. */
+    reset();
+    tracer_xprintf("EXC_RETURN: 0x%08lX  [%s mode, %s, %s]\r\n",
+                   (unsigned long)0xFFFFFFE9u, "Thread", "MSP", "Secure");
+    check("EXC_RETURN: 0xFFFFFFE9  [Thread mode, MSP, Secure]\r\n", "exc_return");
+
+    if (s_failures != 0) {
+        fprintf(stderr, "tracer mini-printf test: %d FAILURE(S)\n", s_failures);
+        return 1;
+    }
+    printf("tracer mini-printf test: all passed\n");
+    return 0;
+}
