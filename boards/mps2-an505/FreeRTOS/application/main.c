@@ -7,6 +7,7 @@
 #include "touch.h"
 #include "spi_flash.h"
 #include "fatfs_test.h"
+#include "crash_nv.h"
 #include "mic_test.h"
 #include "pj_test.h"
 #include "pj_net_test.h"
@@ -124,6 +125,8 @@ static void main_task_entry(void *parameters) {
     /* Record key runtime events in the crash-log ring ("black box"): they are
      * replayed at the end of any fault/assert dump before persistence. */
     tracer_ring_printf("app: main_task_entry enter\r\n");
+    /* Report / archive any crash record left by the previous reset. */
+    crash_nv_boot_report();
     lcd_init();
     touch_init();
     audio_init();
