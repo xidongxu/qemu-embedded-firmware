@@ -24,12 +24,65 @@
  * fault interrupted printf or its lock.  Without TRACER_PUTCHAR, tracer.h
  * keeps TRACER_PRINTF = printf (default) and none of this is compiled.
  * ------------------------------------------------------------------------- */
-#if defined(TRACER_PUTCHAR)
+#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASHLOG
 #include <stdarg.h>
-/* Lock-free mini-printf: supports the format subset tracer emits
- * (%s %c %d %u %x %X %lu %ld %u with '-'/'0' flags and decimal width). */
-static void tracer_xputc(char c) {
+#if !defined(TRACER_PUTCHAR)
+#include <stdio.h> /* putchar() fallback sink when crashlog runs without PUTCHAR */
+#endif
+
+/* Output sinks + optional crash capture (the "black box" mirror).
+ * Every mini-printf char goes through the CURRENT sink (s_emit): serial
+ * output by default (TRACER_PUTCHAR, or putchar() fallback) and -- while a
+ * crash record is being captured -- the same char is ALSO mirrored into the
+ * in-RAM capture buffer so the crash text can be persisted later by
+ * tracer_crash_save().  tracer_ring_printf() swaps s_emit to the ring sink. */
+typedef void (*tracer_outfn)(void *ctx, char c);
+
+#if TRACER_USE_CRASHLOG
+/* CRC-32 (IEEE 802.3 poly 0xEDB88320, reflected, bitwise -- no table). */
+static uint32_t tracer_crc32(const uint8_t *p, uint32_t n) {
+    uint32_t crc = 0xFFFFFFFFu;
+    while (n-- != 0u) {
+        crc ^= (uint32_t)*p++;
+        for (unsigned i = 0u; i < 8u; i++) {
+            crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
+        }
+    }
+    return ~crc;
+}
+
+/* In-RAM crash capture buffer + the pre-crash event ring log. */
+static uint8_t s_cap[TRACER_CRASHLOG_CAP_SIZE];
+static volatile uint32_t s_cap_len = 0u;    /* capture bytes written */
+static volatile int s_cap_active = 0;       /* dump currently mirroring */
+static uint8_t s_ring[TRACER_CRASHLOG_RING_SIZE];
+static volatile uint32_t s_ring_start = 0u; /* index of oldest byte */
+static volatile uint32_t s_ring_count = 0u; /* valid bytes in ring */
+#endif /* TRACER_USE_CRASHLOG */
+
+/* Serial sink: crash-safe TRACER_PUTCHAR when provided, else putchar(). */
+static void tracer_serial_char(void *ctx, char c) {
+    (void)ctx;
+#if TRACER_USE_CRASHLOG
+    if (s_cap_active != 0 && s_cap_len < (uint32_t)sizeof(s_cap)) {
+        s_cap[s_cap_len++] = (uint8_t)c;    /* mirror into the crash record */
+    }
+#endif
+#if defined(TRACER_PUTCHAR)
     TRACER_PUTCHAR(c);
+#else
+    putchar(c);
+#endif
+}
+
+/* Current render sink.  Defaults to serial (NULL = serial fallback). */
+static tracer_outfn s_emit = NULL;
+static void tracer_xputc(char c) {
+    if (s_emit != NULL) {
+        s_emit(NULL, c);
+    } else {
+        tracer_serial_char(NULL, c);
+    }
 }
 
 static void tracer_putn(unsigned long v, int base, int upper, int width,
@@ -68,9 +121,7 @@ static void tracer_putn(unsigned long v, int base, int upper, int width,
     }
 }
 
-static void tracer_xprintf(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
+static void tracer_xvprintf(const char *fmt, va_list ap) {
     for (const char *p = fmt; *p != '\0'; p++) {
         if (*p != '%') {
             tracer_xputc(*p);
@@ -152,9 +203,144 @@ static void tracer_xprintf(const char *fmt, ...) {
             }
         }
     }
+}
+
+static void tracer_xprintf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    tracer_xvprintf(fmt, ap);
     va_end(ap);
 }
+
 #endif /* TRACER_PUTCHAR */
+
+/* ===== Crash log ("black box"): pre-crash ring + dump capture (opt-in) =
+ * ===== Enable with -DTRACER_USE_CRASHLOG=1.  Default build: nothing here. =
+ * ===================================================================== */
+#if TRACER_USE_CRASHLOG
+
+/* PRIMASK critical section around ring writes / capture assembly.  Host
+ * (unit test) builds and non-GCC/Clang compilers compile these to no-ops. */
+static uint32_t tracer_pm_save(void) {
+#if (defined(__GNUC__) || defined(__clang__)) && \
+    (defined(__arm__) || defined(__thumb__))
+    uint32_t pm;
+    __asm volatile ("mrs %0, primask" : "=r" (pm));
+    __asm volatile ("cpsid i");
+    return pm;
+#else
+    return 0u;
+#endif
+}
+static void tracer_pm_restore(uint32_t pm) {
+#if (defined(__GNUC__) || defined(__clang__)) && \
+    (defined(__arm__) || defined(__thumb__))
+    __asm volatile ("msr primask, %0" : : "r" (pm));
+#else
+    (void)pm;
+#endif
+}
+
+/* Ring sink (used by tracer_ring_printf under a PRIMASK section). */
+static void tracer_ring_char(void *ctx, char c) {
+    uint32_t size = (uint32_t)sizeof(s_ring);
+    (void)ctx;
+    if (s_ring_count < size) {
+        s_ring[(s_ring_start + s_ring_count) % size] = (uint8_t)c;
+        s_ring_count++;
+    } else {
+        s_ring[s_ring_start] = (uint8_t)c;  /* overwrite the oldest byte */
+        s_ring_start = (s_ring_start + 1u) % size;
+    }
+}
+
+/* App event log: keep the most recent formatted text in RAM. */
+void tracer_ring_printf(const char *fmt, ...) {
+    uint32_t pm = tracer_pm_save();
+    va_list ap;
+    va_start(ap, fmt);
+    s_emit = tracer_ring_char;
+    tracer_xvprintf(fmt, ap);
+    s_emit = NULL;
+    va_end(ap);
+    tracer_pm_restore(pm);
+}
+
+/* Direct appends into the capture buffer (capture mirror already stopped). */
+static void tracer_cap_raw_char(void *ctx, char c) {
+    (void)ctx;
+    if (s_cap_len < (uint32_t)sizeof(s_cap)) {
+        s_cap[s_cap_len++] = (uint8_t)c;
+    }
+}
+static void tracer_cap_raw_puts(const char *s) {
+    while (*s != '\0') {
+        tracer_cap_raw_char(NULL, *s++);
+    }
+}
+
+/* Weak non-volatile storage hook.  Default: no backend configured.  An app
+ * overrides this with a reserved-flash / SPI-NOR writer (see tracer.h).
+ * (Local weak attribute: this block precedes the TRACER_WEAK macro below.) */
+#if defined(__ICCARM__)
+#pragma weak tracer_crash_save
+#define TRACER_CRASH_WEAK
+#else
+#define TRACER_CRASH_WEAK __attribute__((weak))
+#endif
+void TRACER_CRASH_WEAK tracer_crash_save(const void *data, uint32_t len) {
+    (void)data;
+    (void)len;
+}
+
+/* Start capturing a crash record: the next dump output is mirrored to s_cap
+ * through tracer_serial_char.  Called right before a fault/assert dump. */
+static void tracer_cap_begin(void) {
+    s_cap_len = 0u;
+    s_cap_active = 1;
+}
+
+/* End the capture: stop mirroring, append the pre-crash ring tail + CRC
+ * footer, then hand the assembled record to tracer_crash_save().  Called
+ * right before the dump traps / auto-resets. */
+static void tracer_crash_finalize(void) {
+    uint32_t crc;
+    uint32_t pm;
+    if (s_cap_active == 0) {
+        return;
+    }
+    s_cap_active = 0;
+    pm = tracer_pm_save();
+
+    /* Pre-crash event log (the most recent ring bytes). */
+    tracer_cap_raw_puts("\r\n==== Recent ring log (pre-crash) ====\r\n");
+    if (s_ring_count != 0u) {
+        uint32_t n = s_ring_count;
+        uint32_t i = s_ring_start;
+        while (n-- != 0u) {
+            tracer_cap_raw_char(NULL, (char)s_ring[i]);
+            i = (i + 1u) % (uint32_t)sizeof(s_ring);
+        }
+    }
+    tracer_cap_raw_puts("\r\n");
+
+    /* CRC footer (covers everything above it in s_cap). */
+    crc = tracer_crc32(s_cap, (uint32_t)s_cap_len);
+    s_emit = tracer_cap_raw_char;  /* mini-printf routed into the capture */
+    tracer_xprintf("==== TRACER CRASHLOG END crc=%08lX ====\r\n",
+                   (unsigned long)crc);
+    s_emit = NULL;
+    tracer_pm_restore(pm);
+
+    /* Hand the record to the platform's non-volatile backend. */
+    tracer_crash_save(s_cap, (uint32_t)s_cap_len);
+
+    TRACER_PRINTF("[crashlog] record %lu bytes, crc=%08lX "
+                  "(ring %lu B used)\r\n",
+                  (unsigned long)s_cap_len, (unsigned long)crc,
+                  (unsigned long)s_ring_count);
+}
+#endif /* TRACER_USE_CRASHLOG */
 
 /* Weak-symbol attribute, portable across GCC/Clang/ARMCC/IAR.
  * IAR's __weak keyword needs the extended-language option (--eec) that many
@@ -792,6 +978,11 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     }
     s_tracer_dumping = 1u;
 
+#if TRACER_USE_CRASHLOG
+    /* Start the "black box" capture: dump output is mirrored to s_cap. */
+    tracer_cap_begin();
+#endif
+
     /* Decode context. */
     f.r0 = exc->r0;
     f.r1 = exc->r1;
@@ -964,6 +1155,11 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
 #endif /* TRACER_STACK_DUMP_BYTES */
     TRACER_PRINTF("===== End of dump =====\r\n");
 
+#if TRACER_USE_CRASHLOG
+    /* Persist the crash record (weak hook) before trapping / resetting. */
+    tracer_crash_finalize();
+#endif
+
     /* Auto-reset (optional) or trap forever.  The delay lets the dump flush
      * on the output line before the reset is issued. */
 #if TRACER_AUTO_RESET_MS
@@ -988,6 +1184,9 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
         for (;;) {}
     }
     s_tracer_dumping = 1u;
+#if TRACER_USE_CRASHLOG
+    tracer_cap_begin();
+#endif
     TRACER_PRINTF("\r\n===== Tracer: Assert Failed =====\r\n");
     TRACER_PRINTF("FW     : %s\r\n", TRACER_FW_VERSION);
     TRACER_PRINTF("Up     : %lu ms\r\n", (unsigned long)tracer_uptime_ms());
@@ -996,6 +1195,9 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
     tracer_dump_callstack();
 #if TRACER_USE_FINSTRUMENT
     tracer_dump_trace();
+#endif
+#if TRACER_USE_CRASHLOG
+    tracer_crash_finalize();
 #endif
 #if TRACER_AUTO_RESET_MS
     TRACER_PRINTF("===== End of assert: reset in %lu ms =====\r\n",

@@ -82,15 +82,59 @@ extern "C" {
 #define TRACER_PRINTF printf
 #endif
 
-/* 2. CRASH-SAFE mode: when the app defines TRACER_PUTCHAR (a lock-free char
- *    sink, e.g. a bare UART data register or Segger RTT), the fault/assert
- *    dump must not touch printf or its lock -- so TRACER_PRINTF is redirected
- *    to tracer's own mini-printf (defined in tracer.c), which renders one char
- *    at a time through TRACER_PUTCHAR.  This intentionally overrides step 1
- *    (and any app-defined TRACER_PRINTF): crash-safety wins on the fault path. */
-#ifdef TRACER_PUTCHAR
+/* 2. CRASH-SAFE / CRASH-LOG mode: when the app defines TRACER_PUTCHAR (a
+ *    lock-free char sink, e.g. a bare UART data register or Segger RTT), the
+ *    fault/assert dump must not touch printf or its lock -- so TRACER_PRINTF
+ *    is redirected to tracer's own mini-printf (defined in tracer.c), which
+ *    renders one char at a time through TRACER_PUTCHAR.  This intentionally
+ *    overrides step 1 (and any app-defined TRACER_PRINTF): crash-safety wins
+ *    on the fault path.
+ *
+ *    TRACER_USE_CRASHLOG=1 ("black box" crash record) also forces the same
+ *    per-char mini-printf path -- even without TRACER_PUTCHAR (a stdio
+ *    putchar() fallback is used then) -- because the crash record mirrors the
+ *    dump one char at a time into a RAM capture buffer.  See
+ *    tracer_ring_printf / tracer_crash_save below.  A TRACER_USE_CRASHLOG
+ *    build therefore redefines TRACER_PRINTF regardless of TRACER_PUTCHAR. */
+#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASHLOG
 #undef TRACER_PRINTF
 #define TRACER_PRINTF tracer_xprintf
+#endif
+
+/* Crash-log ("black box") support.  Off by default: no ring buffer, no
+ * capture, no code size -- a fault dump behaves exactly as before.
+ *
+ * When enabled (define TRACER_USE_CRASHLOG to 1):
+ *  - App code may log key runtime events with tracer_ring_printf(); tracer
+ *    keeps the most recent TRACER_CRASHLOG_RING_SIZE bytes in RAM (lock-free,
+ *    IRQ-safe), i.e. "what happened just before the crash".
+ *  - When a fault / assert / stack-overflow dump runs, every dump character
+ *    is ALSO mirrored (by the mini-printf path above) into an in-RAM capture
+ *    buffer (TRACER_CRASHLOG_CAP_SIZE).  Before trapping / auto-resetting,
+ *    tracer appends the pre-crash ring tail and a CRC footer to the capture
+ *    buffer and hands it to the weak hook tracer_crash_save(), which an app
+ *    overrides with its non-volatile storage backend (e.g. a reserved SPI NOR
+ *    sector).  After a reset, boot code reads the record back and turns it
+ *    into a file / report.  The default weak hook is a no-op, so enabling
+ *    TRACER_USE_CRASHLOG alone never touches storage.
+ *
+ *  - A TRACER_USE_CRASHLOG build renders all tracer output through the
+ *    lock-free mini-printf (see above), so it also needs the format subset
+ *    mini-printf supports (%s %c %d %u %x %X %lu %ld + '-'/'0'/width).
+ */
+#ifndef TRACER_USE_CRASHLOG
+#define TRACER_USE_CRASHLOG 0
+#endif
+
+/* RAM ring buffer size for tracer_ring_printf() (bytes, circular). */
+#ifndef TRACER_CRASHLOG_RING_SIZE
+#define TRACER_CRASHLOG_RING_SIZE 2048u
+#endif
+
+/* In-RAM capture buffer size for the crash record (dump text + ring tail +
+ * CRC footer).  Must comfortably fit one dump (raw stack + registers). */
+#ifndef TRACER_CRASHLOG_CAP_SIZE
+#define TRACER_CRASHLOG_CAP_SIZE 8192u
 #endif
 
 /* Maximum number of call-stack entries dumped. */
@@ -273,6 +317,30 @@ void tracer_dump_all(void);
  * file:line and the current call stack, then auto-resets (if
  * TRACER_AUTO_RESET_MS>0) or traps forever.  Never returns. */
 void tracer_assert_fail(const char *expr, const char *file, int line);
+
+#if TRACER_USE_CRASHLOG
+/* Append a formatted event line to the pre-crash RAM ring log (the "black
+ * box": the most recent TRACER_CRASHLOG_RING_SIZE bytes of what happened
+ * before a crash).  Lock-free and IRQ-safe; call from app code on key state
+ * changes (call start/end, registration state, watchdog resets, ...).  The
+ * last entries are appended to every crash record. */
+void tracer_ring_printf(const char *fmt, ...);
+
+/* Weak non-volatile storage hook.  Called at the very end of a fault /
+ * assert / stack-overflow dump, before trapping or auto-reset, with the
+ * completed crash record: the full dump text, then the pre-crash ring tail,
+ * then a CRC footer:
+ *     ==== TRACER CRASHLOG v1 ====
+ *     <dump text>
+ *     ==== Recent ring log (pre-crash) ====
+ *     <...>
+ *     ==== TRACER CRASHLOG END crc=xxxxxxxx ====
+ * 'data' is valid only for the duration of the call.  The default weak
+ * implementation is a no-op: override it with the platform's non-volatile
+ * backend (reserved flash sector / SPI NOR ...).  Boot code then reads the
+ * record back and archives it (file / report). */
+void tracer_crash_save(const void *data, uint32_t len);
+#endif /* TRACER_USE_CRASHLOG */
 
 /* Dump the current call stack by scanning from the live SP for Thumb-2
  * BL/BLX return addresses (replaces fault-dump's fault_dump_callstack).

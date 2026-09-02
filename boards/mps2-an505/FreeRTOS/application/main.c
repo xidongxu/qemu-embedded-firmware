@@ -121,6 +121,9 @@ extern void lwip_os_task_init(void);
 extern void lwip_task_init(void);
 #endif
 static void main_task_entry(void *parameters) {
+    /* Record key runtime events in the crash-log ring ("black box"): they are
+     * replayed at the end of any fault/assert dump before persistence. */
+    tracer_ring_printf("app: main_task_entry enter\r\n");
     lcd_init();
     touch_init();
     audio_init();
