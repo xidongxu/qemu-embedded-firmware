@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+# tracer -- minimal Cortex-M fault dump library (find_package entry).
+# Provides the imported target tracer::tracer.
+#
+# Usage from a consuming project:
+#   find_package(tracer CONFIG REQUIRED)
+#   target_link_libraries(<app> PRIVATE tracer::tracer)
+#
+# The library exports strong symbols for the standard CMSIS fault vector
+# names, so link it with --whole-archive (see README).
+
+include("${CMAKE_CURRENT_LIST_DIR}/tracerTargets.cmake")
+
+check_required_components(tracer)

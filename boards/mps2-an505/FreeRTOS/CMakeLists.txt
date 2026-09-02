@@ -169,10 +169,14 @@ target_link_libraries(${TARGET} PRIVATE
     -Wl,--whole-archive tracer -Wl,--no-whole-archive
 )
 # Opt in to tracer's .ARM.exidx exact backtrace (see tracer.h TRACER_USE_EXIDX
-# and libutils/tracer/CMakeLists.txt).  -funwind-tables for the tracer library
-# itself is provided there; this app target also compiles its own sources with
-# -funwind-tables (above) so the unwind chain spans the app frames.
+# and libutils/tracer/CMakeLists.txt).  tracer's own -funwind-tables is gated
+# behind the TRACER_EXIDX_TABLES option (default OFF), and this board is
+# added AFTER libutils, so we cannot set that option in time -- instead turn
+# it on for the tracer library right here, macro + flag together (no
+# configure-order dependency).  The app target also compiles its own sources
+# with -funwind-tables (above) so the unwind chain spans the app frames.
 target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)
+target_compile_options(tracer PRIVATE "$<$<COMPILE_LANGUAGE:C>:-funwind-tables>")
 
 # Dynamic function trace (optional, see tracer.h TRACER_USE_FINSTRUMENT):
 # the hooks are compiled into the tracer library (macro on the tracer target,

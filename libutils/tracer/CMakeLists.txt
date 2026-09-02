@@ -19,6 +19,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(tracer C ASM)
 
+# Standard install dirs (used by the BUILD/INSTALL_INTERFACE include paths and
+# the install() rules at the bottom).
+include(GNUInstallDirs)
+
 # --- Toolchain guard: pick the matching vector-entry asm and per-toolchain
 # options.  GCC and armclang (AC6) both accept GNU asm syntax and share
 # tracer_gnugcc.s; IAR and ARMCC need their own files (they cannot parse
@@ -47,21 +51,38 @@ add_library(tracer STATIC
     ${TRACER_ASM}
 )
 
-target_include_directories(tracer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# Build-tree consumers see the source dir; the installed (find_package) target
+# sees the headers relative to its install prefix.  (Plain source-dir paths are
+# rejected by install(EXPORT), hence the BUILD_INTERFACE/INSTALL_INTERFACE.)
+target_include_directories(tracer PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/tracer>"
+)
 
-# tracer must itself be built with -funwind-tables so it emits .ARM.exidx
-# unwind tables: _Unwind_Backtrace needs an entry for the current (library
-# internal) frame, otherwise a backtrace started from tracer_get_callstack /
-# tracer_dump_callstack stops at 0 frames.  This is a library-inherent
-# property, so it lives here rather than in each consumer's script.
+# tracer.c requires C99 (for-loop declarations, stdint use).  Enforce it for
+# the C translation unit only (the vector-entry asm is unaffected).  ARMCC5
+# needs --c99 (its CMake backend has no c_std_99 feature, so pass the flag).
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|ARMClang")
+    target_compile_options(tracer PRIVATE "$<$<COMPILE_LANGUAGE:C>:-std=c99>")
+elseif(CMAKE_C_COMPILER_ID STREQUAL "ARMCC")
+    target_compile_options(tracer PRIVATE "$<$<COMPILE_LANGUAGE:C>:--c99>")
+endif()
+
+# Whether tracer.c itself is built with -funwind-tables (.ARM.exidx).  Only
+# needed for the exact TRACER_USE_EXIDX backtrace: _Unwind_Backtrace must find
+# an unwind entry for the current (library-internal) frame, otherwise it stops
+# at 0 frames.  The BL/BLX scan and the offline parser do NOT need it, so it
+# is OFF by default to avoid the .ARM.exidx flash/size overhead.
 #
-# Whether the exact .ARM.exidx path is actually used is decided by
-# TRACER_USE_EXIDX (tracer.h, default 0; GCC/armclang only, others fall back
-# to the BL/BLX scan).  Opt in from the consuming project with:
+# The exact .ARM.exidx path is decided by TRACER_USE_EXIDX (tracer.h, default
+# 0; GCC/armclang only, others fall back to the BL/BLX scan).  To enable it
+# from a consuming project, do BOTH:
+#   -DTRACER_EXIDX_TABLES=ON          (this option; emits .ARM.exidx for tracer)
 #   target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)
 # The consumer should also add -funwind-tables to its OWN sources so the
 # unwind chain reaches frames beyond the first app frame.
-if(TRACER_EXIDX_FLAG)
+option(TRACER_EXIDX_TABLES "Build tracer.c with -funwind-tables (needed for TRACER_USE_EXIDX)" OFF)
+if(TRACER_EXIDX_TABLES AND TRACER_EXIDX_FLAG)
     target_compile_options(tracer PRIVATE ${TRACER_EXIDX_FLAG})
 endif()
 
@@ -89,3 +110,31 @@ if(TRACER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# --- Install / export: lets an external project use find_package(tracer) ---
+# (the in-tree usage above -- add_subdirectory + target_link_libraries -- is
+# unchanged and remains the primary integration path).
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS tracer EXPORT tracerTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES tracer.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/tracer)
+
+install(EXPORT tracerTargets
+        FILE tracerTargets.cmake
+        NAMESPACE tracer::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tracer)
+
+write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/tracerConfigVersion.cmake"
+        VERSION 1.0.0
+        COMPATIBILITY SameMajorVersion)
+configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/tracerConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/tracerConfig.cmake"
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tracer)
+install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/tracerConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/tracerConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tracer)
