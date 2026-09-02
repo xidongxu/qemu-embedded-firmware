@@ -15,6 +15,7 @@
 #include <string.h>
 #include "printf.h"
 #include "pj_phone.h"
+#include "tracer.h"
 
 #include <FreeRTOS.h>
 #include <task.h>
@@ -475,6 +476,7 @@ static void on_reg_state(pjsua_acc_id acc_id) {
     if (info.status >= 200 && info.status < 300) {
         /* Registered OK (2xx).  The UI drives calls; no auto-dial by default. */
         g_reg_state = PJ_PHONE_REG_REGISTERED;
+        tracer_ring_printf("phone: registered (acc=%d)\r\n", (int)acc_id);
 #if PJ_PHONE_AUTO_DIAL
         if (!g_auto_dialed) {
             if (pj_phone_dial(PJ_PHONE_DEFAULT_NUMBER) == PJ_SUCCESS) {
@@ -488,6 +490,8 @@ static void on_reg_state(pjsua_acc_id acc_id) {
         printf("pj_phone: reg attempt %u FAILED (%d) - pjsua will retry\r\n",
                ++g_reg_attempts, (int)info.status);
         g_reg_state = PJ_PHONE_REG_FAILED;
+        tracer_ring_printf("phone: reg FAIL %d (attempt %u)\r\n",
+                           (int)info.status, (unsigned)g_reg_attempts);
     } else {
         /* info.status == 0: REGISTER still in flight. */
         g_reg_state = PJ_PHONE_REG_REGISTERING;
@@ -526,6 +530,7 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 
     printf("pj_phone: incoming call %d from '%s' - waiting for answer\r\n",
            call_id, tmp);
+    tracer_ring_printf("phone: incoming from '%s'\r\n", tmp);
 
     taskENTER_CRITICAL();
     g_incoming_call_id = call_id;
@@ -563,6 +568,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
     case PJSIP_INV_STATE_EARLY:
     case PJSIP_INV_STATE_CONNECTING:
         g_call_state = PJ_PHONE_CALL_DIALING;
+        tracer_ring_printf("phone: call setup (st=%d)\r\n", (int)ci.state);
         phone_notify();
         break;
 
@@ -571,6 +577,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
         if (call_id == g_call_id) {
             pj_gettimeofday(&g_call_start);
             g_call_state = PJ_PHONE_CALL_ACTIVE;
+            tracer_ring_printf("phone: call ACTIVE\r\n");
         }
         phone_notify();
         break;
@@ -602,6 +609,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
         snprintf(g_last_call_status_text, sizeof(g_last_call_status_text),
                  "%.*s", (int)ci.last_status_text.slen,
                  ci.last_status_text.ptr);
+        tracer_ring_printf("phone: call end st=%d\r\n", g_last_call_status);
 
         if (call_id == g_call_id) {
             g_call_id = PJSUA_INVALID_ID;
@@ -635,6 +643,7 @@ static void on_call_media_state(pjsua_call_id call_id) {
         /* Wire the call's conference slot to the sound device (slot 0) once
          * media is up, so the real mpsx audio/mic is used. */
         if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
+            tracer_ring_printf("phone: media active\r\n");
             /* pjsua does NOT create the echo canceller automatically; it must
              * be enabled explicitly once the sound device exists. */
             {
@@ -684,6 +693,7 @@ int pj_phone_dial(const char *number) {
     if (number == NULL || !*number || g_acc == PJSUA_INVALID_ID) {
         return -1;
     }
+    tracer_ring_printf("phone: dial '%s'\r\n", number);
 
     /* Show the dial state immediately; the actual make_call runs on the
      * pjsua worker thread (see phone_job_exec) so the UI never blocks. */
@@ -982,16 +992,19 @@ const char *pj_phone_get_dial_host(void) {
 
 /* Answer the pending incoming call. */
 int pj_phone_answer(void) {
+    tracer_ring_printf("phone: answer\r\n");
     return (int)phone_job_post(PHONE_JOB_ANSWER, NULL);
 }
 
 /* Reject the pending incoming call. */
 int pj_phone_reject(void) {
+    tracer_ring_printf("phone: reject\r\n");
     return (int)phone_job_post(PHONE_JOB_REJECT, NULL);
 }
 
 /* Hang up the active or ringing call. */
 int pj_phone_hangup(void) {
+    tracer_ring_printf("phone: hangup\r\n");
     return (int)phone_job_post(PHONE_JOB_HANGUP, NULL);
 }
 
