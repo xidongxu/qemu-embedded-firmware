@@ -94,3 +94,52 @@
 - 结论/记录：静态栈+canary 破坏是可靠测试法；heap 栈深溢出会砸 TCB 属 FreeRTOS method2 已知边界
   （真机可靠检测建议 `uxTaskGetStackHighWaterMark` 水位告警 或 xTaskCreateStatic 关键任务）。
 - ⚠ 验证全程 `git checkout -- main.c` 还原，无测试残留提交。
+
+---
+
+## 轮四：崩溃黑匣子（crash log）落地 阶段1-3（2026-09-02，7263002e + 77472b23 + cbb822ba）
+
+设计定稿：**两段式**——崩溃现场（系统不可信）只做防御性裸写 staging（不直接开文件系统：FS 状态/锁/栈在崩溃现场可能已坏）；
+重启后（可信）boot 读回并归档成 littlefs 文件。内容**纯文本**（dump+预崩溃 ring+CRC），人可读、`tracer_parser.py` 可符号化、
+无私有二进制 ABI。差异化核心：**崩溃前日志 + 现场 dump + 重启文件归档三合一**（单一"崩溃时开文件系统写"在崩溃现场不可靠，
+故拆为"现场裸写 + 可信环境归档"两段）。
+
+### 阶段1（7263002e）库侧 TRACER_USE_CRASHLOG=1
+- 配置宏：`TRACER_USE_CRASHLOG`(0)/`TRACER_CRASHLOG_RING_SIZE`(2048)/`TRACER_CRASHLOG_CAP_SIZE`(8192)；默认构建零代码/零 RAM 变化。
+- 输出层重构为 **sink 路由**（serial/ring/capture 三 sink，`s_emit` 指针切换）：mini-printf 抽 `tracer_xvprintf(fmt,va)` +
+  `xprintf` 薄封装（test_miniprint 回归保行为）；PUTCHAR||CRASHLOG 才编 mini-printf，无 PUTCHAR 时 `putchar()` 回退（需 stdio）。
+- `tracer_serial_char`：PUTCHAR/putchar + **capture 镜像**（s_cap_active 时同字符进 s_cap）。
+- `tracer_ring_printf`：PRIMASK 临界（`tracer_pm_save/restore`，host/非 GCC no-op）+ 环形覆盖（s_ring_start/count）。
+- `tracer_crash_save` weak no-op；fault handler/assert 接 `tracer_cap_begin()`（dump 前）与 `tracer_crash_finalize()`（trap 前：
+  停镜像→附 ring 尾→CRC footer→save→打印 `[crashlog] record N bytes crc=...`）。
+- **坑**：TRACER_WEAK 宏定义在 crashlog 块**之后** → crashlog 块用独立局部 weak 属性（IAR pragma / GCC attribute）；
+  `crash_save` 放 mps2 FreeRTOS application 目录（非 Core 共享，BareMetal crashlog=0 不编）。
+- host 单测 `tests/test_crashlog.c`（ring 覆盖/镜像/ring 尾+footer/ring 不泄漏串口）挂 CTest+CI；ARM 三配置 fsyntax 过。
+- mps2 FreeRTOS CMake：tracer 目标 `-DTRACER_USE_CRASHLOG=1` + `-DTRACER_PUTCHAR=put_char;-include;../Core/Inc/uart.h`（C-only genex），
+  app 目标 `-DTRACER_USE_CRASHLOG=1`（ring/save 声明可见）。QEMU assert 实测：capture 含 dump 文本+2 条 ring+CRC footer，crc 一致。
+
+### 阶段2（77472b23）mps2 staging 双槽裸写 + boot 读回
+- `crash_nv.c/h`（FreeRTOS application）：override `tracer_crash_save` → SPI NOR 顶部 0x0FFE0000 2×4K 槽（PJ_PHONE 构建
+  不跑 fatfs/spi_flash，NOR 空闲无卷冲突）。槽布局 `[16B hdr: 'TNC1'|len|crc32][payload]`。
+- 写序防断电：选非当前有效槽 → 擦 4K → 写 hdr → 写 payload；boot 仅 magic+CRC 双过才接受，半写槽忽略、另一槽旧记录仍可读。
+- 惰性 `spi_flash_init()`（PJ_PHONE main 跳过 FS 初始化）。`crash_nv_read_latest`/`crash_nv_boot_report`（阶段2 先打印）。
+- **坑**：本机 `QEMU-MACHINE` 标准 QEMU mps2-an505 **无 mtd flash**；必须用补丁版
+  `C:\Users\xidon\code\github\qemu-embedded-platform\qemu\qemu-build\qemu-system-arm.exe`（含 w25q02jvm）+ `-drive if=mtd,format=raw,file=<256M img>`。
+- 验证：bootA assert → 写 NOR → 杀 QEMU（掉电）→ bootB 正常启动读回逐字一致 record（crc 相同）后继续 pjsua 全栈。
+
+### 阶段3（cbb822ba）littlefs 归档 + consumed
+- `crash_nv_boot_report` 升级：打印 → `crash_nv_archive_to_fs`（littlefs `crash_last.txt` + 滚动 `crash_prev.txt`）→ 成功才
+  `crash_nv_clear`（擦当前有效槽）。下次 boot 静默（consumed）。
+- littlefs 卷**限制在保留区之下**：`lfs_spi_flash_config_init` 后覆盖 `cfg.block_count = CRASH_NV_BASE/4096`（默认 whole-256MiB 会踩 crash 槽）。
+  卷只在"有待归档记录"时 mount（干净 boot 零 FS 开销，PJ_PHONE 常态无文件系统负担）。
+- 验证：bootC 归档 356B + clear；bootD 静默 consumed；主机查 img：record/ring/crc/文件名都在 littlefs 低地址卷内、staging 双槽头失效。
+
+### 阶段4 破坏性验证（无代码变更）
+- 主机篡改 img：槽1 半写（magic/len 对 + 错误 CRC + 垃圾 payload）+ 槽0 纯垃圾 → boot 静默、系统正常到 pjsua，不卡死（CRC/magic 校验正确忽略）。
+- 完整链：崩溃→双槽裸写→掉电重启读回→littlefs 文件归档→consumed→抗损坏，全部 QEMU+主机双验证。
+
+### 待办/注意
+- stm32 后端（内部 Flash 末扇区 + `RCC->CSR` 复位源）未做（本机无真机/无法验证）。
+- mps2 用补丁版 QEMU 才能验 flash 持久；标准版 mps2-an505 无 mtd。
+- 崩溃前 ring 目前只有 main_task_entry 一条示例，产品化需在关键状态机（注册/通话/看门狗）处补 `tracer_ring_printf` 埋点。
+- README 已补"崩溃黑匣子"章节；host 测试/CI 已含 crashlog。

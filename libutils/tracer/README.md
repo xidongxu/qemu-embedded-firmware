@@ -229,6 +229,26 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 | `TRACER_FW_VERSION` | `"0.0.0"` | 固件版本字符串，`tracer_init`/dump 头部打印（现场对版用） |
 | `TRACER_AUTO_RESET_MS` | 0 | >0 时 dump 后延时该毫秒数自动系统复位（0=永久 trap） |
 | `TRACER_ASSERT(expr)` | 见宏 | 断言宏（打印 + 调用栈 + 自动复位/trap） |
+| `TRACER_USE_CRASHLOG` | 0 | 崩溃黑匣子（见下）：预崩溃环形日志 + dump 镜像捕获 + weak 持久化钩子 |
+| `TRACER_CRASHLOG_RING_SIZE` | 2048 | `tracer_ring_printf()` 预崩溃事件环形缓冲（字节） |
+| `TRACER_CRASHLOG_CAP_SIZE` | 8192 | 崩溃 record 捕获缓冲（dump 文本 + ring 尾 + CRC footer） |
+
+### 崩溃黑匣子（crash log，可选，TRACER_USE_CRASHLOG=1）
+
+把"宕机现场 + 宕机前发生了什么"自动留下来，重启后读回——工厂/现场无人值守诊断用。
+
+- **预崩溃日志**：应用在关键事件处调 `tracer_ring_printf("...")`（无锁、IRQ 安全），tracer 在 RAM 保留最近
+  `TRACER_CRASHLOG_RING_SIZE` 字节（"黑匣子"）。
+- **崩溃捕获**：fault/assert/栈溢出 dump 时，每个输出字符同时镜像进 RAM 捕获缓冲（因此 crashlog 会强制
+  dump 走逐字 mini-printf——无 `TRACER_PUTCHAR` 时回退 `putchar()`，有则 crash-safe）；收尾时把 ring 尾
+  与 CRC-32 footer 附加成一条完整 record 文本，交给 weak `tracer_crash_save(data,len)`（默认 no-op）。
+- **两段式持久化**（设计要点，也是与"崩溃时直接开文件系统写"的区别）：
+  ① 现场（系统不可信）只做**防御性裸写**到保留存储（固定扇区/槽 + CRC，极小代码路径，不依赖文件系统——FS
+  的状态/锁/栈在崩溃现场可能已坏）；② 重启后（系统可信）再由 boot 代码把 record 读回并**归档成文件/上报**。
+- **存储后端**：override `tracer_crash_save()`。mps2-an505 参考实现 `crash_nv.c`：SPI NOR 顶部 2×4K **双槽
+  交替裸写**（断电半写不毁旧记录，CRC 校验）→ boot 归档进 littlefs `crash_last.txt`/`crash_prev.txt` 并清除
+  staging（下次 boot 不重复上报）。QEMU 验证需带 `w25q02jvm` 的补丁版 QEMU + `-drive if=mtd`。
+- 内容为**纯文本**：人可读、`tracer_parser.py` 可直接符号化、跨平台无私有二进制 ABI。
 
 ---
 
