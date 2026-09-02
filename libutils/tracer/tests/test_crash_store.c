@@ -24,9 +24,9 @@
 static unsigned char g_flash[FAKE_SLOT * FAKE_SLOTS];
 
 int tracer_crash_store_get_media(tracer_crash_store_media_t *info) {
-    info->base = 0u;
+    info->slot_base = 0u;
     info->slot_size = FAKE_SLOT;
-    info->slots = FAKE_SLOTS;
+    info->slot_count = FAKE_SLOTS;
     return 0;
 }
 int tracer_crash_store_erase(uint32_t addr) {

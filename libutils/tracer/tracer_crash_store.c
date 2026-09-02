@@ -123,8 +123,8 @@ static int tcs_slot_valid(uint32_t base, uint32_t slot_size, uint32_t slots,
 /* Index of the currently valid slot, or -1 if none. */
 static int tcs_current(const tracer_crash_store_media_t *m) {
     uint32_t s;
-    for (s = 0u; s < m->slots; s++) {
-        if (tcs_slot_valid(m->base, m->slot_size, m->slots, s)) {
+    for (s = 0u; s < m->slot_count; s++) {
+        if (tcs_slot_valid(m->slot_base, m->slot_size, m->slot_count, s)) {
             return (int)s;
         }
     }
@@ -148,7 +148,7 @@ void tracer_crash_save(const void *record, uint32_t len) {
     if (tracer_crash_store_get_media(&m) != 0) {
         return; /* no media configured */
     }
-    if (m.slots == 0u || m.slot_size < TRACER_CRASH_STORE_HDR + 1u ||
+    if (m.slot_count == 0u || m.slot_size < TRACER_CRASH_STORE_HDR + 1u ||
         len > m.slot_size - TRACER_CRASH_STORE_HDR) {
         return;
     }
@@ -156,16 +156,16 @@ void tracer_crash_save(const void *record, uint32_t len) {
     /* Alternate: write into the slot that is not currently valid. */
     cur = tcs_current(&m);
     if (cur == 0) {
-        slot = 1u % m.slots;
+        slot = 1u % m.slot_count;
     } else if (cur > 0) {
         slot = 0u;
     } else {
         slot = 0u;
     }
-    if (slot >= m.slots) {
+    if (slot >= m.slot_count) {
         slot = 0u;
     }
-    addr = m.base + slot * m.slot_size;
+    addr = m.slot_base + slot * m.slot_size;
 
     h.magic = TRACER_CRASH_STORE_MAGIC;
     h.len = len;
@@ -193,9 +193,9 @@ uint32_t tracer_crash_store_read_latest(void *buf, uint32_t cap) {
     if (tracer_crash_store_get_media(&m) != 0) {
         return 0u;
     }
-    for (s = (int32_t)m.slots - 1; s >= 0; s--) {
+    for (s = (int32_t)m.slot_count - 1; s >= 0; s--) {
         tcs_hdr_t h;
-        uint32_t addr = m.base + (uint32_t)s * m.slot_size;
+        uint32_t addr = m.slot_base + (uint32_t)s * m.slot_size;
         if (!tcs_hdr_read(addr, &h)) {
             continue;
         }
@@ -225,7 +225,7 @@ void tracer_crash_store_clear(void) {
         return;
     }
     while ((cur = tcs_current(&m)) >= 0) {
-        (void)tracer_crash_store_erase(m.base + (uint32_t)cur * m.slot_size);
+        (void)tracer_crash_store_erase(m.slot_base + (uint32_t)cur * m.slot_size);
     }
 }
 

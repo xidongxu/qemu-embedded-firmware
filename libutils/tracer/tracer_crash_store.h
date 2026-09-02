@@ -38,13 +38,13 @@ extern "C" {
 /* Media geometry / attributes reported by the board. */
 typedef struct {
     /* Reserved region start address (must be aligned to slot_size). */
-    uint32_t base;
+    uint32_t slot_base;
     /* One slot = one erase unit, in bytes (e.g. 4 KiB SPI NOR sector, or an
      * internal-flash sector on stm32). */
     uint32_t slot_size;
     /* Number of slots (>= 2 recommended so a half-written crash never
      * destroys the previous record). */
-    uint32_t slots;
+    uint32_t slot_count;
 } tracer_crash_store_media_t;
 
 /* ---- Media primitives: implement these on the board (weak symbols) -------

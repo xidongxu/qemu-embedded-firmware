@@ -48,9 +48,9 @@ int tracer_crash_store_get_media(tracer_crash_store_media_t *info) {
     if (info == NULL) {
         return -1;
     }
-    info->base = CRASH_NV_BASE;
+    info->slot_base = CRASH_NV_BASE;
     info->slot_size = CRASH_NV_SLOT;
-    info->slots = CRASH_NV_SLOTS;
+    info->slot_count = CRASH_NV_SLOTS;
     return 0;
 }
 
