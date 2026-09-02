@@ -90,6 +90,7 @@ endif
 # C sources
 C_SOURCES =  \
 ./application/main.c \
+./application/crash_nv.c \
 ./application/stm32f4xx_it.c \
 ../Core/Src/gpio.c \
 ../Core/Src/usart.c \
@@ -112,7 +113,8 @@ C_SOURCES =  \
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal.c \
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c \
 ../Core/Src/system_stm32f4xx.c \
-../../../libutils/tracer/tracer.c 
+../../../libutils/tracer/tracer.c \
+../../../libutils/tracer/tracer_crash_store.c
 # FreeRTOS C sources
 C_SOURCES += \
 ../../../librtos/FreeRTOS/list.c \
@@ -254,7 +256,8 @@ endif
 #######################################
 C_DEFS =  \
 -DUSE_HAL_DRIVER \
--DSTM32F405xx 
+-DSTM32F405xx \
+-DTRACER_USE_CRASHLOG=1 
 
 
 ifeq ($(tool), gcc)

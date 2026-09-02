@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "tracer.h"
+#include "crash_nv.h"
 
 #include <FreeRTOS.h>
 #include <task.h>
@@ -120,6 +121,7 @@ int main(void) {
     MX_USART1_UART_Init();
 
     tracer_init();
+    crash_nv_boot_report();
     main_task_init();
 
     while (1) {

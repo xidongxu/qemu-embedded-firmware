@@ -63,7 +63,10 @@ MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 128K
 CCMRAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 64K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 1024K
+/* 1 MiB internal flash; the top 256K (0x080C0000..0x080FFFFF, sectors
+ * 10/11) is RESERVED for the crash log (boards/.../application/crash_nv.c),
+ * so application code is limited to the 768K below it. */
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 768K
 }
 
 /* Define output sections */
