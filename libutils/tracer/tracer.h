@@ -74,13 +74,23 @@ extern "C" {
  *    printf() dependency at all.  If you do NOT define it, output falls back
  *    to TRACER_PRINTF (simpler, but can deadlock if the fault interrupted
  *    printf or its lock). */
-#ifndef TRACER_PUTCHAR
+
+/* 1. Default output backend: standard printf(), used only when the app has
+ *    not defined its own TRACER_PRINTF. */
 #ifndef TRACER_PRINTF
 #include <stdio.h>
 #define TRACER_PRINTF printf
 #endif
-#else
-#define TRACER_PRINTF tracer_xprintf /* lock-free mini-printf in tracer.c */
+
+/* 2. CRASH-SAFE mode: when the app defines TRACER_PUTCHAR (a lock-free char
+ *    sink, e.g. a bare UART data register or Segger RTT), the fault/assert
+ *    dump must not touch printf or its lock -- so TRACER_PRINTF is redirected
+ *    to tracer's own mini-printf (defined in tracer.c), which renders one char
+ *    at a time through TRACER_PUTCHAR.  This intentionally overrides step 1
+ *    (and any app-defined TRACER_PRINTF): crash-safety wins on the fault path. */
+#ifdef TRACER_PUTCHAR
+#undef TRACER_PRINTF
+#define TRACER_PRINTF tracer_xprintf
 #endif
 
 /* Maximum number of call-stack entries dumped. */
