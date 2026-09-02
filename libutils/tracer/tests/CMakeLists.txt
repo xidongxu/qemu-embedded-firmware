@@ -29,6 +29,18 @@ endif()
 target_include_directories(test_tracer_crashlog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 add_test(NAME tracer_crashlog COMMAND test_tracer_crashlog)
 
+# Media-agnostic crash-record store (tracer_crash_store.c): double-slot
+# strategy tested against a RAM "flash" (link crash_store with the test).
+add_executable(test_tracer_crash_store
+    test_crash_store.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tracer_crash_store.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_tracer_crash_store PRIVATE -Wall -Wextra)
+endif()
+target_compile_definitions(test_tracer_crash_store PRIVATE TRACER_USE_CRASHLOG=1)
+target_include_directories(test_tracer_crash_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_test(NAME tracer_crash_store COMMAND test_tracer_crash_store)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME tracer_parser

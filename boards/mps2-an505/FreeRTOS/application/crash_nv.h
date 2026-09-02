@@ -1,15 +1,14 @@
 /*
- * crash_nv.h - non-volatile crash-record staging for tracer crash-log
- * (mps2-an505 FreeRTOS).
+ * crash_nv.h - mps2-an505 SPI NOR media + littlefs archive for the crash log
+ * (FreeRTOS application).
  *
- * Phase-2 backend: when a fault / assert dump finishes, tracer calls the
- * weak tracer_crash_save(); this file overrides it and writes the record
- * (dump text + pre-crash ring + CRC footer) into a reserved area at the TOP
- * of the external SPI NOR (w25q02jvm).  Two 4 KiB slots are alternated so a
- * power loss in the middle of a write never destroys the previous record.
+ * This is the BOARD layer of the crash log (see libutils/tracer
+ * tracer_crash_store.h): it implements the weak media primitives over the
+ * reserved TOP of the external SPI NOR (w25q02jvm) and archives a stored
+ * crash record into littlefs files at boot.  The slot strategy (alternating
+ * 2 x 4 KiB slots, header + CRC, anti-partial-write, read/clear) lives in
+ * the media-agnostic tracer_crash_store.c.
  *
- * At boot, crash_nv_boot_report() reads back the most recent valid record
- * and prints it (phase 3 will archive it into a file / mark it consumed).
  * The reserved area does not overlap the SPI NOR FAT/LittleFS test volume
  * because the PJ_PHONE build never formats the device (main.c skips
  * fatfs_test()/spi_flash_init() there).
@@ -23,13 +22,10 @@
 extern "C" {
 #endif
 
-/* Read the most recent valid crash record into @buf (up to @cap bytes).
- * Returns the number of bytes copied, or 0 if none is stored. */
-uint32_t crash_nv_read_latest(uint8_t *buf, uint32_t cap);
-
-/* Boot-time handling of a stored crash record: print it (and, in a later
- * phase, archive it to a file).  Silent when there is nothing stored.
- * Call once early at boot, before normal operation. */
+/* Boot-time handling of a stored crash record: read it back (via
+ * tracer_crash_store_read_latest), print it, archive it into littlefs files
+ * and clear the staging record (no duplicate report next boot).  Silent when
+ * there is nothing stored.  Call once early at boot, before normal op. */
 void crash_nv_boot_report(void);
 
 #ifdef __cplusplus

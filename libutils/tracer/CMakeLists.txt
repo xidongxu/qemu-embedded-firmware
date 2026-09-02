@@ -48,6 +48,7 @@ endif()
 
 add_library(tracer STATIC
     tracer.c
+    tracer_crash_store.c
     ${TRACER_ASM}
 )
 

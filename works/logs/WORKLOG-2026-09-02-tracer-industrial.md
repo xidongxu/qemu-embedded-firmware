@@ -143,3 +143,26 @@
 - mps2 用补丁版 QEMU 才能验 flash 持久；标准版 mps2-an505 无 mtd。
 - 崩溃前 ring 目前只有 main_task_entry 一条示例，产品化需在关键状态机（注册/通话/看门狗）处补 `tracer_ring_printf` 埋点。
 - README 已补"崩溃黑匣子"章节；host 测试/CI 已含 crashlog。
+
+---
+
+## 轮五：存储策略抽象为介质无关 `tracer_crash_store`（2026-09-02，重构未提交/随本日志提交）
+
+把"双槽/防半写/校验"这类**介质无关策略**从 mps2 板级 `crash_nv.c` 上提到 tracer 库内独立文件，板只留介质与归档——换板（stm32）不再重写策略。
+
+- **新文件** `libutils/tracer/tracer_crash_store.{h,c}`（随 `TRACER_USE_CRASHLOG` 编入 tracer 库）：
+  - 弱介质原语（板实现）：`tracer_crash_store_get_media(info{base,slot_size,slots})` / `_erase` / `_write` / `_read`；
+    默认 weak 全失败 → 无介质全静默，普通工程无需板胶水。
+  - 策略：`tracer_crash_save()`（**强实现**，覆盖 tracer.c 的同名 weak，同库内 weak/strong 链接器取 strong）、
+    `tracer_crash_store_read_latest()`、`tracer_crash_store_clear()`。
+  - **槽大小参数化**（板报 `slot_size`，如 mps2=4K / stm32=扇区）；CRC 校验分块读（大槽不需大 buffer，`s_tmp[256]`）；
+    `clear()` 循环擦所有有效槽（半写/干扰可能留 >1 个有效，防残留重复上报——host 测试暴露后改进）。
+  - **host 测试** `tests/test_crash_store.c`：RAM 假介质（2×256B）+ 验证无记录/读写一致/交替槽/半写槽 CRC 错被跳过并回退旧槽/损坏后仍可写/clear。挂 CTest+CI。
+- **板 `crash_nv.c` 瘦身**（-168 行）：删双槽/头/CRC/current/read_latest/clear 实现（进库）；保留＝介质原语 4 个
+  （包 `spi_flash_*`，`get_media` 里惰性 init）+ littlefs 归档 + `crash_nv_boot_report`（改调库 `read_latest`/`clear`）。
+- **坑**：CMake 编辑误把 crashlog 测试块覆盖成重复 crash_store 块（自查修正）；host 测试曾因 clear 只清一槽漏掉
+  另一有效槽失败（第5步人为制造两槽同有效）→ 改 clear 循环擦全部有效槽。
+- **验证（重构后全链路回归）**：bootA assert → crash_store 写 NOR（record 355B）→ 还原 → bootB 读回逐字一致
+  （crc=68F50F8D 同）→ littlefs 归档 355B + clear → bootC 静默 consumed、pjsua 正常。两板 build + 全 host 测试绿。
+- stm32 后端现在 = 只写介质原语（HAL）+ 自带归档，策略零重写。命名：用 `tracer_crash_store`（避开与
+  crashlog=捕获 的概念撞车）。

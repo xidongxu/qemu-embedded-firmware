@@ -43,6 +43,13 @@ jobs:
           gcc -std=c99 -Wall -Wextra -I. tests/test_crashlog.c -o /tmp/test_crashlog
           /tmp/test_crashlog
 
+      - name: Crash-store (media-agnostic double-slot) tests
+        working-directory: libutils/tracer
+        run: |
+          gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASHLOG=1 -I. \
+            tests/test_crash_store.c tracer_crash_store.c -o /tmp/test_crash_store
+          /tmp/test_crash_store
+
       - name: Run offline parser tests
         working-directory: libutils/tracer
         run: python3 tests/test_parser.py

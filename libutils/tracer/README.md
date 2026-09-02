@@ -245,9 +245,15 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 - **两段式持久化**（设计要点，也是与"崩溃时直接开文件系统写"的区别）：
   ① 现场（系统不可信）只做**防御性裸写**到保留存储（固定扇区/槽 + CRC，极小代码路径，不依赖文件系统——FS
   的状态/锁/栈在崩溃现场可能已坏）；② 重启后（系统可信）再由 boot 代码把 record 读回并**归档成文件/上报**。
-- **存储后端**：override `tracer_crash_save()`。mps2-an505 参考实现 `crash_nv.c`：SPI NOR 顶部 2×4K **双槽
-  交替裸写**（断电半写不毁旧记录，CRC 校验）→ boot 归档进 littlefs `crash_last.txt`/`crash_prev.txt` 并清除
-  staging（下次 boot 不重复上报）。QEMU 验证需带 `w25q02jvm` 的补丁版 QEMU + `-drive if=mtd`。
+- **存储（两层，介质无关策略 + 板级介质）**：
+  - 策略层 `tracer_crash_store.c`（编译进 tracer，随 `TRACER_USE_CRASHLOG`）：提供 `tracer_crash_save()`
+    的**通用实现**——保留区划成 N 槽（默认 2，槽=一次擦除单位），双槽交替写、槽头 `'TNC1'|len|crc32`、
+    断电半写不毁旧记录、`tracer_crash_store_read_latest()`/`tracer_crash_store_clear()`。介质差异全部收进
+    4 个 weak 原语 `tracer_crash_store_get_media/erase/write/read`（无介质即静默 no-op，无需板胶水）。
+  - 板级：只实现这 4 个介质原语 + 各自的 boot 归档。mps2-an505 参考 `crash_nv.c`：SPI NOR 顶部保留
+    2×4K、littlefs `crash_last.txt`/`crash_prev.txt` 归档并清除 staging（下次 boot 不重复上报）。换板
+    （如 stm32 内部 Flash）只需重写介质原语，双槽/防半写/校验逻辑直接复用。
+  - QEMU 验证需带 `w25q02jvm` 的补丁版 QEMU + `-drive if=mtd`。
 - 内容为**纯文本**：人可读、`tracer_parser.py` 可直接符号化、跨平台无私有二进制 ABI。
 
 ---
