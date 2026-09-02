@@ -26,6 +26,13 @@
 #define TRACER_PRINTF(...) ((void)0)
 #define TRACER_STACK_DUMP_BYTES 0u
 
+/* The host has no _sstack/_estack (those symbols come from the ARM linker
+ * script); tracer.c falls back to &_estack for its region markers.  The raw
+ * dump is disabled above and the walker tests pass explicit bounds, so pin
+ * them to harmless constants so the host link succeeds. */
+#define TRACER_STACK_BASE 0x20000000u
+#define TRACER_STACK_TOP  0x20010000u
+
 static uint8_t s_fake_text[64]; /* fake .text the walker may read from */
 #define TRACER_TEXT_START ((uint32_t)(uintptr_t)s_fake_text)
 #define TRACER_TEXT_END   ((uint32_t)(uintptr_t)(s_fake_text + sizeof(s_fake_text)))

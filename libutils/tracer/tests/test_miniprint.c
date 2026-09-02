@@ -25,6 +25,13 @@ static void tr_putc(char c) {
 
 #define TRACER_PUTCHAR tr_putc
 #define TRACER_STACK_DUMP_BYTES 0u
+/* Host has no _sstack/_estack/_stext/_etext (ARM linker-script symbols);
+ * the raw dump and code-region checks are disabled here, so harmless
+ * constants are enough to satisfy the linker. */
+#define TRACER_STACK_BASE 0x20000000u
+#define TRACER_STACK_TOP  0x20010000u
+#define TRACER_TEXT_START 0x08000000u
+#define TRACER_TEXT_END   0x08020000u
 #include "../tracer.c"
 
 static int s_failures = 0;
