@@ -136,6 +136,24 @@ target_include_directories(<app> PRIVATE ${CMAKE_SOURCE_DIR}/libutils/tracer)
 `CMakeLists.txt` 已按 `CMAKE_C_COMPILER_ID` 自动选汇编入口（GNU/Clang→`tracer_gnugcc.s`，
 IAR→`tracer_iccarm.s`，ARMCC→`tracer_armcc.s`），不支持的工具链会 `FATAL_ERROR` 提示。
 
+**方式 A2：install 后用 `find_package`（外部独立工程）**
+```
+cmake -S libutils/tracer -B build-tracer \
+      -DCMAKE_TOOLCHAIN_FILE=<...>/arm-none-eabi-gcc.cmake \
+      -DTRACER_EXIDX_TABLES=ON   # 可选，见“编译选项”
+cmake --build build-tracer
+cmake --install build-tracer --prefix <prefix>
+```
+消费工程（装好 tracer 后）：
+```cmake
+find_package(tracer CONFIG REQUIRED)
+target_link_libraries(<app> PRIVATE tracer::tracer)
+# 仍需 whole-archive 语义：tracer::tracer 的 archive 必须整体拉入才能覆盖 startup weak，
+# 链接时用 --whole-archive 包住（CMake 工程见方式 A 的写法，或手动
+# -Wl,--whole-archive -ltracer -Wl,--no-whole-archive）。
+```
+头文件装到 `<prefix>/include/tracer/tracer.h`；tracer 库本身会编 `-std=c99`。
+
 ### 方式 B：Makefile（stm32 CubeMX 风格）
 - C 源：加入 `libutils/tracer/tracer.c`；
 - 汇编源：按工具链选 **一个** 加入（勿混用）：
@@ -175,7 +193,12 @@ int main(void) {
 | MDK ARMCC5 | `tracer_armcc.s` | ❌（回退扫描） | ⚠️ |
 
 ### 编译选项（按需）
-- **exidx 精确回溯**：整个工程（含 tracer 库自身）加 `-funwind-tables`，并 `target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)`（**必须定义在 tracer 库目标**，定义在 app 目标不生效）。
+- **exidx 精确回溯**：需要 tracer 库自身带 `.ARM.exidx` 时开 option
+  `-DTRACER_EXIDX_TABLES=ON`（默认 OFF，省 flash；add_subdirectory 方式下因 boards 后于
+  libutils 加载无法用 option，可直接对 tracer 目标补
+  `target_compile_options(tracer PRIVATE -funwind-tables)`），再
+  `target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)`（**必须定义在 tracer 库目标**，
+  定义在 app 目标不生效）；整个 app 的源也建议 `-funwind-tables` 让回溯链覆盖 app 帧。
 - **动态轨迹**：`-finstrument-functions` 只加到要跟踪的源文件（`set_source_files_properties`），并 `target_compile_definitions(tracer PRIVATE TRACER_USE_FINSTRUMENT=1)`。
 - **栈扫描 / 离线解析**：无额外选项，默认即可。
 

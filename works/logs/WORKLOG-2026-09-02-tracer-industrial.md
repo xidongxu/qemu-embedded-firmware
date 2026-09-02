@@ -37,9 +37,7 @@
   CI ubuntu 实跑）+ 挂 CTest/CI。
 
 ### 剩余待办
-- [ ] 崩溃记录落 Flash + 复位原因（#4，工作量最大，未做）
-- [ ] CMake 强制 C99 / install-export（可选）
-- [ ] `-funwind-tables` 用 option 控制（可选）
+- [ ] 崩溃记录落 Flash + 复位原因（#4，工作量最大，用户决定"先考虑后面再说"）
 
 ### 备注
 - ⚠ 教训（两次）：未提交改动两次被清空（HEAD 均停在 76d30c98）。长工作务必**及时提交**。
@@ -47,3 +45,52 @@
   tests/test_miniprint.c}`、`boards/mps2-an505/FreeRTOS/application/main.c`、
   `boards/mps2-an505/Core/Inc/uart.h`、`.github/workflows/tracer-ci.yml`、
   `works/logs/WORKLOG-2026-09-02-tracer-industrial.md`。
+
+---
+
+## 轮三：CMake / CI / 运行时验证收尾（2026-09-02，提交 809e556e + eff5ff00）
+
+选做清单 #2/#3/#4/#5（#1 崩溃落 Flash 用户暂缓）。全部完成并 QEMU/CI 验证。
+
+### #2 CMake 强制 C99 + install/export（提交 809e556e）
+- `target_compile_options` 加 `-std=c99`（GNU/Clang/ARMClang），ARMCC 用 `--c99`，仅对 C 翻译单元。
+- 新增 `install(TARGETS/EXPORT)`：GNUInstallDirs + CMakePackageConfigHelpers，
+  产出 `tracer::tracer` imported target，`find_package(tracer CONFIG)` 可用。
+- include 目录改 `BUILD_INTERFACE`（add_subdirectory 用户不变）/`INSTALL_INTERFACE`
+  （`${CMAKE_INSTALL_INCLUDEDIR}/tracer`）——**不能写源树绝对路径**（install(EXPORT) 直接报错，
+  已踩坑修复）。头文件装 `include/tracer/tracer.h`。
+- 验证：两板工程 configure/build 干净；交叉 configure+install 冒烟测试（TRACER_EXIDX_TABLES=ON）
+  生成 4 个 cmake 文件；最小 find_package 消费工程 resolves include 路径正确。
+
+### #3 `-funwind-tables` 用 option 控制（提交 809e556e）
+- 新 `option(TRACER_EXIDX_TABLES ... OFF)`：默认 OFF，tracer 库不再无条件发 `.ARM.exidx`（省 flash）。
+- ⚠ 注意 configure 顺序：根 CMakeLists `add_subdirectory(libutils)`(44) **先于**
+  `boards/`(45)，board 无法用 option 提前影响 → FreeRTOS board（用 TRACER_USE_EXIDX 精确回溯）
+  在 `target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)` 旁**显式补
+  `target_compile_options(tracer PRIVATE -funwind-tables)`**（宏+flag 一起，无顺序依赖）。
+- 验证：build-phone tracer.c 命令含 `-std=c99 -funwind-tables`（exidx 不回归）；
+  build-baremetal 无 `-funwind-tables`。
+
+### #4 CI 结果检查 → 修复自引入就红的 host 测试（提交 eff5ff00）
+- 现象：tracer-ci 三个 commit 全 failure，失败在 "Build and run host unit tests"（链接阶段）。
+- 根因：`tests/test_tracer.c`、`test_miniprint.c` include 整个 `tracer.c`，其非 static 函数引用
+  ARM linker-script 符号 `&_estack`/`&_sstack`（`&_stext`/`&_etext`）→ host gcc 链接 undefined。
+  （本机无 host gcc/WSL，下载便携 **zig** 用 `zig cc -target x86_64-windows-gnu` 复现并验证。）
+- 修复：两个 test include 前钉死 `TRACER_STACK_BASE/TOP`（+miniprint 的 `TRACER_TEXT_START/END`）
+  为无害常量（raw dump 已禁用，walker 测试显式传界）。
+- 验证：本地 zig(host clang) 编/跑 test_tracer、test_miniprint 全 passed，test_parser.py passed；
+  推送后 GitHub Actions **success**（CI 首次全绿）。
+
+### #5 FreeRTOS 运行时触发 assert / stack-overflow（QEMU mps2-an505 实测，未提交，验证后还原）
+- **#5a assert**：`main_task_entry` 首行 `TRACER_ASSERT(0)` → dump：
+  `Tracer: Assert Failed / Up: 5 ms / Assert: 0 / End of assert (trapped)`（uptime override 生效）。
+- **#5b stack-overflow**：深递归触发 FreeRTOS method-2 失败——**heap 分配的栈 pxStack 与 TCB
+  在 heap 紧邻（TCB 低地址），bomb 穿栈底先覆盖 TCB 的 pxStack/pxTopOfStack 字段 → method2
+  读损坏指针判 canary==0xa5 → 假阴性，hook 不触发**（SP 打印证明 bomb 已穿栈底 4KB）。
+- 可靠触发法：main_task 改 `xTaskCreateStatic`（静态栈 .bss，TCB 分离）+ 直接写坏
+  pxStack[0..3]（真实溢出的 canary 破坏机制）→ vTaskDelay 让出 → method2 触发 → dump：
+  `Assert Failed / Up: 0 ms / Assert: main_task / At: vApplicationStackOverflowHook:309 /
+  Call stack: 100BFBC4 100C006C`。
+- 结论/记录：静态栈+canary 破坏是可靠测试法；heap 栈深溢出会砸 TCB 属 FreeRTOS method2 已知边界
+  （真机可靠检测建议 `uxTaskGetStackHighWaterMark` 水位告警 或 xTaskCreateStatic 关键任务）。
+- ⚠ 验证全程 `git checkout -- main.c` 还原，无测试残留提交。
