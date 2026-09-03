@@ -161,15 +161,23 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
             p++;
         }
         int islong = 0;
-        if (*p == 'l') {
-            islong = 1;
+        int isll = 0; /* "ll" length modifier -> long long */
+        while (*p == 'l') {
+            if (islong) {
+                isll = 1;
+            } else {
+                islong = 1;
+            }
             p++;
         }
         char conv = *p;
         if (conv == '\0') {
             break;
         }
-        if (conv == 's') {
+        if (conv == '%') {
+            /* escaped '%' prints one '%' (printf semantics) */
+            tracer_xputc('%');
+        } else if (conv == 's') {
             const char *s = va_arg(ap, const char *);
             int len = 0;
             const char *q;
@@ -198,19 +206,30 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
         } else if (conv == 'c') {
             tracer_xputc((char)va_arg(ap, int));
         } else if (conv == 'd' || conv == 'i') {
-            long v = islong ? va_arg(ap, long) : (long)va_arg(ap, int);
-            int neg = (v < 0);
-            tracer_putn(neg ? (unsigned long)(-(v + 1)) + 1u
-                            : (unsigned long)v,
-                        10, 0, width, zero, left, neg);
-        } else if (conv == 'u') {
-            unsigned long v = islong ? va_arg(ap, unsigned long)
-                                     : (unsigned long)va_arg(ap, unsigned int);
-            tracer_putn(v, 10, 0, width, zero, left, 0);
-        } else if (conv == 'x' || conv == 'X') {
-            unsigned long v = islong ? va_arg(ap, unsigned long)
-                                     : (unsigned long)va_arg(ap, unsigned int);
-            tracer_putn(v, 16, (conv == 'X'), width, zero, left, 0);
+            if (isll) {
+                long long v = va_arg(ap, long long);
+                int neg = (v < 0);
+                tracer_putn(neg ? (unsigned long long)(-(v + 1)) + 1ull
+                                : (unsigned long long)v,
+                            10, 0, width, zero, left, neg);
+            } else {
+                long v = islong ? va_arg(ap, long) : (long)va_arg(ap, int);
+                int neg = (v < 0);
+                tracer_putn(neg ? (unsigned long)(-(v + 1)) + 1u
+                                : (unsigned long)v,
+                            10, 0, width, zero, left, neg);
+            }
+        } else if (conv == 'u' || conv == 'x' || conv == 'X') {
+            unsigned long long v;
+            if (isll) {
+                v = va_arg(ap, unsigned long long);
+            } else if (islong) {
+                v = (unsigned long long)va_arg(ap, unsigned long);
+            } else {
+                v = (unsigned long long)va_arg(ap, unsigned int);
+            }
+            tracer_putn(v, (conv == 'u') ? 10 : 16, (conv == 'X'),
+                        width, zero, left, 0);
         } else if (conv == 'p') {
             /* Pointer: "0x" + lowercase hex (C leaves the exact %p spelling
              * implementation-defined; this matches the common printf form).

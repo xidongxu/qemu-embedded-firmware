@@ -2,8 +2,8 @@
  *
  * Compiles tracer.c on the HOST (gcc/clang, no ARM toolchain) and drives its
  * internal tracer_xprintf against a collecting sink, verifying the exact
- * format subset the fault dump emits (%s %c %d %u %x %X %p %lu %ld with
- * '-'/'0' flags and decimal width).
+ * format subset the fault dump emits (%s %c %d %u %x %X %p, 'l'/'ll'
+ * lengths, %% escape, with '-'/'0' flags and decimal width).
  *
  * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_miniprint.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
@@ -122,6 +122,26 @@ int main(void) {
     tracer_xprintf("p=%p\r\n",
                    (void *)(uintptr_t)0x123456789ABCDEF0ull);
     check("p=0x123456789abcdef0\r\n", "ptr 64-bit full width");
+
+    /* %% escape: one percent sign (printf semantics). */
+    reset();
+    tracer_xprintf("%d%% done\r\n", 100);
+    check("100% done\r\n", "percent escape");
+
+    /* long long: %lld signed (neg magnitude), %llu max, %llX hex. */
+    reset();
+    tracer_xprintf("v=%lld\r\n", (long long)-1234567890123LL);
+    check("v=-1234567890123\r\n", "lld negative");
+
+    reset();
+    tracer_xprintf("u=%llu\r\n",
+                   (unsigned long long)0xFFFFFFFFFFFFFFFFull);
+    check("u=18446744073709551615\r\n", "llu max");
+
+    reset();
+    tracer_xprintf("x=%llX\r\n",
+                   (unsigned long long)0x123456789ABCDEF0ull);
+    check("x=123456789ABCDEF0\r\n", "llX full 64-bit");
 
     if (s_failures != 0) {
         fprintf(stderr, "tracer mini-printf test: %d FAILURE(S)\n", s_failures);
