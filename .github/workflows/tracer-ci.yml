@@ -50,6 +50,15 @@ jobs:
             tests/test_crash_store.c tracer_crash_store.c -o /tmp/test_crash_store
           /tmp/test_crash_store
 
+      - name: ARM cross-compile smoke (tracer + crash_store, crashlog on)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+          cd libutils/tracer
+          arm-none-eabi-gcc -std=c99 -Wall -Wextra -mcpu=cortex-m33 -mthumb \
+            -DTRACER_USE_CRASHLOG=1 -I. -fsyntax-only tracer.c tracer_crash_store.c
+          arm-none-eabi-gcc -c tracer_gnugcc.s -o /tmp/tracer_gnugcc.o
+
       - name: Run offline parser tests
         working-directory: libutils/tracer
         run: python3 tests/test_parser.py

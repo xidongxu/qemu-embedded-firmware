@@ -220,7 +220,15 @@ static void tracer_xprintf(const char *fmt, ...) {
 #if TRACER_USE_CRASHLOG
 
 /* PRIMASK critical section around ring writes / capture assembly.  Host
- * (unit test) builds and non-GCC/Clang compilers compile these to no-ops. */
+ * (unit test) builds compile these to no-ops.  Toolchain support:
+ *   - GCC / armclang (AC6): inline asm MRS/MSR PRIMASK + cpsid i
+ *   - IAR: intrinsics.h __get_interrupt_state / __disable_interrupt /
+ *           __set_interrupt_state
+ *   - ARMCC5 (__CC_ARM) without CMSIS has no portable PRIMASK-read
+ *     intrinsic -> no-op (crashlog IRQ protection is GCC/AC6/IAR only). */
+#if defined(__ICCARM__)
+#include <intrinsics.h>
+#endif
 static uint32_t tracer_pm_save(void) {
 #if (defined(__GNUC__) || defined(__clang__)) && \
     (defined(__arm__) || defined(__thumb__))
@@ -228,7 +236,12 @@ static uint32_t tracer_pm_save(void) {
     __asm volatile ("mrs %0, primask" : "=r" (pm));
     __asm volatile ("cpsid i");
     return pm;
+#elif defined(__ICCARM__)
+    uint32_t pm = (uint32_t)__get_interrupt_state();
+    __disable_interrupt();
+    return pm;
 #else
+    (void)0;
     return 0u;
 #endif
 }
@@ -236,6 +249,8 @@ static void tracer_pm_restore(uint32_t pm) {
 #if (defined(__GNUC__) || defined(__clang__)) && \
     (defined(__arm__) || defined(__thumb__))
     __asm volatile ("msr primask, %0" : : "r" (pm));
+#elif defined(__ICCARM__)
+    __set_interrupt_state((__istate_t)pm);
 #else
     (void)pm;
 #endif
@@ -254,12 +269,34 @@ static void tracer_ring_char(void *ctx, char c) {
     }
 }
 
+/* Ring "message header": a timestamp prefix so the pre-crash replay has a
+ * relative time line (up-time in ms via the weak tracer_uptime_ms hook). */
+static void tracer_ring_prefix(void) {
+    uint32_t t = tracer_uptime_ms();
+    char tmp[12];
+    int n = 0;
+    s_emit(NULL, '[');
+    do {
+        tmp[n++] = (char)('0' + (int)(t % 10u));
+        t /= 10u;
+    } while (t != 0u && n < (int)sizeof(tmp));
+    while (n > 0) {
+        s_emit(NULL, tmp[--n]);
+    }
+    s_emit(NULL, ' ');
+    s_emit(NULL, 'm');
+    s_emit(NULL, 's');
+    s_emit(NULL, ']');
+    s_emit(NULL, ' ');
+}
+
 /* App event log: keep the most recent formatted text in RAM. */
 void tracer_ring_printf(const char *fmt, ...) {
     uint32_t pm = tracer_pm_save();
     va_list ap;
     va_start(ap, fmt);
     s_emit = tracer_ring_char;
+    tracer_ring_prefix();
     tracer_xvprintf(fmt, ap);
     s_emit = NULL;
     va_end(ap);
