@@ -1,7 +1,7 @@
 /* Host unit test for tracer crash-log ("black box"): pre-crash ring log,
  * dump capture mirror and CRC footer.
  *
- * Compiles tracer.c on the HOST with TRACER_USE_CRASHLOG=1 and drives
+ * Compiles tracer.c on the HOST with TRACER_USE_CRASH=1 and drives
  * tracer_ring_printf() plus a simulated fault dump (mini-printf while the
  * capture is active) against a collecting sink, then verifies the assembled
  * record in the capture buffer.
@@ -24,9 +24,9 @@ static void tr_putc(char c) {
 }
 
 /* Small sizes so the tests also exercise ring overwrite + capture bounds. */
-#define TRACER_CRASHLOG_RING_SIZE 128u
-#define TRACER_CRASHLOG_CAP_SIZE 512u
-#define TRACER_USE_CRASHLOG 1
+#define TRACER_RING_SIZE 128u
+#define TRACER_CRASH_SIZE 512u
+#define TRACER_USE_CRASH 1
 #define TRACER_PUTCHAR tr_putc
 #define TRACER_STACK_DUMP_BYTES 0u
 #define TRACER_STACK_BASE 0x20000000u

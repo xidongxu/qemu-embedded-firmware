@@ -8,8 +8,8 @@
  *     other slot's older record is still returned
  *   - clear() removes the record (read_latest() == 0)
  *
- * Build (links tracer_crash_store.c with TRACER_USE_CRASHLOG):
- *   gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASHLOG=1 \
+ * Build (links tracer_crash_store.c with TRACER_USE_CRASH):
+ *   gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASH=1 \
  *       -I.. tests/test_crash_store.c ../tracer_crash_store.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON and into CI).
  */

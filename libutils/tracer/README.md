@@ -229,24 +229,27 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 | `TRACER_FW_VERSION` | `"0.0.0"` | 固件版本字符串，`tracer_init`/dump 头部打印（现场对版用） |
 | `TRACER_AUTO_RESET_MS` | 0 | >0 时 dump 后延时该毫秒数自动系统复位（0=永久 trap） |
 | `TRACER_ASSERT(expr)` | 见宏 | 断言宏（打印 + 调用栈 + 自动复位/trap） |
-| `TRACER_USE_CRASHLOG` | 0 | 崩溃黑匣子（见下）：预崩溃环形日志 + dump 镜像捕获 + weak 持久化钩子 |
-| `TRACER_CRASHLOG_RING_SIZE` | 2048 | `tracer_ring_printf()` 预崩溃事件环形缓冲（字节） |
-| `TRACER_CRASHLOG_CAP_SIZE` | 8192 | 崩溃 record 捕获缓冲（dump 文本 + ring 尾 + CRC footer） |
+| `TRACER_USE_CRASH` | 0 | 崩溃黑匣子（见下）：预崩溃环形日志 + dump 镜像捕获 + weak 持久化钩子 |
+| `TRACER_USE_LOG` | 0 | 分级运行日志（见下）：`tracer_log`/`TRACER_LOGI..` + sink/drain 异步接口 |
+| `TRACER_RING_SIZE` | 2048 | 共享环形缓冲（`tracer_ring_printf()` 事件与 `tracer_log()` 日志共用，字节） |
+| `TRACER_CRASH_SIZE` | 8192 | 崩溃 record 捕获缓冲（dump 文本 + ring 尾 + CRC footer） |
+| `TRACER_LOG_DEFAULT_LEVEL` | `INFO` | `tracer_log` 运行期初始级别（可随时 `tracer_log_set_level` 调） |
+| `TRACER_LOG_LINE_SIZE` | 160 | `tracer_log` 单行上限（前缀+内容+CRLF，超长截断） |
 
-### 崩溃黑匣子（crash log，可选，TRACER_USE_CRASHLOG=1）
+### 崩溃黑匣子（crash black box，可选，TRACER_USE_CRASH=1）
 
 把"宕机现场 + 宕机前发生了什么"自动留下来，重启后读回——工厂/现场无人值守诊断用。
 
 - **预崩溃日志**：应用在关键事件处调 `tracer_ring_printf("...")`（无锁、IRQ 安全），tracer 在 RAM 保留最近
-  `TRACER_CRASHLOG_RING_SIZE` 字节（"黑匣子"）。
-- **崩溃捕获**：fault/assert/栈溢出 dump 时，每个输出字符同时镜像进 RAM 捕获缓冲（因此 crashlog 会强制
-  dump 走逐字 mini-printf——无 `TRACER_PUTCHAR` 时回退 `putchar()`，有则 crash-safe）；收尾时把 ring 尾
+  `TRACER_RING_SIZE` 字节（"黑匣子"）。
+- **崩溃捕获**：fault/assert/栈溢出 dump 时，每个输出字符同时镜像进 RAM 捕获缓冲（因此 TRACER_USE_CRASH 会
+  强制 dump 走逐字 mini-printf——无 `TRACER_PUTCHAR` 时回退 `putchar()`，有则 crash-safe）；收尾时把 ring 尾
   与 CRC-32 footer 附加成一条完整 record 文本，交给 weak `tracer_crash_save(data,len)`（默认 no-op）。
 - **两段式持久化**（设计要点，也是与"崩溃时直接开文件系统写"的区别）：
   ① 现场（系统不可信）只做**防御性裸写**到保留存储（固定扇区/槽 + CRC，极小代码路径，不依赖文件系统——FS
   的状态/锁/栈在崩溃现场可能已坏）；② 重启后（系统可信）再由 boot 代码把 record 读回并**归档成文件/上报**。
 - **存储（两层，介质无关策略 + 板级介质）**：
-  - 策略层 `tracer_crash_store.c`（编译进 tracer，随 `TRACER_USE_CRASHLOG`）：提供 `tracer_crash_save()`
+  - 策略层 `tracer_crash_store.c`（编译进 tracer，随 `TRACER_USE_CRASH`）：提供 `tracer_crash_save()`
     的**通用实现**——保留区划成 N 槽（默认 2，槽=一次擦除单位），双槽交替写、槽头 `'TNC1'|len|crc32`、
     断电半写不毁旧记录、`tracer_crash_store_read_latest()`/`tracer_crash_store_clear()`。介质差异全部收进
     4 个 weak 原语 `tracer_crash_store_get_media/erase/write/read`（无介质即静默 no-op，无需板胶水）。
@@ -255,6 +258,48 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
     （如 stm32 内部 Flash）只需重写介质原语，双槽/防半写/校验逻辑直接复用。
   - QEMU 验证需带 `w25q02jvm` 的补丁版 QEMU + `-drive if=mtd`。
 - 内容为**纯文本**：人可读、`tracer_parser.py` 可直接符号化、跨平台无私有二进制 ABI。
+
+### 分级运行日志（leveled runtime log，可选，TRACER_USE_LOG=1）
+
+`TRACER_USE_CRASH` 与 `TRACER_USE_LOG` 是两个**互相独立**的开关，可单独开：
+
+- **只开 `TRACER_USE_CRASH`**：预崩溃事件 + 崩溃 record 落存储，无 `tracer_log`。
+- **只开 `TRACER_USE_LOG`**：`tracer_log()` 同步串口打印 + sink/drain 异步接口（ring 作为 drain 缓冲池），
+  无崩溃捕获/存储。
+- **两者都开**：`tracer_log()` 与 `tracer_ring_printf()` 写**同一 ring**（合一）——运行时出问题后崩溃
+  record 自动含宕机前运行日志，无需刻意再调一次存储接口。
+
+把 `tracer_log()` 当成普通日志 API 用即可：应用只要链上 tracer 并开了 `TRACER_USE_LOG`，调用它就能打印。
+
+- **API**：`uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...)`。
+  级别：`TRACER_LOG_TRACE/DEBUG/INFO/WARN/ERROR`（0..4）。行格式：`[<ms> ms]X: <内容>\r\n`，`X` 为
+  `T/D/I/W/E`。`<ms>` 来自 weak `tracer_uptime_ms()`——**默认已带 SysTick wrap 计数**（SysTick 以 ~1ms
+  reload 跑时=真实运行毫秒，免接线），RTOS/应用可覆盖成更准的 tick（FreeRTOS 用
+  `xTaskGetTickCount()*portTICK_PERIOD_MS`，mps2 已覆盖）。
+- **分级便捷宏（不带 level 参数）**：级别写死在宏名里，调用不再传 level——`TRACER_LOGI("call %u", n)` ≡
+  `tracer_log(TRACER_LOG_INFO, ...)`。一组 `TRACER_LOGT/LOGD/LOGI/LOGW/LOGE`；仍受运行期级别过滤。
+- **运行期分级开关**（非编译期过滤）：所有级别都编译进去，输出与否看运行值。默认 `TRACER_LOG_DEFAULT_LEVEL`
+  = `INFO`（可 `-D` 覆盖）；任意时刻用 `tracer_log_set_level()`/`tracer_log_get_level()` 调整（如加一条 shell
+  命令 `log level`，调试时提到 TRACE、正式跑提到 WARN）。
+- **每行输出三步（一次临界区内）**：① 同步打到串口（不对接任何异步后端时，这就是"同步日志"）；② 写入
+  共享崩溃 ring（与 `tracer_ring_printf()` 同一缓冲）；③ 出临界区后把整行 `(line,len)` 交给 weak
+  `tracer_log_sink()`。行缓冲在**调用者栈上**（`TRACER_LOG_LINE_SIZE`，默认 160，超长截断仍保留 `\r\n`），
+  因此 `tracer_log()` 可重入、可在 ISR 里调用。
+- **预留异步存储接口（写文件 / 写 flash），两选一或都用；都不实现则纯同步输出**：
+  - **push（weak 回调）**：覆盖 `void tracer_log_sink(const void *line, uint32_t len)`（默认 no-op），每行
+    完成后回调给你，自行追加到文件/flash。例如接到 littlefs：
+    ```c
+    void tracer_log_sink(const void *line, uint32_t len) {
+        /* 追加到日志文件（非崩溃路径，可用 FS/锁） */
+        log_file_append(line, len);
+    }
+    ```
+  - **pull（增量导出）**：后台低优先级任务/空闲钩子调
+    `uint32_t tracer_log_drain(uint8_t *out, uint32_t max)`，拿到自上次以来的新增字节流（内含事件与日志的
+    混合顺序），自行落盘；ring 被消费过慢覆盖时，从仍可用的最旧字节开始返回。
+- 行缓冲宏：`TRACER_LOG_LINE_SIZE`（默认 `160u`，单行上限，可 `-D` 覆盖）。
+- host 单测 `tests/test_tracer_log.c`（格式/运行期分级/合一 ring/截断/drain/崩溃 record 自动含最近日志）与
+  `tests/test_tracer_log_sink.c`（weak sink 强覆盖、过滤不回调）随 CI 运行。
 
 ---
 

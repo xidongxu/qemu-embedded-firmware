@@ -24,10 +24,10 @@
  * fault interrupted printf or its lock.  Without TRACER_PUTCHAR, tracer.h
  * keeps TRACER_PRINTF = printf (default) and none of this is compiled.
  * ------------------------------------------------------------------------- */
-#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASHLOG
+#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASH || TRACER_USE_LOG
 #include <stdarg.h>
 #if !defined(TRACER_PUTCHAR)
-#include <stdio.h> /* putchar() fallback sink when crashlog runs without PUTCHAR */
+#include <stdio.h> /* putchar() fallback sink when crash/log run without PUTCHAR */
 #endif
 
 /* Output sinks + optional crash capture (the "black box" mirror).
@@ -38,7 +38,7 @@
  * tracer_crash_save().  tracer_ring_printf() swaps s_emit to the ring sink. */
 typedef void (*tracer_outfn)(void *ctx, char c);
 
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
 /* CRC-32 (IEEE 802.3 poly 0xEDB88320, reflected, bitwise -- no table). */
 static uint32_t tracer_crc32(const uint8_t *p, uint32_t n) {
     uint32_t crc = 0xFFFFFFFFu;
@@ -51,21 +51,35 @@ static uint32_t tracer_crc32(const uint8_t *p, uint32_t n) {
     return ~crc;
 }
 
-/* In-RAM crash capture buffer + the pre-crash event ring log. */
-static uint8_t s_cap[TRACER_CRASHLOG_CAP_SIZE];
-static volatile uint32_t s_cap_len = 0u;    /* capture bytes written */
-static volatile int s_cap_active = 0;       /* dump currently mirroring */
-static uint8_t s_ring[TRACER_CRASHLOG_RING_SIZE];
-static volatile uint32_t s_ring_start = 0u; /* index of oldest byte */
-static volatile uint32_t s_ring_count = 0u; /* valid bytes in ring */
-#endif /* TRACER_USE_CRASHLOG */
+/* In-RAM crash capture buffer (dump text mirrored one char at a time). */
+static uint8_t s_cap[TRACER_CRASH_SIZE];
+/* capture bytes written */
+static volatile uint32_t s_cap_len = 0u;
+/* dump currently mirroring */
+static volatile int s_cap_active = 0;
+#endif /* TRACER_USE_CRASH */
+
+#if TRACER_USE_CRASH || TRACER_USE_LOG
+/* Shared pre-crash ring: tracer_ring_printf() events (crash) and every
+ * tracer_log() line share this one buffer, so when both features are on a
+ * crash record ends with the recent run log; with only TRACER_USE_LOG the
+ * ring still exists as the drain source (tracer_log_drain). */
+static uint8_t s_ring[TRACER_RING_SIZE];
+/* index of oldest byte */
+static volatile uint32_t s_ring_start = 0u;
+/* valid bytes in ring */
+static volatile uint32_t s_ring_count = 0u;
+/* total bytes ever written (virtual stream position, for tracer_log_drain) */
+static volatile uint32_t s_ring_total = 0u;
+#endif /* TRACER_USE_CRASH || TRACER_USE_LOG */
 
 /* Serial sink: crash-safe TRACER_PUTCHAR when provided, else putchar(). */
 static void tracer_serial_char(void *ctx, char c) {
     (void)ctx;
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
     if (s_cap_active != 0 && s_cap_len < (uint32_t)sizeof(s_cap)) {
-        s_cap[s_cap_len++] = (uint8_t)c;    /* mirror into the crash record */
+        /* mirror into the crash record */
+        s_cap[s_cap_len++] = (uint8_t)c;
     }
 #endif
 #if defined(TRACER_PUTCHAR)
@@ -214,18 +228,19 @@ static void tracer_xprintf(const char *fmt, ...) {
 
 #endif /* TRACER_PUTCHAR */
 
-/* ===== Crash log ("black box"): pre-crash ring + dump capture (opt-in) =
- * ===== Enable with -DTRACER_USE_CRASHLOG=1.  Default build: nothing here. =
- * ===================================================================== */
-#if TRACER_USE_CRASHLOG
+/* ===== Black box + runtime log: shared PRIMASK / ring infra (opt-in) =
+ * ===== Enable with -DTRACER_USE_CRASH=1 and/or -DTRACER_USE_LOG=1. ====
+ * ===== Default build: nothing here. ============================== */
+#if TRACER_USE_CRASH || TRACER_USE_LOG
 
-/* PRIMASK critical section around ring writes / capture assembly.  Host
- * (unit test) builds compile these to no-ops.  Toolchain support:
+/* PRIMASK critical section around ring writes / capture assembly / log
+ * format.  Host (unit test) builds compile these to no-ops.  Toolchain
+ * support:
  *   - GCC / armclang (AC6): inline asm MRS/MSR PRIMASK + cpsid i
  *   - IAR: intrinsics.h __get_interrupt_state / __disable_interrupt /
  *           __set_interrupt_state
  *   - ARMCC5 (__CC_ARM) without CMSIS has no portable PRIMASK-read
- *     intrinsic -> no-op (crashlog IRQ protection is GCC/AC6/IAR only). */
+ *     intrinsic -> no-op (IRQ protection is GCC/AC6/IAR only). */
 #if defined(__ICCARM__)
 #include <intrinsics.h>
 #endif
@@ -264,9 +279,11 @@ static void tracer_ring_char(void *ctx, char c) {
         s_ring[(s_ring_start + s_ring_count) % size] = (uint8_t)c;
         s_ring_count++;
     } else {
-        s_ring[s_ring_start] = (uint8_t)c;  /* overwrite the oldest byte */
+        /* overwrite the oldest byte */
+        s_ring[s_ring_start] = (uint8_t)c;
         s_ring_start = (s_ring_start + 1u) % size;
     }
+    s_ring_total++;
 }
 
 /* Ring "message header": a timestamp prefix so the pre-crash replay has a
@@ -290,6 +307,9 @@ static void tracer_ring_prefix(void) {
     s_emit(NULL, ' ');
 }
 
+#endif /* TRACER_USE_CRASH || TRACER_USE_LOG */
+
+#if TRACER_USE_CRASH
 /* App event log: keep the most recent formatted text in RAM. */
 void tracer_ring_printf(const char *fmt, ...) {
     uint32_t pm = tracer_pm_save();
@@ -363,7 +383,8 @@ static void tracer_crash_finalize(void) {
 
     /* CRC footer (covers everything above it in s_cap). */
     crc = tracer_crc32(s_cap, (uint32_t)s_cap_len);
-    s_emit = tracer_cap_raw_char;  /* mini-printf routed into the capture */
+    /* mini-printf routed into the capture */
+    s_emit = tracer_cap_raw_char;
     tracer_xprintf("==== TRACER CRASHLOG END crc=%08lX ====\r\n",
                    (unsigned long)crc);
     s_emit = NULL;
@@ -372,12 +393,168 @@ static void tracer_crash_finalize(void) {
     /* Hand the record to the platform's non-volatile backend. */
     tracer_crash_save(s_cap, (uint32_t)s_cap_len);
 
-    TRACER_PRINTF("[crashlog] record %lu bytes, crc=%08lX "
+    TRACER_PRINTF("[crash] record %lu bytes, crc=%08lX "
                   "(ring %lu B used)\r\n",
                   (unsigned long)s_cap_len, (unsigned long)crc,
                   (unsigned long)s_ring_count);
 }
-#endif /* TRACER_USE_CRASHLOG */
+#endif /* TRACER_USE_CRASH */
+
+#if TRACER_USE_LOG
+/* ===== Leveled runtime log (unified ring; async persistence hooks) =====
+ * tracer_log() formats one line on the caller's stack and, inside a short
+ * critical section, prints it to the serial sink AND appends it to the same
+ * pre-crash ring used by tracer_ring_printf() -- so when the crash black box
+ * is also enabled the record automatically ends with the recent run log.
+ * The level filter is a runtime switch (see tracer.h).  File/flash
+ * persistence is left to the app through two optional interfaces: the weak
+ * per-line tracer_log_sink() hook and the incremental tracer_log_drain()
+ * cursor.  All of this lives under TRACER_USE_LOG (declared in tracer.h). */
+
+/* Format target for one log line (caller's stack buffer). */
+typedef struct {
+    /* destination */
+    char *buffer;
+    /* content bytes written so far */
+    uint32_t length;
+    /* content limit; the caller keeps CRLF room after it */
+    uint32_t capacity;
+} tracer_log_buf_t;
+
+/* Active line buffer while tracer_log() formats.  The mini-printf path
+ * (tracer_xputc / tracer_ring_prefix) always calls the current sink with
+ * ctx = NULL, so the target buffer travels in this pointer instead.  It is
+ * only touched under the PRIMASK critical section that wraps the format, so
+ * an ISR logging mid-format cannot corrupt it. */
+static tracer_log_buf_t *s_log_buf = NULL;
+
+static void tracer_log_buf_char(void *ctx, char c) {
+    tracer_log_buf_t *b = s_log_buf;
+    (void)ctx;
+    if (b != NULL && b->length < b->capacity) {
+        b->buffer[b->length++] = c;
+    }
+}
+
+/* Runtime level filter (initialized from TRACER_LOG_DEFAULT_LEVEL). */
+static volatile tracer_log_level_t s_log_level = TRACER_LOG_DEFAULT_LEVEL;
+/* Read cursor for tracer_log_drain(): next virtual stream byte to hand out. */
+static volatile uint32_t s_log_drain_at = 0u;
+
+void tracer_log_set_level(tracer_log_level_t level) {
+    s_log_level = level;
+}
+tracer_log_level_t tracer_log_get_level(void) {
+    return (tracer_log_level_t)s_log_level;
+}
+
+/* Weak per-line asynchronous persistence hook.  Default no-op: an app that
+ * does not override it simply gets the synchronous serial + ring output. */
+#if defined(__ICCARM__)
+#pragma weak tracer_log_sink
+#define TRACER_LOG_WEAK
+#else
+#define TRACER_LOG_WEAK __attribute__((weak))
+#endif
+void TRACER_LOG_WEAK tracer_log_sink(const void *line, uint32_t len) {
+    (void)line;
+    (void)len;
+}
+
+uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
+    static const char kLev[] = { 'T', 'D', 'I', 'W', 'E' };
+    char buf[TRACER_LOG_LINE_SIZE];
+    tracer_log_buf_t b;
+    uint32_t pm, n, i;
+    char lc;
+    va_list ap;
+
+    if (level < s_log_level) {
+        /* runtime level filter */
+        return 0u;
+    }
+    lc = '?';
+    {
+        /* enum may be unsigned on ARM */
+        int lv = (int)level;
+        if (lv >= (int)TRACER_LOG_TRACE && lv <= (int)TRACER_LOG_ERROR) {
+            lc = kLev[lv];
+        }
+    }
+
+    /* Format the whole line on the caller's stack: "[<ms> ms]X: <body>". */
+    b.buffer = buf;
+    b.length = 0u;
+    /* Keep CRLF room; clamp so a (mis-set) tiny TRACER_LOG_LINE_SIZE can
+     * never make the subtract underflow into a huge capacity. */
+    b.capacity = ((uint32_t)sizeof(buf) > 2u)
+                     ? ((uint32_t)sizeof(buf) - 2u)
+                     : 0u;
+    pm = tracer_pm_save();
+    s_log_buf = &b;
+    s_emit = tracer_log_buf_char;
+    /* "[<ms> ms] " into the line */
+    tracer_ring_prefix();
+    tracer_xputc(lc);
+    tracer_xputc(':');
+    tracer_xputc(' ');
+    va_start(ap, fmt);
+    tracer_xvprintf(fmt, ap);
+    va_end(ap);
+    /* Terminate with CRLF when there is room (always true for sane sizes). */
+    if (b.length + 1u < (uint32_t)sizeof(buf)) {
+        buf[b.length] = '\r';
+        buf[b.length + 1u] = '\n';
+        n = b.length + 2u;
+    } else {
+        /* absurdly small buffer: emit body only */
+        n = b.length;
+    }
+    s_emit = NULL;
+    s_log_buf = NULL;
+
+    /* 1) synchronous serial output, 2) unified ring write (same bytes) --
+     * one critical section so an ISR cannot split a log line. */
+    for (i = 0u; i < n; i++) {
+        tracer_serial_char(NULL, buf[i]);
+    }
+    for (i = 0u; i < n; i++) {
+        tracer_ring_char(NULL, buf[i]);
+    }
+    tracer_pm_restore(pm);
+
+    /* 3) async persistence hook (weak; app override; no lock held). */
+    tracer_log_sink(buf, n);
+    return n;
+}
+
+uint32_t tracer_log_drain(uint8_t *out, uint32_t max) {
+    uint32_t pm, total, oldest, avail, i;
+    uint32_t size = (uint32_t)sizeof(s_ring);
+
+    if (out == NULL || max == 0u) {
+        return 0u;
+    }
+    pm = tracer_pm_save();
+    total = s_ring_total;
+    /* Oldest byte still in the ring, in virtual stream coordinates. */
+    oldest = (total >= s_ring_count) ? (total - s_ring_count) : 0u;
+    if (s_log_drain_at < oldest) {
+        /* consumer too slow: skip lost bytes */
+        s_log_drain_at = oldest;
+    }
+    avail = total - s_log_drain_at;
+    if (avail > max) {
+        avail = max;
+    }
+    for (i = 0u; i < avail; i++) {
+        out[i] = (uint8_t)s_ring[(s_log_drain_at + i) % size];
+    }
+    s_log_drain_at += avail;
+    tracer_pm_restore(pm);
+    return avail;
+}
+#endif /* TRACER_USE_LOG */
 
 /* Weak-symbol attribute, portable across GCC/Clang/ARMCC/IAR.
  * IAR's __weak keyword needs the extended-language option (--eec) that many
@@ -626,9 +803,34 @@ void TRACER_WEAK tracer_dump_tasks(void) {
 }
 
 uint32_t TRACER_WEAK tracer_uptime_ms(void) {
-    /* RTOS adapter hook: override to return the system up-time in ms
-     * (FreeRTOS: xTaskGetTickCount() * portTICK_PERIOD_MS).  Printed in every
-     * dump so a crash log can be matched to a boot session. */
+    /* Default "simplest system tick": count SysTick reloads.  Best effort,
+     * no CMSIS / RTOS dependency, so logs (tracer_log prefix "[<ms> ms]") and
+     * every dump's "Up:" line carry a time stamp out of the box when a
+     * SysTick is running:
+     *   - SysTick enabled (CTRL.ENABLE): every wrap (it counts down) is one
+     *     tick; with the CMSIS/FreeRTOS default ~1 ms reload the wrap count
+     *     IS the up-time in ms, with any other reload it is still a monotonic
+     *     tick counter (same assumption as tracer_delay_ms).
+     *   - SysTick disabled / non-ARM host: 0.  Override this weak hook to
+     *     feed any other time base (FreeRTOS: xTaskGetTickCount() *
+     *     portTICK_PERIOD_MS), which is always preferred when available. */
+#if defined(__arm__) || defined(__thumb__)
+    volatile uint32_t *ctrl = (volatile uint32_t *)0xE000E010u;
+    volatile uint32_t *val  = (volatile uint32_t *)0xE000E018u;
+    static volatile uint32_t s_wraps = 0u;
+    static volatile uint32_t s_prev  = 0xFFFFFFFFu;
+    if ((*ctrl & 1u) != 0u) {
+        uint32_t now = *val;
+        /* counter wrapped (counts down) */
+        if (now > s_prev) {
+            s_wraps++;
+        }
+        s_prev = now;
+        return s_wraps;
+    }
+    /* reset if SysTick (re)starts later */
+    s_prev = 0xFFFFFFFFu;
+#endif
     return 0u;
 }
 
@@ -1015,7 +1217,7 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     }
     s_tracer_dumping = 1u;
 
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
     /* Start the "black box" capture: dump output is mirrored to s_cap. */
     tracer_cap_begin();
 #endif
@@ -1192,7 +1394,7 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
 #endif /* TRACER_STACK_DUMP_BYTES */
     TRACER_PRINTF("===== End of dump =====\r\n");
 
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
     /* Persist the crash record (weak hook) before trapping / resetting. */
     tracer_crash_finalize();
 #endif
@@ -1221,7 +1423,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
         for (;;) {}
     }
     s_tracer_dumping = 1u;
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
     tracer_cap_begin();
 #endif
     TRACER_PRINTF("\r\n===== Tracer: Assert Failed =====\r\n");
@@ -1233,7 +1435,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
 #if TRACER_USE_FINSTRUMENT
     tracer_dump_trace();
 #endif
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
     tracer_crash_finalize();
 #endif
 #if TRACER_AUTO_RESET_MS

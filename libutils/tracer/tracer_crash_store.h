@@ -2,7 +2,7 @@
  * tracer_crash_store.h - media-agnostic crash-record store (slot strategy).
  *
  * The "staging" half of the two-stage crash record (see tracer.h
- * TRACER_USE_CRASHLOG): once tracer has assembled a crash record (dump text
+ * TRACER_USE_CRASH): once tracer has assembled a crash record (dump text
  * + pre-crash ring + CRC footer) it hands it to the weak tracer_crash_save()
  * hook.  This file implements that hook as a MEDIA-AGNOSTIC store:
  *
@@ -24,7 +24,7 @@
  * crash store needs no board glue at all.
  *
  * The file tracer_crash_store.c is compiled into the tracer library when
- * TRACER_USE_CRASHLOG is enabled (it only contains code under that switch).
+ * TRACER_USE_CRASH is enabled (it only contains code under that switch).
  */
 #ifndef TRACER_CRASH_STORE_H
 #define TRACER_CRASH_STORE_H

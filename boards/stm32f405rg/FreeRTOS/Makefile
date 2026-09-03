@@ -257,7 +257,8 @@ endif
 C_DEFS =  \
 -DUSE_HAL_DRIVER \
 -DSTM32F405xx \
--DTRACER_USE_CRASHLOG=1 
+-DTRACER_USE_CRASH=1 \
+-DTRACER_USE_LOG=1 
 
 
 ifeq ($(tool), gcc)

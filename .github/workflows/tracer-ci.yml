@@ -28,35 +28,60 @@ jobs:
       - name: Build and run host unit tests
         working-directory: libutils/tracer
         run: |
-          gcc -std=c99 -Wall -Wextra -I. tests/test_tracer.c -o /tmp/test_tracer
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -I. tests/test_tracer.c -o /tmp/test_tracer
           /tmp/test_tracer
 
       - name: Mini-printf (crash-safe output) tests
         working-directory: libutils/tracer
         run: |
-          gcc -std=c99 -Wall -Wextra -I. tests/test_miniprint.c -o /tmp/test_miniprint
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -I. tests/test_miniprint.c -o /tmp/test_miniprint
           /tmp/test_miniprint
 
       - name: Crash-log (ring + dump capture) tests
         working-directory: libutils/tracer
         run: |
-          gcc -std=c99 -Wall -Wextra -I. tests/test_crashlog.c -o /tmp/test_crashlog
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -I. tests/test_crashlog.c -o /tmp/test_crashlog
           /tmp/test_crashlog
 
       - name: Crash-store (media-agnostic double-slot) tests
         working-directory: libutils/tracer
         run: |
-          gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASHLOG=1 -I. \
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -DTRACER_USE_CRASH=1 -I. \
             tests/test_crash_store.c tracer_crash_store.c -o /tmp/test_crash_store
           /tmp/test_crash_store
 
-      - name: ARM cross-compile smoke (tracer + crash_store, crashlog on)
+      - name: Runtime log (unified ring / level / drain) tests
+        working-directory: libutils/tracer
+        run: |
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -I. tests/test_tracer_log.c -o /tmp/test_tracer_log
+          /tmp/test_tracer_log
+
+      - name: Runtime log sink override test (LOG-only build)
+        working-directory: libutils/tracer
+        run: |
+          gcc -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
+            -DTRACER_USE_LOG=1 \
+            -DTRACER_STACK_DUMP_BYTES=0 \
+            -DTRACER_STACK_BASE=0x20000000 -DTRACER_STACK_TOP=0x20010000 \
+            -DTRACER_TEXT_START=0x08000000 -DTRACER_TEXT_END=0x08020000 \
+            -I. tests/test_tracer_log_sink.c tracer.c -o /tmp/test_tracer_log_sink
+          /tmp/test_tracer_log_sink
+
+      - name: ARM cross-compile smoke (crash + log, and LOG-only)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
           cd libutils/tracer
           arm-none-eabi-gcc -std=c99 -Wall -Wextra -mcpu=cortex-m33 -mthumb \
-            -DTRACER_USE_CRASHLOG=1 -I. -fsyntax-only tracer.c tracer_crash_store.c
+            -DTRACER_USE_CRASH=1 -DTRACER_USE_LOG=1 \
+            -I. -fsyntax-only tracer.c tracer_crash_store.c
+          arm-none-eabi-gcc -std=c99 -Wall -Wextra -mcpu=cortex-m33 -mthumb \
+            -DTRACER_USE_LOG=1 -I. -fsyntax-only tracer.c
           arm-none-eabi-gcc -c tracer_gnugcc.s -o /tmp/tracer_gnugcc.o
 
       - name: Run offline parser tests

@@ -59,6 +59,15 @@
 extern "C" {
 #endif
 
+/* Feature switches (default off).  Defined up front so the preprocessor
+ * never relies on the implicit "undefined macro == 0" rule later. */
+#ifndef TRACER_USE_CRASH
+#define TRACER_USE_CRASH 0
+#endif
+#ifndef TRACER_USE_LOG
+#define TRACER_USE_LOG 0
+#endif
+
 /* Output backends.
  *
  * 1. Default / non-fault output uses TRACER_PRINTF (standard printf(), or
@@ -90,51 +99,55 @@ extern "C" {
  *    overrides step 1 (and any app-defined TRACER_PRINTF): crash-safety wins
  *    on the fault path.
  *
- *    TRACER_USE_CRASHLOG=1 ("black box" crash record) also forces the same
- *    per-char mini-printf path -- even without TRACER_PUTCHAR (a stdio
- *    putchar() fallback is used then) -- because the crash record mirrors the
- *    dump one char at a time into a RAM capture buffer.  See
- *    tracer_ring_printf / tracer_crash_save below.  A TRACER_USE_CRASHLOG
- *    build therefore redefines TRACER_PRINTF regardless of TRACER_PUTCHAR. */
-#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASHLOG
+ *    TRACER_USE_CRASH / TRACER_USE_LOG (the crash "black box" record and the
+ *    leveled runtime log) also force the same per-char mini-printf path --
+ *    even without TRACER_PUTCHAR (a stdio putchar() fallback is used then) --
+ *    because the crash record mirrors the dump one char at a time into a RAM
+ *    capture buffer, and the runtime log renders through the same mini-printf
+ *    (see tracer_ring_printf / tracer_crash_save / tracer_log below).  A
+ *    TRACER_USE_CRASH / TRACER_USE_LOG build therefore redefines TRACER_PRINTF
+ *    regardless of TRACER_PUTCHAR. */
+#if defined(TRACER_PUTCHAR) || TRACER_USE_CRASH || TRACER_USE_LOG
 #undef TRACER_PRINTF
 #define TRACER_PRINTF tracer_xprintf
 #endif
 
-/* Crash-log ("black box") support.  Off by default: no ring buffer, no
- * capture, no code size -- a fault dump behaves exactly as before.
+/* Crash "black box" + leveled runtime log.  Both are opt-in and INDEPENDENT
+ * (default off: no ring, no capture, no log code -- a fault dump behaves
+ * exactly as before).  The shared infra (mini-printf / PRIMASK / ring) is
+ * compiled when EITHER switch is on; a build that touches the ring needs the
+ * format subset mini-printf supports (%s %c %d %u %x %X %lu %ld +
+ * '-'/'0'/width).
  *
- * When enabled (define TRACER_USE_CRASHLOG to 1):
- *  - App code may log key runtime events with tracer_ring_printf(); tracer
- *    keeps the most recent TRACER_CRASHLOG_RING_SIZE bytes in RAM (lock-free,
- *    IRQ-safe), i.e. "what happened just before the crash".
- *  - When a fault / assert / stack-overflow dump runs, every dump character
- *    is ALSO mirrored (by the mini-printf path above) into an in-RAM capture
- *    buffer (TRACER_CRASHLOG_CAP_SIZE).  Before trapping / auto-resetting,
- *    tracer appends the pre-crash ring tail and a CRC footer to the capture
- *    buffer and hands it to the weak hook tracer_crash_save(), which an app
- *    overrides with its non-volatile storage backend (e.g. a reserved SPI NOR
- *    sector).  After a reset, boot code reads the record back and turns it
- *    into a file / report.  The default weak hook is a no-op, so enabling
- *    TRACER_USE_CRASHLOG alone never touches storage.
+ *   TRACER_USE_CRASH=1 -- crash "black box":
+ *     - tracer_ring_printf() keeps the most recent TRACER_RING_SIZE bytes of
+ *       pre-crash events in RAM (lock-free, IRQ-safe).
+ *     - When a fault / assert / stack-overflow dump runs, every dump
+ *       character is mirrored into an in-RAM capture buffer
+ *       (TRACER_CRASH_SIZE); before trapping / auto-resetting, tracer
+ *       appends the pre-crash ring tail and a CRC footer and hands the record
+ *       to the weak hook tracer_crash_save(), which an app overrides with its
+ *       non-volatile backend (reserved flash / SPI NOR).  After a reset, boot
+ *       code reads the record back and archives it.  Default weak = no-op.
  *
- *  - A TRACER_USE_CRASHLOG build renders all tracer output through the
- *    lock-free mini-printf (see above), so it also needs the format subset
- *    mini-printf supports (%s %c %d %u %x %X %lu %ld + '-'/'0'/width).
+ *   TRACER_USE_LOG=1 -- leveled runtime log:
+ *     - tracer_log() / TRACER_LOGI.. print leveled lines to the serial sink
+ *       AND append them to the SAME ring (unified); optional async
+ *       persistence via tracer_log_sink() / tracer_log_drain().  When
+ *       TRACER_USE_CRASH is also on, a crash record automatically ends with
+ *       the recent run log.
  */
-#ifndef TRACER_USE_CRASHLOG
-#define TRACER_USE_CRASHLOG 0
-#endif
 
-/* RAM ring buffer size for tracer_ring_printf() (bytes, circular). */
-#ifndef TRACER_CRASHLOG_RING_SIZE
-#define TRACER_CRASHLOG_RING_SIZE 2048u
+/* Shared ring buffer size (bytes, circular): pre-crash events
+ * (tracer_ring_printf) and/or the log stream (tracer_log) share it. */
+#ifndef TRACER_RING_SIZE
+#define TRACER_RING_SIZE 2048u
 #endif
 
 /* In-RAM capture buffer size for the crash record (dump text + ring tail +
  * CRC footer).  Must comfortably fit one dump (raw stack + registers). */
-#ifndef TRACER_CRASHLOG_CAP_SIZE
-#define TRACER_CRASHLOG_CAP_SIZE 8192u
+#ifndef TRACER_CRASH_SIZE
+#define TRACER_CRASH_SIZE 8192u
 #endif
 
 /* Maximum number of call-stack entries dumped. */
@@ -301,8 +314,11 @@ uint32_t tracer_stack_limit(void);
  * high-water).  Weak, default empty: the core stays RTOS-agnostic, RTOS
  * adapters override it (FreeRTOS: vTaskList). */
 void tracer_dump_tasks(void);
-/* System up-time in milliseconds, printed in every dump.  Weak, default 0:
- * RTOS adapters override it (FreeRTOS: xTaskGetTickCount()*portTICK_PERIOD_MS). */
+/* System up-time in milliseconds, printed in every dump and as the
+ * "[<ms> ms]" prefix of every tracer_log() line.  Weak.  Default: a
+ * no-dependency SysTick wrap counter (SysTick running -> monotonic ms with
+ * the usual ~1 ms reload; else 0).  RTOS adapters override it with the more
+ * accurate tick source (FreeRTOS: xTaskGetTickCount()*portTICK_PERIOD_MS). */
 uint32_t tracer_uptime_ms(void);
 /* Feed the hardware watchdog during a long dump / pre-reset delay, so it
  * does not cut the dump short.  Weak, default no-op: apps with an IWDG
@@ -318,12 +334,12 @@ void tracer_dump_all(void);
  * TRACER_AUTO_RESET_MS>0) or traps forever.  Never returns. */
 void tracer_assert_fail(const char *expr, const char *file, int line);
 
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
 /* Append a formatted event line to the pre-crash RAM ring log (the "black
- * box": the most recent TRACER_CRASHLOG_RING_SIZE bytes of what happened
- * before a crash).  Lock-free and IRQ-safe; call from app code on key state
- * changes (call start/end, registration state, watchdog resets, ...).  The
- * last entries are appended to every crash record. */
+ * box": the most recent TRACER_RING_SIZE bytes of what happened before a
+ * crash).  Lock-free and IRQ-safe; call from app code on key state changes
+ * (call start/end, registration state, watchdog resets, ...).  The last
+ * entries are appended to every crash record. */
 void tracer_ring_printf(const char *fmt, ...);
 
 /* Weak non-volatile storage hook.  Called at the very end of a fault /
@@ -340,7 +356,95 @@ void tracer_ring_printf(const char *fmt, ...);
  * backend (reserved flash sector / SPI NOR ...).  Boot code then reads the
  * record back and archives it (file / report). */
 void tracer_crash_save(const void *data, uint32_t len);
-#endif /* TRACER_USE_CRASHLOG */
+#endif /* TRACER_USE_CRASH */
+
+#if TRACER_USE_LOG
+/* ---- Leveled runtime log (unified with the pre-crash ring) ----
+ *
+ * tracer_log() is a plain leveled log call for application code.  It shares
+ * the SAME RAM ring as tracer_ring_printf() ("unified", one buffer): when
+ * TRACER_USE_CRASH is also enabled a crash record automatically ends with
+ * the recent run log -- no separate "persist the log" step is ever needed
+ * (with only TRACER_USE_LOG, persistence goes through tracer_log_sink /
+ * tracer_log_drain instead).
+ *
+ * Filtering is a RUNTIME switch (initial value TRACER_LOG_DEFAULT_LEVEL):
+ * lines below tracer_log_get_level() are dropped.  Change it at any time
+ * with tracer_log_set_level() (a shell command, a debugger, or raise it to
+ * TRACE while chasing a bug).  All levels are always compiled in -- there is
+ * no compile-time filter, so the runtime level may move freely in both
+ * directions.
+ *
+ * One formatted line ("[<ms> ms]X: <body>\r\n", X = level letter; <ms> from
+ * the weak tracer_uptime_ms(), which by default counts SysTick wraps -- so
+ * every log line already carries a monotonic time stamp, no extra wiring) is
+ * built on the CALLER's stack (TRACER_LOG_LINE_SIZE bytes, so tracer_log()
+ * is re-entrant and safe from an ISR) and then, inside a short critical
+ * section:
+ *   1. printed synchronously to the serial sink -- a stock build is
+ *      immediately visible on the console (the "sync output" path used when
+ *      no async backend is attached);
+ *   2. appended to the shared pre-crash ring (the crash log);
+ * and afterwards
+ *   3. handed whole (line,len) to the weak tracer_log_sink() hook.
+ *
+ * Asynchronous persistence (file / flash / network) is left to the app with
+ * TWO independent interfaces -- use either, both, or neither:
+ *   - tracer_log_sink(): push model.  Override the weak hook to receive every
+ *     finished line and persist it.  Default is a no-op (pure sync output).
+ *   - tracer_log_drain(): pull model.  Call from a low-priority background
+ *     task / idle hook to copy the incremental byte stream (everything
+ *     written since the previous call) and write it out.  Independent,
+ *     lock-free read cursor. */
+typedef enum {
+    TRACER_LOG_TRACE = 0,
+    TRACER_LOG_DEBUG = 1,
+    TRACER_LOG_INFO  = 2,
+    TRACER_LOG_WARN  = 3,
+    TRACER_LOG_ERROR = 4
+} tracer_log_level_t;
+
+/* Runtime log level at startup (TRACER_LOG_INFO by default). */
+#ifndef TRACER_LOG_DEFAULT_LEVEL
+#define TRACER_LOG_DEFAULT_LEVEL TRACER_LOG_INFO
+#endif
+
+/* Max bytes of one formatted log line (prefix + body + CRLF); a longer line
+ * is truncated.  Allocated on the caller's stack by tracer_log(). */
+#ifndef TRACER_LOG_LINE_SIZE
+#define TRACER_LOG_LINE_SIZE 160u
+#endif
+
+/* Log one line at 'level'.  Returns the number of bytes the line produced
+ * (0 when filtered out by the current runtime level). */
+uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...);
+void tracer_log_set_level(tracer_log_level_t level);
+tracer_log_level_t tracer_log_get_level(void);
+
+/* Leveled convenience macros: the level is baked into the macro NAME, so a
+ * call carries no level argument -- e.g. TRACER_LOGI("call %u", n) expands
+ * to tracer_log(TRACER_LOG_INFO, "call %u", n).  Every one still respects
+ * the runtime level (TRACER_LOG_DEFAULT_LEVEL / tracer_log_set_level):
+ * a TRACER_LOGI(...) below the current runtime level is dropped just like
+ * tracer_log(TRACER_LOG_INFO, ...). */
+#define TRACER_LOGT(...) tracer_log(TRACER_LOG_TRACE, __VA_ARGS__)
+#define TRACER_LOGD(...) tracer_log(TRACER_LOG_DEBUG, __VA_ARGS__)
+#define TRACER_LOGI(...) tracer_log(TRACER_LOG_INFO,  __VA_ARGS__)
+#define TRACER_LOGW(...) tracer_log(TRACER_LOG_WARN,  __VA_ARGS__)
+#define TRACER_LOGE(...) tracer_log(TRACER_LOG_ERROR, __VA_ARGS__)
+
+/* Weak per-line asynchronous persistence hook.  Override to store each
+ * finished line (e.g. append to a flash file / a log file on an FS).
+ * 'line' is not NUL-terminated; use 'len'.  Default no-op. */
+void tracer_log_sink(const void *line, uint32_t len);
+
+/* Incremental pull: copy up to 'max' bytes of the log stream produced since
+ * the previous call into 'out' and advance the internal read cursor.
+ * Returns the bytes copied (0 when nothing new).  If the ring already
+ * overwrote part of the stream (consumer slower than the writer), the copy
+ * starts at the oldest bytes still available. */
+uint32_t tracer_log_drain(uint8_t *out, uint32_t max);
+#endif /* TRACER_USE_LOG */
 
 /* Dump the current call stack by scanning from the live SP for Thumb-2
  * BL/BLX return addresses (replaces fault-dump's fault_dump_callstack).

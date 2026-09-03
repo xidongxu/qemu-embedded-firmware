@@ -178,19 +178,21 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_definitions(tracer PRIVATE TRACER_USE_EXIDX=1)
 target_compile_options(tracer PRIVATE "$<$<COMPILE_LANGUAGE:C>:-funwind-tables>")
 
-# Crash-log "black box" (see tracer.h TRACER_USE_CRASHLOG): every dump
-# character is mirrored into a RAM capture buffer (pre-crash ring log + dump
-# text + CRC), then handed to tracer_crash_save() before trap/reset.  The
-# mirror needs tracer's per-char mini-printf path, so tracer is also built
-# with the crash-safe TRACER_PUTCHAR sink put_char() (Core/Inc/uart.h -- a
-# lock-free single-char UART output), which also makes the whole dump
-# independent of printf.
-target_compile_definitions(tracer PRIVATE TRACER_USE_CRASHLOG=1)
+# Crash "black box" (TRACER_USE_CRASH) + leveled runtime log (TRACER_USE_LOG)
+# -- see tracer.h.  With both on, every dump character is mirrored into a RAM
+# capture buffer (pre-crash ring log + dump text + CRC) and handed to
+# tracer_crash_save() before trap/reset, and tracer_log() lines land in the
+# same ring so the record ends with the recent run log.  The mirror needs
+# tracer's per-char mini-printf path, so tracer is also built with the
+# crash-safe TRACER_PUTCHAR sink put_char() (Core/Inc/uart.h -- a lock-free
+# single-char UART output), which also makes the whole dump independent of
+# printf.
+target_compile_definitions(tracer PRIVATE TRACER_USE_CRASH=1 TRACER_USE_LOG=1)
 target_compile_options(tracer PRIVATE
     "$<$<COMPILE_LANGUAGE:C>:-DTRACER_PUTCHAR=put_char;-include;${CMAKE_CURRENT_SOURCE_DIR}/../Core/Inc/uart.h>")
-# The app target also sees TRACER_USE_CRASHLOG so tracer_ring_printf() /
-# tracer_crash_save() are declared in app sources.
-target_compile_definitions(${TARGET} PRIVATE TRACER_USE_CRASHLOG=1)
+# The app target also sees the switches so tracer_ring_printf() /
+# tracer_crash_save() / tracer_log() are declared in app sources.
+target_compile_definitions(${TARGET} PRIVATE TRACER_USE_CRASH=1 TRACER_USE_LOG=1)
 
 # Dynamic function trace (optional, see tracer.h TRACER_USE_FINSTRUMENT):
 # the hooks are compiled into the tracer library (macro on the tracer target,

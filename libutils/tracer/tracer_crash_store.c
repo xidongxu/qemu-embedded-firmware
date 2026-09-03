@@ -1,7 +1,7 @@
 /*
  * tracer_crash_store.c - media-agnostic crash-record store (see header).
  *
- * Compiled into the tracer library only when TRACER_USE_CRASHLOG is enabled
+ * Compiled into the tracer library only when TRACER_USE_CRASH is enabled
  * (the whole file is guarded by that switch).  Provides the STRONG
  * implementation of tracer's weak tracer_crash_save() hook plus the read /
  * clear helpers, on top of the board-provided weak media primitives
@@ -19,7 +19,7 @@
 
 #include "tracer_crash_store.h"
 
-#if TRACER_USE_CRASHLOG
+#if TRACER_USE_CRASH
 
 /* ---- CRC-32 (IEEE 802.3 poly 0xEDB88320, reflected, bitwise) ------------ */
 #define TRACER_CRASH_STORE_MAGIC 0x31434E54u  /* 'TNC1' */
@@ -229,4 +229,4 @@ void tracer_crash_store_clear(void) {
     }
 }
 
-#endif /* TRACER_USE_CRASHLOG */
+#endif /* TRACER_USE_CRASH */
