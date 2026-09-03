@@ -90,3 +90,26 @@
   clean（`[0 ms] I: Start`，pjsua 进媒体）。
 - **坑**：zig cc 编译 `..\tracer.c` 这类**相对父目录源码**会报 `CacheCheckFailed`（zig 缓存缺陷）→ host 测试
   命令一律用绝对路径输入源文件。
+
+## 更新（同日，第三轮）：pj_phone.c 0-printf + pjsua PJ_LOG 接入 tracer
+用户定：**watchdog 周期打印全部保持 INFO（原样可见）**；**pjsua 内部日志用 `pj_log_set_log_func` 接入
+tracer**。目标：`pj_phone.c` 不再裸 printf（0-printf 推广到 phone 应用），日志全走 tracer 管道（ring + sink +
+可运行期分级），且 pjsua/pjlib 的日志也进 tracer。
+- **printf → tracer（~55 处）**：正常/状态路径 `TRACER_LOGI`，可恢复/重试/回退 `TRACER_LOGW`（reg 失败将重
+  试、媒体 stall 标记、EC 失败继续、snd dev 回退 null、busy-reject、send_dtmf 拒绝…），致命失败 `TRACER_LOGE`
+  （make_call/answer/reject/conf_connect/transport/acc_add/pjsua_create/init/start 失败、stall 超时自动挂
+  断、malloc 失败…）。watchdog 心跳/统计/水位表按用户要求全 `TRACER_LOGI`。
+- **`%.*s` 处理**：mini-printf 无精度 → 新增 `pjstr_cstr(pj_str_t*,buf,cap)` 助手（拷贝 NUL 结尾）替换 4 处
+  （reg state 文本、call state 文本、两处 call end reason）。
+- **PJ_LOG writer**：`phone_pjlog_writer(level,data,len)` 装于 `pj_phone_init` 中 `pjsua_init OK` 之后
+  （**pjsua_init 内部会把 writer 换成自己的**，必须先 init 再装）。级别映射 pjlib→tracer：0/1(FATAL/ERROR)
+  →E、2(WARN)→W、3(INFO)→I、4/5(DEBUG/TRACE)→D（默认 INFO 下被过滤）。`data` 已带 pjlib 装饰（时间/线程/
+  模块）且 NUL 结尾含尾部 `\n` → 就地覆写 `\0` 去掉换行（pjlib log_buffer 每次重建，安全），再
+  `tracer_log(lv,"%s",data)`。`log_cfg.level=3` 把 pjlib 自身的 per-frame debug/trace（4/5）在 pjlib 层就掐
+  掉（省格式开销，行为同旧 console_level 过滤）。writer 前先 `lv<get_level()` 早退，避免改 pjlib 缓冲。
+- **验证（QEMU 58s）**：`[ms] I/W/E:` 前缀正确（`pj_phone:` 与 `wd:` 全带前缀）；pjsua 日志经 writer 正确映
+  射——`[34432ms] E: 00:00:34.431 pjsua_acc.c .Unable to create/send REGISTER...`、`[35132ms] W: ... SIP
+  registration failed, status=503...`、`[35126ms] I: ... ssl... Handshake failed...`；`%.*s` 渲染
+  `(Service Unavailable)` 正常；尾部换行干净（无空行）；无锁死。
+- **遗留（未在 pj_phone 范围）**：pjsua_init 期间（writer 安装前）的少量日志仍走 pjsua 自己的 printf writer
+  （仅 init 窗口，可接受）；`phone_net.c`（UDP cmd server）等其它 app 文件的 printf 未迁移（另行）。

@@ -133,6 +133,22 @@ static unsigned g_dial_port = PJ_PHONE_DIAL_PORT;
 static pj_phone_cb_t g_cb = NULL;
 static void *g_cb_user = NULL;
 
+/* The tracer mini-printf has no %.*s, so render a pj_str_t into a
+ * NUL-terminated buffer for use as %s in a log call. */
+static const char *pjstr_cstr(const pj_str_t *s, char *buf, size_t cap) {
+    size_t n = (s != NULL && s->ptr != NULL && s->slen > 0)
+                   ? (size_t)s->slen
+                   : 0u;
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    if (n > 0) {
+        memcpy(buf, s->ptr, n);
+    }
+    buf[n] = '\0';
+    return buf;
+}
+
 static void phone_notify(void) {
     if (g_cb != NULL) {
         g_cb(g_cb_user);
@@ -201,9 +217,9 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
         {
             pj_time_val t = {0, 0};
             pj_gettimeofday(&t);
-            printf("pj_phone: [%lu.%03lu] make_call(%s) -> %d (call=%d)\r\n",
-                   (unsigned long)t.sec, (unsigned long)t.msec,
-                   buf, (int)st, (int)call_id);
+            TRACER_LOGI("pj_phone: [%lu.%03lu] make_call(%s) -> %d (call=%d)",
+                        (unsigned long)t.sec, (unsigned long)t.msec,
+                        buf, (int)st, (int)call_id);
         }
         if (st == PJ_SUCCESS) {
             taskENTER_CRITICAL();
@@ -214,8 +230,8 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
         } else {
             /* make_call failed: roll back to IDLE so the UI does not sit in
              * DIALING forever. */
-            printf("pj_phone: make_call(%s) FAILED (%d) - back to IDLE\r\n",
-                   buf, (int)st);
+            TRACER_LOGE("pj_phone: make_call(%s) FAILED (%d) - back to IDLE",
+                        buf, (int)st);
             phone_to_idle();
         }
         break;
@@ -223,10 +239,10 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
     case PHONE_JOB_ANSWER:
         cid = g_incoming_call_id;
         if (cid != PJSUA_INVALID_ID) {
-            printf("pj_phone: answer call %d (200)\r\n", (int)cid);
+            TRACER_LOGI("pj_phone: answer call %d (200)", (int)cid);
             if (pjsua_call_answer(cid, 200, NULL, NULL) != PJ_SUCCESS) {
                 /* Answer failed: the call is likely gone. */
-                printf("pj_phone: answer FAILED - back to IDLE\r\n");
+                TRACER_LOGE("pj_phone: answer FAILED - back to IDLE");
                 phone_to_idle();
             }
         }
@@ -234,9 +250,9 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
     case PHONE_JOB_REJECT:
         cid = g_incoming_call_id;
         if (cid != PJSUA_INVALID_ID) {
-            printf("pj_phone: reject call %d (486)\r\n", (int)cid);
+            TRACER_LOGI("pj_phone: reject call %d (486)", (int)cid);
             if (pjsua_call_answer(cid, 486, NULL, NULL) != PJ_SUCCESS) {
-                printf("pj_phone: reject FAILED - back to IDLE\r\n");
+                TRACER_LOGE("pj_phone: reject FAILED - back to IDLE");
                 phone_to_idle();
             }
         }
@@ -244,11 +260,11 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
     case PHONE_JOB_HANGUP:
         cid = g_call_id;
         if (cid != PJSUA_INVALID_ID) {
-            printf("pj_phone: hangup call %d\r\n", (int)cid);
+            TRACER_LOGI("pj_phone: hangup call %d", (int)cid);
             if (pjsua_call_hangup(cid, 0, NULL, NULL) != PJ_SUCCESS) {
                 /* Hanging up an already-gone call is harmless; the
                  * DISCONNECTED callback cleans up the state. */
-                printf("pj_phone: hangup returned error (ignored)\r\n");
+                TRACER_LOGW("pj_phone: hangup returned error (ignored)");
             }
         }
         break;
@@ -262,12 +278,12 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
         pj_status_t st = PJ_SUCCESS;
 
         if (g_acc == PJSUA_INVALID_ID) {
-            printf("pj_phone: re-register skipped (no account)\r\n");
+            TRACER_LOGW("pj_phone: re-register skipped (no account)");
             break;
         }
         pool = pjsua_pool_create("rereg", 512, 256);
         if (pool == NULL) {
-            printf("pj_phone: re-register skipped (pool alloc failed)\r\n");
+            TRACER_LOGW("pj_phone: re-register skipped (pool alloc failed)");
             break;
         }
         pjsua_acc_get_config(g_acc, pool, &ac);
@@ -275,7 +291,11 @@ static void phone_job_exec(pj_timer_heap_t *th, pj_timer_entry *entry) {
         ac.id = pj_str(id_buf);
         st = pjsua_acc_modify(g_acc, &ac);
         pj_pool_release(pool);
-        printf("pj_phone: re-register as %s -> %d\r\n", id_buf, (int)st);
+        if (st == PJ_SUCCESS) {
+            TRACER_LOGI("pj_phone: re-register as %s -> %d", id_buf, (int)st);
+        } else {
+            TRACER_LOGW("pj_phone: re-register as %s -> %d", id_buf, (int)st);
+        }
         if (st == PJ_SUCCESS) {
             g_reg_state = PJ_PHONE_REG_REGISTERING;
             phone_notify();
@@ -370,7 +390,7 @@ void phone_watchdog(void *arg) {
                 if (PJ_TIME_VAL_MSEC(el) >= 15000) {
                     wd_last_probe = now;
                     if (g_reg_state != PJ_PHONE_REG_REGISTERING) {
-                        printf("wd: reg keepalive probe -> re-register\r\n");
+                        TRACER_LOGI("wd: reg keepalive probe -> re-register");
                         phone_job_post(PHONE_JOB_REREG, NULL);
                     }
                 }
@@ -389,11 +409,11 @@ void phone_watchdog(void *arg) {
                  * stall (UI shows "No audio!") and auto-hangup after
                  * PJ_PHONE_MEDIA_STALL_HANGUP_MS. */
                 stalled = (ss.rtcp.tx.pkt != 0 && ss.rtcp.rx.pkt == wd_last_rx);
-                printf("wd: rx_pkt=%lu tx_pkt=%lu rx_lost=%lu%s\r\n",
-                       (unsigned long)ss.rtcp.rx.pkt,
-                       (unsigned long)ss.rtcp.tx.pkt,
-                       (unsigned long)ss.rtcp.rx.loss,
-                       stalled ? " [RX-STALL]" : "");
+                TRACER_LOGI("wd: rx_pkt=%lu tx_pkt=%lu rx_lost=%lu%s",
+                            (unsigned long)ss.rtcp.rx.pkt,
+                            (unsigned long)ss.rtcp.tx.pkt,
+                            (unsigned long)ss.rtcp.rx.loss,
+                            stalled ? " [RX-STALL]" : "");
                 if (stalled) {
                     pj_time_val t = {0, 0};
                     pj_gettimeofday(&t);
@@ -402,17 +422,17 @@ void phone_watchdog(void *arg) {
                         if (!g_media_stall) {
                             g_media_stall = 1;
                             g_media_stall_at = t;
-                            printf("wd: media RX stalled - marking stall "
-                                   "(auto-hangup in %lu ms)\r\n",
-                                   (unsigned long)PJ_PHONE_MEDIA_STALL_HANGUP_MS);
+                            TRACER_LOGW("wd: media RX stalled - marking stall "
+                                        "(auto-hangup in %lu ms)",
+                                        (unsigned long)PJ_PHONE_MEDIA_STALL_HANGUP_MS);
                         } else if (PJ_PHONE_MEDIA_STALL_HANGUP_MS > 0 &&
                                    !g_media_stall_hung) {
                             pj_time_val el = t;
                             PJ_TIME_VAL_SUB(el, g_media_stall_at);
                             if (PJ_TIME_VAL_MSEC(el) >=
                                 (long)PJ_PHONE_MEDIA_STALL_HANGUP_MS) {
-                                printf("wd: media RX stalled too long - "
-                                       "auto-hangup\r\n");
+                                TRACER_LOGE("wd: media RX stalled too long - "
+                                            "auto-hangup");
                                 g_media_stall_hung = 1;
                                 phone_job_post(PHONE_JOB_HANGUP, NULL);
                             }
@@ -422,7 +442,7 @@ void phone_watchdog(void *arg) {
                     if (g_media_stall) {
                         g_media_stall = 0;
                         g_media_stall_hung = 0;
-                        printf("wd: media RX recovered\r\n");
+                        TRACER_LOGI("wd: media RX recovered");
                     }
                     wd_stall_cnt = 0;
                 }
@@ -437,26 +457,26 @@ void phone_watchdog(void *arg) {
                 if (pjsua_call_get_info(g_call_id, &ci) == PJ_SUCCESS &&
                     ci.conf_slot != PJSUA_INVALID_ID) {
                     pjsua_conf_get_signal_level(ci.conf_slot, &tx, &rx);
-                    printf("wd: conf sig tx=%u rx=%u\r\n", tx, rx);
+                    TRACER_LOGI("wd: conf sig tx=%u rx=%u", tx, rx);
                 }
             }
         }
 
         cur = xTaskGetCurrentTaskHandle();
-        printf("wd: current=%s\r\n", pcTaskGetName(cur));
+        TRACER_LOGI("wd: current=%s", pcTaskGetName(cur));
         n = uxTaskGetNumberOfTasks();
         st = pvPortMalloc(n * sizeof(TaskStatus_t));
         if (st != NULL) {
             n = uxTaskGetSystemState(st, n, NULL);
             for (i = 0; i < n; i++) {
-                printf("wd: %-13s hwm=%lu st=%s\r\n", st[i].pcTaskName,
-                       (unsigned long)st[i].usStackHighWaterMark,
-                       wd_state_name((int)st[i].eCurrentState));
+                TRACER_LOGI("wd: %-13s hwm=%lu st=%s", st[i].pcTaskName,
+                            (unsigned long)st[i].usStackHighWaterMark,
+                            wd_state_name((int)st[i].eCurrentState));
             }
             vPortFree(st);
         } else {
-            printf("wd: malloc fail heap=%u\r\n",
-                   (unsigned)xPortGetFreeHeapSize());
+            TRACER_LOGE("wd: malloc fail heap=%u",
+                        (unsigned)xPortGetFreeHeapSize());
         }
     }
 }
@@ -469,9 +489,12 @@ static void on_reg_state(pjsua_acc_id acc_id) {
         return;
     }
 
-    printf("pj_phone: acc %d reg state=%d (%.*s)\r\n", acc_id,
-           (int)info.status, (int)info.status_text.slen,
-           info.status_text.ptr);
+    {
+        char stxt[64];
+        pjstr_cstr(&info.status_text, stxt, sizeof(stxt));
+        TRACER_LOGI("pj_phone: acc %d reg state=%d (%s)", acc_id,
+                    (int)info.status, stxt);
+    }
 
     if (info.status >= 200 && info.status < 300) {
         /* Registered OK (2xx).  The UI drives calls; no auto-dial by default. */
@@ -487,8 +510,8 @@ static void on_reg_state(pjsua_acc_id acc_id) {
     } else if (info.status != 0) {
         /* Registration failed (403/408/503/...).  pjsua retries automatically
          * every reg_retry_interval seconds; we just count and log. */
-        printf("pj_phone: reg attempt %u FAILED (%d) - pjsua will retry\r\n",
-               ++g_reg_attempts, (int)info.status);
+        TRACER_LOGW("pj_phone: reg attempt %u FAILED (%d) - pjsua will retry",
+                    ++g_reg_attempts, (int)info.status);
         g_reg_state = PJ_PHONE_REG_FAILED;
         tracer_ring_printf("phone: reg FAIL %d (attempt %u)\r\n",
                            (int)info.status, (unsigned)g_reg_attempts);
@@ -507,9 +530,11 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 
     if (g_call_id != PJSUA_INVALID_ID && g_call_state != PJ_PHONE_CALL_IDLE) {
         /* Already in a call -> busy. */
-        printf("pj_phone: busy, rejecting incoming call %d (486)\r\n", call_id);
+        TRACER_LOGW("pj_phone: busy, rejecting incoming call %d (486)",
+                    call_id);
         if (pjsua_call_answer(call_id, 486, NULL, NULL) != PJ_SUCCESS) {
-            printf("pj_phone: busy-reject FAILED for call %d\r\n", (int)call_id);
+            TRACER_LOGE("pj_phone: busy-reject FAILED for call %d",
+                        (int)call_id);
         }
         return;
     }
@@ -528,8 +553,8 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
         }
     }
 
-    printf("pj_phone: incoming call %d from '%s' - waiting for answer\r\n",
-           call_id, tmp);
+    TRACER_LOGI("pj_phone: incoming call %d from '%s' - waiting for answer",
+                call_id, tmp);
     tracer_ring_printf("phone: incoming from '%s'\r\n", tmp);
 
     taskENTER_CRITICAL();
@@ -540,9 +565,9 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
     g_peer[sizeof(g_peer) - 1] = '\0';
     taskEXIT_CRITICAL();
 #if PJ_PHONE_AUTO_ANSWER
-    printf("pj_phone: auto-answer call %d (200)\r\n", (int)call_id);
+    TRACER_LOGI("pj_phone: auto-answer call %d (200)", (int)call_id);
     if (pjsua_call_answer(call_id, 200, NULL, NULL) != PJ_SUCCESS) {
-        printf("pj_phone: auto-answer FAILED for call %d\r\n", (int)call_id);
+        TRACER_LOGE("pj_phone: auto-answer FAILED for call %d", (int)call_id);
     }
 #endif
     phone_notify();
@@ -559,9 +584,13 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
     }
 
     pj_gettimeofday(&t);
-    printf("pj_phone: [%lu.%03lu] call %d state=%d (%.*s)\r\n",
-           (unsigned long)t.sec, (unsigned long)t.msec, call_id,
-           (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
+    {
+        char stxt[64];
+        pjstr_cstr(&ci.state_text, stxt, sizeof(stxt));
+        TRACER_LOGI("pj_phone: [%lu.%03lu] call %d state=%d (%s)",
+                    (unsigned long)t.sec, (unsigned long)t.msec, call_id,
+                    (int)ci.state, stxt);
+    }
 
     switch (ci.state) {
     case PJSIP_INV_STATE_CALLING:
@@ -590,18 +619,20 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
             pj_gettimeofday(&now);
             dur = now;
             PJ_TIME_VAL_SUB(dur, g_call_start);
-            printf("pj_phone: call %d disconnected: reason=%d (%.*s) "
-                   "dur=%ldms\r\n",
-                   call_id, (int)ci.last_status,
-                   (int)ci.last_status_text.slen,
-                   ci.last_status_text.ptr,
-                   (long)PJ_TIME_VAL_MSEC(dur));
+            {
+                char rtxt[64];
+                pjstr_cstr(&ci.last_status_text, rtxt, sizeof(rtxt));
+                TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%s) "
+                            "dur=%ldms",
+                            call_id, (int)ci.last_status, rtxt,
+                            (long)PJ_TIME_VAL_MSEC(dur));
+            }
         } else {
-            printf("pj_phone: call %d disconnected: reason=%d (%.*s) "
-                   "(call never established)\r\n",
-                   call_id, (int)ci.last_status,
-                   (int)ci.last_status_text.slen,
-                   ci.last_status_text.ptr);
+            char rtxt[64];
+            pjstr_cstr(&ci.last_status_text, rtxt, sizeof(rtxt));
+            TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%s) "
+                        "(call never established)",
+                        call_id, (int)ci.last_status, rtxt);
         }
 
         /* Record why the call ended so the UI can show it. */
@@ -636,9 +667,9 @@ static void on_call_media_state(pjsua_call_id call_id) {
     pjsua_call_info ci;
 
     if (pjsua_call_get_info(call_id, &ci) == PJ_SUCCESS) {
-        printf("pj_phone: call %d media_status=%d%s\r\n", call_id,
-               (int)ci.media_status,
-               ci.media_status == PJSUA_CALL_MEDIA_ACTIVE ? " (ACTIVE)" : "");
+        TRACER_LOGI("pj_phone: call %d media_status=%d%s", call_id,
+                    (int)ci.media_status,
+                    ci.media_status == PJSUA_CALL_MEDIA_ACTIVE ? " (ACTIVE)" : "");
 
         /* Wire the call's conference slot to the sound device (slot 0) once
          * media is up, so the real mpsx audio/mic is used. */
@@ -648,20 +679,20 @@ static void on_call_media_state(pjsua_call_id call_id) {
              * be enabled explicitly once the sound device exists. */
             {
                 pj_status_t e = pjsua_set_ec(200, 0);
-                printf("pj_phone: pjsua_set_ec(tail=200) -> %d\r\n", (int)e);
+                TRACER_LOGI("pj_phone: pjsua_set_ec(tail=200) -> %d", (int)e);
                 if (e != PJ_SUCCESS) {
-                    printf("pj_phone: pjsua_set_ec FAILED (%d) - "
-                           "continuing without EC\r\n", (int)e);
+                    TRACER_LOGW("pj_phone: pjsua_set_ec FAILED (%d) - "
+                                "continuing without EC", (int)e);
                 }
             }
             if (pjsua_conf_connect(ci.conf_slot, 0) != PJ_SUCCESS) {
-                printf("pj_phone: conf_connect(call->snd) FAILED\r\n");
+                TRACER_LOGE("pj_phone: conf_connect(call->snd) FAILED");
             }
             if (pjsua_conf_connect(0, ci.conf_slot) != PJ_SUCCESS) {
-                printf("pj_phone: conf_connect(snd->call) FAILED\r\n");
+                TRACER_LOGE("pj_phone: conf_connect(snd->call) FAILED");
             }
-            printf("pj_phone: conf connected (call slot %d <-> snd 0)\r\n",
-                   ci.conf_slot);
+            TRACER_LOGI("pj_phone: conf connected (call slot %d <-> snd 0)",
+                        ci.conf_slot);
         }
     }
 }
@@ -681,8 +712,8 @@ static void on_dtmf_digit(pjsua_call_id call_id, int digit) {
     }
     g_rx_dtmf[len] = ch;
     g_rx_dtmf[len + 1] = '\0';
-    printf("pj_phone: call %d DTMF rx '%c' (buf=%s)\r\n",
-           (int)call_id, ch, g_rx_dtmf);
+    TRACER_LOGI("pj_phone: call %d DTMF rx '%c' (buf=%s)",
+                (int)call_id, ch, g_rx_dtmf);
     phone_notify();
 }
 
@@ -708,7 +739,7 @@ int pj_phone_dial(const char *number) {
     if (st != PJ_SUCCESS) {
         /* The job could not even be queued: roll back the optimistic DIALING
          * so the UI doesn't stay stuck. */
-        printf("pj_phone: dial post FAILED (%d) - back to IDLE\r\n", (int)st);
+        TRACER_LOGE("pj_phone: dial post FAILED (%d) - back to IDLE", (int)st);
         phone_to_idle();
     }
     return (int)st;
@@ -721,20 +752,21 @@ int pj_phone_send_dtmf(const char *digits) {
     pj_status_t st = PJ_SUCCESS;
 
     if (digits == NULL || !*digits || g_call_state != PJ_PHONE_CALL_ACTIVE) {
-        printf("pj_phone: send_dtmf rejected (no active call)\r\n");
+        TRACER_LOGW("pj_phone: send_dtmf rejected (no active call)");
         return -1;
     }
     taskENTER_CRITICAL();
     cid = g_call_id;
     taskEXIT_CRITICAL();
     if (cid == PJSUA_INVALID_ID) {
-        printf("pj_phone: send_dtmf rejected (bad call id)\r\n");
+        TRACER_LOGW("pj_phone: send_dtmf rejected (bad call id)");
         return -1;
     }
     pj_strset2(&str, (char *)digits);
     st = pjsua_call_dial_dtmf(cid, &str);
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: dial_dtmf(\"%s\") FAILED (%d)\r\n", digits, (int)st);
+        TRACER_LOGE("pj_phone: dial_dtmf(\"%s\") FAILED (%d)", digits,
+                    (int)st);
     }
     return (int)st;
 }
@@ -750,6 +782,40 @@ int pj_phone_get_rx_dtmf(char *buf, int size) {
     return (int)strlen(buf);
 }
 
+/* pjlib/pjsua internal logs -> tracer.  pjsua installs its own console
+ * writer during pjsua_init(); we replace it afterwards (see pj_phone_init)
+ * so every pjlib log also flows through the tracer pipeline (ring + sink)
+ * instead of a bare printf.  pjlib log levels: 0=FATAL 1=ERROR 2=WARN
+ * 3=INFO 4=DEBUG 5=TRACE (6=DETAIL); map them onto the tracer levels, so the
+ * runtime log level controls how much pjsua chatter is kept.  'data' is
+ * NUL-terminated and already decorated by pjlib (time/thread/module) with a
+ * trailing '\n' -- strip it, tracer_log adds its own CRLF. */
+static void phone_pjlog_writer(int level, const char *data, int len) {
+    tracer_log_level_t lv;
+    if (level <= 1) {
+        lv = TRACER_LOG_ERROR;   /* FATAL / ERROR */
+    } else if (level == 2) {
+        lv = TRACER_LOG_WARN;    /* WARN */
+    } else if (level == 3) {
+        lv = TRACER_LOG_INFO;    /* INFO */
+    } else {
+        lv = TRACER_LOG_DEBUG;   /* DEBUG / TRACE / DETAIL */
+    }
+    /* Drop early so filtered lines never even touch pjlib's buffer. */
+    if (lv < tracer_log_get_level()) {
+        return;
+    }
+    if (len > 0) {
+        char *p = (char *)data;
+        while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r')) {
+            p[--len] = '\0';
+        }
+    }
+    if (len > 0) {
+        tracer_log(lv, "%s", data);
+    }
+}
+
 /* Initialise the phone. */
 int pj_phone_init(void) {
     pjsua_config cfg;
@@ -761,11 +827,11 @@ int pj_phone_init(void) {
     pj_status_t st = PJ_SUCCESS;
     char id_buf[128];
 
-    printf("\r\n=== PJSUA PHONE (high-level API) ===\r\n");
+    TRACER_LOGI("=== PJSUA PHONE (high-level API) ===");
 
     st = pjsua_create();
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: pjsua_create failed (%d)\r\n", st);
+        TRACER_LOGE("pj_phone: pjsua_create failed (%d)", st);
         return -1;
     }
 
@@ -777,9 +843,11 @@ int pj_phone_init(void) {
     cfg.cb.on_dtmf_digit = &on_dtmf_digit;
 
     pjsua_logging_config_default(&log_cfg);
-    /* Level 2 = warnings+errors only; higher levels flood the serial port
-     * with per-frame media logs which dominates guest CPU under TCG. */
-    log_cfg.console_level = 2;
+    /* cap pjlib's own verbosity: keep fatal..info (level <= 3) formatted;
+     * debug/trace are dropped by our tracer log writer anyway (see
+     * phone_pjlog_writer + the tracer runtime level), so the higher pjlib
+     * per-frame media logs never reach the serial port or the log ring. */
+    log_cfg.level = 3;
 
     pjsua_media_config_default(&media_cfg);
     /* 48k fullband: Opus needs clock_rate 48000 (RFC 7587 fixes the RTP
@@ -803,11 +871,16 @@ int pj_phone_init(void) {
 
     st = pjsua_init(&cfg, &log_cfg, &media_cfg);
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: pjsua_init failed (%d)\r\n", st);
+        TRACER_LOGE("pj_phone: pjsua_init failed (%d)", st);
         pjsua_destroy();
         return -1;
     }
-    printf("pj_phone: pjsua_init OK\r\n");
+    TRACER_LOGI("pj_phone: pjsua_init OK");
+
+    /* Route all pjsua/pjlib logs (PJ_LOG) through the tracer log pipeline.
+     * pjsua replaced the default writer with its own during init, so install
+     * ours afterwards. */
+    pj_log_set_log_func(&phone_pjlog_writer);
 
     /* Prefer Opus (fullband 48k) for audio quality, then G.722; G.711 as
      * narrowband fallback.  mpsx_dev configures the device from
@@ -816,23 +889,23 @@ int pj_phone_init(void) {
         pj_str_t cid;
         cid = pj_str("opus/48000");
         st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_HIGHEST);
-        printf("pj_phone: codec opus/48000 prio -> %d\r\n", (int)st);
+        TRACER_LOGI("pj_phone: codec opus/48000 prio -> %d", (int)st);
         cid = pj_str("G722/16000");
         st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
-        printf("pj_phone: codec G722/16000 prio -> %d\r\n", (int)st);
+        TRACER_LOGI("pj_phone: codec G722/16000 prio -> %d", (int)st);
         cid = pj_str("PCMU/8000");
         st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
-        printf("pj_phone: codec PCMU/8000 prio -> %d\r\n", (int)st);
+        TRACER_LOGI("pj_phone: codec PCMU/8000 prio -> %d", (int)st);
         cid = pj_str("PCMA/8000");
         st = pjsua_codec_set_priority(&cid, PJMEDIA_CODEC_PRIO_NORMAL);
-        printf("pj_phone: codec PCMA/8000 prio -> %d\r\n", (int)st);
+        TRACER_LOGI("pj_phone: codec PCMA/8000 prio -> %d", (int)st);
     }
 
 #if PJMEDIA_AUDIO_DEV_HAS_MPSX
     /* Register the mpsx audio factory at runtime using the public
      * pjmedia_aud_register_factory() API. */
     st = pjmedia_aud_register_factory(&pjmedia_mpsx_audio_factory);
-    printf("pj_phone: register mpsx aud factory -> %d\r\n", (int)st);
+    TRACER_LOGI("pj_phone: register mpsx aud factory -> %d", (int)st);
 
     /* Use the real mpsx audio/mic device; fall back to null on failure. */
     {
@@ -840,26 +913,26 @@ int pj_phone_init(void) {
         st = pjmedia_aud_dev_lookup("mpsx", "mpsx audio/mic", &mpsx_dev);
         if (st == PJ_SUCCESS && mpsx_dev != PJMEDIA_AUD_INVALID_DEV) {
             st = pjsua_set_snd_dev(mpsx_dev, mpsx_dev);
-            printf("pj_phone: pjsua_set_snd_dev(mpsx dev=%d) -> %d\r\n",
-                   (int)mpsx_dev, (int)st);
+            TRACER_LOGI("pj_phone: pjsua_set_snd_dev(mpsx dev=%d) -> %d",
+                        (int)mpsx_dev, (int)st);
             if (st != PJ_SUCCESS) {
                 /* Sound-device selection failed - fall back to the null
                  * device so signalling still works. */
-                printf("pj_phone: set_snd_dev(mpsx) failed (%d) - "
-                       "falling back to null\r\n", (int)st);
+                TRACER_LOGW("pj_phone: set_snd_dev(mpsx) failed (%d) - "
+                            "falling back to null", (int)st);
                 st = pjsua_set_null_snd_dev();
-                printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
+                TRACER_LOGW("pj_phone: pjsua_set_null_snd_dev -> %d", (int)st);
             }
         } else {
-            printf("pj_phone: mpsx snd dev lookup failed (%d), "
-                   "falling back to null\r\n", (int)st);
+            TRACER_LOGW("pj_phone: mpsx snd dev lookup failed (%d), "
+                        "falling back to null", (int)st);
             st = pjsua_set_null_snd_dev();
-            printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
+            TRACER_LOGW("pj_phone: pjsua_set_null_snd_dev -> %d", (int)st);
         }
     }
 #else
     st = pjsua_set_null_snd_dev();
-    printf("pj_phone: pjsua_set_null_snd_dev -> %d\r\n", (int)st);
+    TRACER_LOGI("pj_phone: pjsua_set_null_snd_dev -> %d", (int)st);
 #endif
 
     /* UDP transport bound to the guest SIP port.  No public_addr override:
@@ -869,12 +942,12 @@ int pj_phone_init(void) {
     tcfg.port = GUEST_SIP_PORT;
     st = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &tcfg, &tp);
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: transport_create failed (%d)\r\n", st);
+        TRACER_LOGE("pj_phone: transport_create failed (%d)", st);
         pjsua_destroy();
         return -1;
     }
-    printf("pj_phone: UDP transport up on :%d (id=%d)\r\n", GUEST_SIP_PORT,
-           (int)tp);
+    TRACER_LOGI("pj_phone: UDP transport up on :%d (id=%d)", GUEST_SIP_PORT,
+                (int)tp);
 
 #if PJ_PHONE_TLS
     /* TLS transport for SIPS: verify the server against the embedded CA
@@ -895,22 +968,22 @@ int pj_phone_init(void) {
         tcfg.tls_setting = tls;
         st = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &tcfg, &tp);
         if (st != PJ_SUCCESS) {
-            printf("pj_phone: TLS transport_create failed (%d)\r\n", st);
+            TRACER_LOGE("pj_phone: TLS transport_create failed (%d)", st);
             pjsua_destroy();
             return -1;
         }
-        printf("pj_phone: TLS transport up on :%d (id=%d)\r\n",
-               GUEST_SIP_PORT + 1, (int)tp);
+        TRACER_LOGI("pj_phone: TLS transport up on :%d (id=%d)",
+                    GUEST_SIP_PORT + 1, (int)tp);
     }
 #endif
 
     st = pjsua_start();
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: pjsua_start failed (%d)\r\n", st);
+        TRACER_LOGE("pj_phone: pjsua_start failed (%d)", st);
         pjsua_destroy();
         return -1;
     }
-    printf("pj_phone: pjsua_start OK\r\n");
+    TRACER_LOGI("pj_phone: pjsua_start OK");
 
     /* Register extension 1000 with FreeSWITCH (FS_HOST = 172.16.23.1).
      * The Contact is the guest's own address (172.16.23.50:15062), directly
@@ -958,11 +1031,11 @@ int pj_phone_init(void) {
     acc_cfg.srtp_secure_signaling = 0;
     st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
     if (st != PJ_SUCCESS) {
-        printf("pj_phone: acc_add failed (%d)\r\n", st);
+        TRACER_LOGE("pj_phone: acc_add failed (%d)", st);
         pjsua_destroy();
         return -1;
     }
-    printf("pj_phone: account added id=%d\r\n", g_acc);
+    TRACER_LOGI("pj_phone: account added id=%d", g_acc);
 
     return 0;
 }
@@ -982,7 +1055,7 @@ void pj_phone_set_dial_host(const char *host, unsigned port) {
     }
     g_dial_port = port;
     taskEXIT_CRITICAL();
-    printf("pj_phone: dial host set to %s:%u\r\n", g_dial_host, g_dial_port);
+    TRACER_LOGI("pj_phone: dial host set to %s:%u", g_dial_host, g_dial_port);
 }
 
 /* Get the current dial host. */
