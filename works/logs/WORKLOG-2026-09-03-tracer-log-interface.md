@@ -130,3 +130,11 @@ tracer**。目标：`pj_phone.c` 不再裸 printf（0-printf 推广到 phone 应
   ` -042`)/`%.0u`of0；两个日志测试断言 `[0 ms]`→`[0]`。
 - **验证**：host 全过、ARM fsyntax 三组合零警告、mps2 重链 rc=0、QEMU 实跑 `[0] I: Start`/`[35148] I:
   pj_phone: acc 0 reg state=503 (Service Unavailable)`（%.*s 渲染正确）无锁死。
+
+## 更新（同日，第五轮）：日志记录格式 `[<ms>]X:` → `[<ms>][X] `
+用户定：`[0] I: Start` 要成 `[0][I] Start`（级别字母独立方括号、去掉冒号）。
+- `tracer_ring_prefix` 只输出 `[<ms>]`（不再带尾随空格）；`tracer_log` 在其后发 `[`+级别+`] ` → 记录形如
+  `[<ms>][X] <body>\r\n`；`tracer_ring_printf`（崩溃事件，无级别）显式补一个空格 → 事件仍是 `[<ms>] phone: ...`。
+- README/tracer.h 行格式说明、两个日志测试断言（`[0] I:`→`[0][I]`）、大记录 `pre` 长度同步。
+- 验证：host 全过（含 crashlog 回归）、ARM 三组合零警告、mps2 重链 rc=0、QEMU `[0][I] Start`/`[8392][I]
+  pj_phone: pjsua_init OK` 正确。

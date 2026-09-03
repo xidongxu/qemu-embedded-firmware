@@ -272,7 +272,7 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 把 `tracer_log()` 当成普通日志 API 用即可：应用只要链上 tracer 并开了 `TRACER_USE_LOG`，调用它就能打印。
 
 - **API**：`uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...)`。
-  级别：`TRACER_LOG_TRACE/DEBUG/INFO/WARN/ERROR`（0..4）。行格式：`[<ms>]X: <内容>\r\n`，`X` 为
+  级别：`TRACER_LOG_TRACE/DEBUG/INFO/WARN/ERROR`（0..4）。行格式：`[<ms>][X] <内容>\r\n`，`X` 为
   `T/D/I/W/E`。`<ms>` 为 up-time 毫秒数（只打数字，无单位字），来自 weak `tracer_uptime_ms()`——**默认已带
   SysTick wrap 计数**（SysTick 以 ~1ms reload 跑时=真实运行毫秒，免接线），RTOS/应用可覆盖成更准的 tick
   （FreeRTOS 用 `xTaskGetTickCount()*portTICK_PERIOD_MS`，mps2 已覆盖）。

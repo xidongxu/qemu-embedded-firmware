@@ -79,7 +79,7 @@ int main(void) {
     CHECK(n1 == s_all_len);
     CHECK(s_calls == 1);               /* end-of-call flush */
     CHECK(s_last_len == n1);
-    CHECK(memcmp(s_all, "[0] I: sink 7\r\n", s_all_len) == 0);
+    CHECK(memcmp(s_all, "[0][I] sink 7\r\n", s_all_len) == 0);
     CHECK(s_bad_chunk == 0);
 
     /* 2. filtered records must NOT reach the sink. */
@@ -94,7 +94,7 @@ int main(void) {
     CHECK(n2 > 0u);
     CHECK(s_calls == 2);
     CHECK(memcmp(s_all,
-                 "[0] I: sink 7\r\n[0] D: dbg 1a\r\n",
+                 "[0][I] sink 7\r\n[0][D] dbg 1a\r\n",
                  s_all_len) == 0);
     CHECK(s_bad_chunk == 0);
 
@@ -102,7 +102,7 @@ int main(void) {
      * re-assembled bytes equal the whole streamed record, verbatim. */
     sink_reset();
     n3 = tracer_log(TRACER_LOG_INFO, "%s", big);
-    pre = (uint32_t)strlen("[0] I: ");
+    pre = (uint32_t)strlen("[0][I] ");
     CHECK(s_all_len == n3);                          /* nothing lost */
     CHECK(memcmp(s_all + pre, big, strlen(big)) == 0); /* full 320 B body */
     CHECK(s_all[n3 - 1u] == '\n');
@@ -127,7 +127,7 @@ int main(void) {
         uint32_t d = tracer_log_drain(out, sizeof(out));
         CHECK(d == n1 + n2);
         CHECK(d == s_all_len);
-        CHECK(memcmp(out, "[0] I: aaa\r\n[0] W: bbb\r\n", d) == 0);
+        CHECK(memcmp(out, "[0][I] aaa\r\n[0][W] bbb\r\n", d) == 0);
         CHECK(tracer_log_drain(out, sizeof(out)) == 0u);
     }
 

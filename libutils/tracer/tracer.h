@@ -377,7 +377,7 @@ void tracer_crash_save(const void *data, uint32_t len);
  * no compile-time filter, so the runtime level may move freely in both
  * directions.
  *
- * Each record ("[<ms>]X: <body>\r\n", X = level letter; <ms> = the up-time
+ * Each record ("[<ms>][X] <body>\r\n", X = level letter; <ms> = the up-time
  * in ms from the weak tracer_uptime_ms(), which by default counts SysTick
  * wraps -- so every log already carries a monotonic time stamp, no extra
  * wiring) is STREAMED

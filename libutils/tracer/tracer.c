@@ -378,7 +378,6 @@ static void tracer_ring_prefix(void) {
         s_emit(NULL, tmp[--n]);
     }
     s_emit(NULL, ']');
-    s_emit(NULL, ' ');
 }
 
 #endif /* TRACER_USE_CRASH || TRACER_USE_LOG */
@@ -391,6 +390,8 @@ void tracer_ring_printf(const char *fmt, ...) {
     va_start(ap, fmt);
     s_emit = tracer_ring_char;
     tracer_ring_prefix();
+    /* ring events read "[<ms>] phone: ...": one space after the tick. */
+    tracer_xputc(' ');
     tracer_xvprintf(fmt, ap);
     s_emit = NULL;
     va_end(ap);
@@ -574,15 +575,16 @@ uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
         }
     }
 
-    /* Stream the record "[<ms>]X: <body>\r\n" -- no length limit. */
+    /* Stream the record "[<ms>][X] <body>\r\n" -- no length limit. */
     pm = tracer_pm_save();
     s_log_chunk_len = 0u;
     s_log_bytes = 0u;
     s_emit = tracer_log_sink_char;
-    /* "[<ms>] " then the level tag. */
+    /* "[<ms>][X] " then the body. */
     tracer_ring_prefix();
+    tracer_xputc('[');
     tracer_xputc(lc);
-    tracer_xputc(':');
+    tracer_xputc(']');
     tracer_xputc(' ');
     va_start(ap, fmt);
     tracer_xvprintf(fmt, ap);
