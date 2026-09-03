@@ -99,11 +99,12 @@ static void tracer_xputc(char c) {
     }
 }
 
-static void tracer_putn(unsigned long v, int base, int upper, int width,
+static void tracer_putn(unsigned long long v, int base, int upper, int width,
                         int zero, int left, int neg) {
-    char tmp[12];
+    char tmp[22]; /* 22 digits hold any 64-bit value (max 20 decimal digits):
+                   * %p must not truncate on a 64-bit host (LP64 or LLP64) */
     int n = 0;
-    unsigned long b = (unsigned long)base;
+    unsigned long long b = (unsigned long long)base;
     do {
         unsigned d = (unsigned)(v % b);
         tmp[n++] = (char)((d < 10u) ? ('0' + (int)d)
@@ -210,6 +211,18 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
             unsigned long v = islong ? va_arg(ap, unsigned long)
                                      : (unsigned long)va_arg(ap, unsigned int);
             tracer_putn(v, 16, (conv == 'X'), width, zero, left, 0);
+        } else if (conv == 'p') {
+            /* Pointer: "0x" + lowercase hex (C leaves the exact %p spelling
+             * implementation-defined; this matches the common printf form).
+             * Route through uintptr_t (pointer-sized, from <stdint.h>) then
+             * widen, so a 64-bit host value survives (LP64 Unix `long` is
+             * 64-bit but LLP64 Windows `long` is 32-bit) with no
+             * pointer-to-integer size-mismatch warning on the 32-bit ARM
+             * target. */
+            uintptr_t v = (uintptr_t)va_arg(ap, void *);
+            tracer_xputc('0');
+            tracer_xputc('x');
+            tracer_putn((unsigned long long)v, 16, 0, 0, 0, left, 0);
         } else {
             tracer_xputc('%');
             if (conv != '\0') {

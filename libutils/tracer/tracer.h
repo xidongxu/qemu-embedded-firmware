@@ -116,7 +116,7 @@ extern "C" {
  * (default off: no ring, no capture, no log code -- a fault dump behaves
  * exactly as before).  The shared infra (mini-printf / PRIMASK / ring) is
  * compiled when EITHER switch is on; a build that touches the ring needs the
- * format subset mini-printf supports (%s %c %d %u %x %X %lu %ld +
+ * format subset mini-printf supports (%s %c %d %u %x %X %p %lu %ld +
  * '-'/'0'/width).
  *
  *   TRACER_USE_CRASH=1 -- crash "black box":

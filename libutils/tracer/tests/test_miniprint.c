@@ -2,16 +2,19 @@
  *
  * Compiles tracer.c on the HOST (gcc/clang, no ARM toolchain) and drives its
  * internal tracer_xprintf against a collecting sink, verifying the exact
- * format subset the fault dump emits (%s %c %d %u %x %X %lu %ld with
+ * format subset the fault dump emits (%s %c %d %u %x %X %p %lu %ld with
  * '-'/'0' flags and decimal width).
  *
  * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_miniprint.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  *
- * Note: on x86-64 `long` is 64-bit, so values passed as (unsigned long) are
- * 64-bit; the assertions below only use small values whose low 32 bits are
- * what the dump prints, so results are identical to the 32-bit ARM target.
+ * Note: the host may be LP64 (Unix `long` = 64-bit) or LLP64 (Windows
+ * `long` = 32-bit); the tests below only use small values whose low 32 bits
+ * are what the 32-bit ARM target prints.  %p is the exception: it is widened
+ * to unsigned long long inside the mini-printf, so a 64-bit host pointer
+ * prints in full either way.
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -104,6 +107,21 @@ int main(void) {
     tracer_xprintf("EXC_RETURN: 0x%08lX  [%s mode, %s, %s]\r\n",
                    (unsigned long)0xFFFFFFE9u, "Thread", "MSP", "Secure");
     check("EXC_RETURN: 0xFFFFFFE9  [Thread mode, MSP, Secure]\r\n", "exc_return");
+
+    /* %p pointers: "0x" + lowercase hex; full width on 64-bit hosts too
+     * (the low 32 bits alone would read as a small address on ARM32). */
+    reset();
+    tracer_xprintf("p=%p\r\n", (void *)(uintptr_t)0x20001000u);
+    check("p=0x20001000\r\n", "ptr 32-bit value");
+
+    reset();
+    tracer_xprintf("p=%p\r\n", (void *)(uintptr_t)0x2000A0FFu);
+    check("p=0x2000a0ff\r\n", "ptr lowercase hex");
+
+    reset();
+    tracer_xprintf("p=%p\r\n",
+                   (void *)(uintptr_t)0x123456789ABCDEF0ull);
+    check("p=0x123456789abcdef0\r\n", "ptr 64-bit full width");
 
     if (s_failures != 0) {
         fprintf(stderr, "tracer mini-printf test: %d FAILURE(S)\n", s_failures);
