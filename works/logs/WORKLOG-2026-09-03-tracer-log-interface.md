@@ -113,3 +113,20 @@ tracer**。目标：`pj_phone.c` 不再裸 printf（0-printf 推广到 phone 应
   `(Service Unavailable)` 正常；尾部换行干净（无空行）；无锁死。
 - **遗留（未在 pj_phone 范围）**：pjsua_init 期间（writer 安装前）的少量日志仍走 pjsua 自己的 printf writer
   （仅 init 窗口，可接受）；`phone_net.c`（UDP cmd server）等其它 app 文件的 printf 未迁移（另行）。
+
+## 更新（同日，第四轮）：mini-printf 精度 + 日志前缀去 ms 字
+用户定：**mini-printf 原生支持 `%.*s`**（就不用 `pjstr_cstr` 样板了）；**日志前缀只打数字**（`[123 ms]`
+→ `[123]`，省 2 字节/行）。
+- **精度段**：`tracer_xvprintf` 在 width 与 length 之间解析 `.`：`.N`（数字）或 `.*`（变参 int，负值视为
+  省略）→ `prec`（-1=无）。`%s` 用 prec 截断输出长度（正好匹配 pj_str_t 的 (slen,ptr)，不打 NUL 扫描）；数值
+  `d/i/u/x` 用 prec 作**最小位数**（前导 0），`.0u` of 0 输出空；**'0' flag 在给精度后被忽略**（printf 语义：
+  宽度补空格、前导 0 由精度给）；`putn` 加 `min_digits` 参数（"0 padding 紧跟符号后" 修正为 %05d→-0042）。
+  `%p` 传 -1 不受影响。
+- **前缀改 `[<ms>]`**：`tracer_ring_prefix` 去掉 `' ' 'm' 's'` 两字符（up-time 毫秒数只打数字）。tracer_log
+  与 tracer_ring_printf（崩溃事件）共用此前缀，均生效；dump 的 `Up: N ms` 不变。
+- **pj_phone 回退**：4 处 `%.*s` 改回 `(int)slen, ptr` 原生写法，**删除 `pjstr_cstr()` 助手**（净减代码，
+  也不再受 64B 固定缓冲截断限制）。
+- 测试：`test_miniprint` 增 `%.*s` 截断/短串/宽+精度/负精度 + `%.3u`/`%04X`/`%05.3d`('0' 被忽略 →
+  ` -042`)/`%.0u`of0；两个日志测试断言 `[0 ms]`→`[0]`。
+- **验证**：host 全过、ARM fsyntax 三组合零警告、mps2 重链 rc=0、QEMU 实跑 `[0] I: Start`/`[35148] I:
+  pj_phone: acc 0 reg state=503 (Service Unavailable)`（%.*s 渲染正确）无锁死。

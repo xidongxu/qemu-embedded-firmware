@@ -3,7 +3,8 @@
  * Compiles tracer.c on the HOST (gcc/clang, no ARM toolchain) and drives its
  * internal tracer_xprintf against a collecting sink, verifying the exact
  * format subset the fault dump emits (%s %c %d %u %x %X %p, 'l'/'ll'
- * lengths, %% escape, with '-'/'0' flags and decimal width).
+ * lengths, .N / %.*s precision, %% escape, with '-'/'0' flags and decimal
+ * width).
  *
  * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_miniprint.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
@@ -142,6 +143,40 @@ int main(void) {
     tracer_xprintf("x=%llX\r\n",
                    (unsigned long long)0x123456789ABCDEF0ull);
     check("x=123456789ABCDEF0\r\n", "llX full 64-bit");
+
+    /* precision: %.*s dynamic cap (a pjlib pj_str_t style (len, ptr) pair). */
+    reset();
+    tracer_xprintf("v=%.*s\r\n", 3, "abcdef");
+    check("v=abc\r\n", "%.*s cap");
+
+    reset();
+    tracer_xprintf("v=%.*s|\r\n", 5, "ab");
+    check("v=ab|\r\n", "%.*s shorter kept");
+
+    reset();
+    tracer_xprintf("v=%5.3s|\r\n", "abcdef");
+    check("v=  abc|\r\n", "width + string precision");
+
+    reset();
+    tracer_xprintf("v=%.*s|\r\n", -1, "hello");   /* neg = omitted */
+    check("v=hello|\r\n", "%.*s negative = none");
+
+    /* precision on numbers: min digits (leading zeros), %.0u of 0 empty. */
+    reset();
+    tracer_xprintf("u=%.3u\r\n", 5u);
+    check("u=005\r\n", "%.3u min digits");
+
+    reset();
+    tracer_xprintf("x=%04X|\r\n", 0x1Au);
+    check("x=001A|\r\n", "%04X pad");
+
+    reset();
+    tracer_xprintf("d=%05.3d|\r\n", -42);
+    check("d= -042|\r\n", "precision overrides '0' flag (width spaces)");
+
+    reset();
+    tracer_xprintf("z=[%.0u]\r\n", 0u);
+    check("z=[]\r\n", "%.0u of 0 is empty");
 
     if (s_failures != 0) {
         fprintf(stderr, "tracer mini-printf test: %d FAILURE(S)\n", s_failures);

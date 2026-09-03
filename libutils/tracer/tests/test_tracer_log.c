@@ -5,7 +5,7 @@
  *   - tracer_log() writes the SAME line to the serial sink and the shared
  *     pre-crash ring ("unified" -- so a crash record auto-contains recent
  *     run logs without any extra persist call);
- *   - the level letter + "[<ms> ms]" prefix format;
+ *   - the level letter + "[<ms>]" prefix format (bare tick number);
  *   - runtime level can be raised / lowered with tracer_log_set_level();
  *   - tracer_log_drain(): incremental pull, then nothing new, then more, and
  *     the overwrite case (consumer slower than the ring);
@@ -89,7 +89,7 @@ int main(void) {
     CHECK(s_ring_count == 0u);         /* nothing in the shared ring */
     n = TRACER_LOGI("hello %d", 42);   /* no-level convenience macro */
     CHECK(n > 0u);
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] I: hello 42\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] I: hello 42\r\n"));
     CHECK(s_ring_count == n);          /* unified: ring got the same line */
 
     /* ---- 2. level letters + runtime switch up and down ---- */
@@ -101,14 +101,14 @@ int main(void) {
     CHECK(tracer_log(TRACER_LOG_INFO, "i") > 0u);
     CHECK(tracer_log(TRACER_LOG_WARN, "w") > 0u);
     CHECK(tracer_log(TRACER_LOG_ERROR, "e") > 0u);
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] T: t\r\n"));
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] D: d\r\n"));
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] W: w\r\n"));
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] E: e\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] T: t\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] D: d\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] W: w\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] E: e\r\n"));
     tracer_log_set_level(TRACER_LOG_ERROR);   /* runtime raise: fewer logs */
     CHECK(tracer_log(TRACER_LOG_WARN, "w2") == 0u);
     CHECK(tracer_log(TRACER_LOG_ERROR, "e2") > 0u);
-    CHECK(contains(s_ser, s_ser_len, "[0 ms] E: e2\r\n"));
+    CHECK(contains(s_ser, s_ser_len, "[0] E: e2\r\n"));
 
     /* ---- 3. drain: incremental pull then nothing, then more ---- */
     reset_all();
@@ -118,7 +118,7 @@ int main(void) {
         static char out[512];
         uint32_t d = tracer_log_drain((uint8_t *)out, sizeof(out));
         CHECK(d == n);                 /* first drain returns the whole line */
-        CHECK(memcmp(out, "[0 ms] I: aaa\r\n", d) == 0);
+        CHECK(memcmp(out, "[0] I: aaa\r\n", d) == 0);
         CHECK(tracer_log_drain((uint8_t *)out, sizeof(out)) == 0u); /* done */
     }
     n = tracer_log(TRACER_LOG_WARN, "bbb");
@@ -126,7 +126,7 @@ int main(void) {
         static char out[512];
         uint32_t d = tracer_log_drain((uint8_t *)out, sizeof(out));
         CHECK(d == n);                 /* only the new line this time */
-        CHECK(memcmp(out, "[0 ms] W: bbb\r\n", d) == 0);
+        CHECK(memcmp(out, "[0] W: bbb\r\n", d) == 0);
     }
 
     /* ---- 4. drain when the consumer is too slow: ring already ---- */
@@ -167,7 +167,7 @@ int main(void) {
             "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
             "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
             "0123456789abcdef" "0123456789abcdef";
-        uint32_t pre = (uint32_t)strlen("[0 ms] I: ");
+        uint32_t pre = (uint32_t)strlen("[0] I: ");
         uint32_t n2;
         n2 = tracer_log(TRACER_LOG_INFO, "%s", big);
         CHECK(n2 == pre + (uint32_t)strlen(big) + 2u); /* not truncated */

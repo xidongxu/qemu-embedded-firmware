@@ -100,7 +100,7 @@ static void tracer_xputc(char c) {
 }
 
 static void tracer_putn(unsigned long long v, int base, int upper, int width,
-                        int zero, int left, int neg) {
+                        int zero, int left, int neg, int min_digits) {
     char tmp[22]; /* 22 digits hold any 64-bit value (max 20 decimal digits):
                    * %p must not truncate on a 64-bit host (LP64 or LLP64) */
     int n = 0;
@@ -113,17 +113,35 @@ static void tracer_putn(unsigned long long v, int base, int upper, int width,
         v /= b;
     } while (v != 0u && n < (int)sizeof(tmp));
 
-    if (neg) {
-        tracer_xputc('-');
+    /* Precision = printf "minimum digits"; %.0d of 0 prints nothing. */
+    if (min_digits == 0 && n == 1 && tmp[0] == '0') {
+        n = 0;
+    }
+    /* printf: the '0' flag is ignored when a precision is given (width pads
+     * with spaces; the leading zeros come from the precision instead). */
+    if (min_digits >= 0) {
+        zero = 0;
     }
     {
-        int total = n + (neg ? 1 : 0);
+        int lead = (min_digits > n) ? (min_digits - n) : 0;
+        int total = n + lead + (neg ? 1 : 0);
         int pad = (width > total) ? (width - total) : 0;
-        if (!left) {
-            char pc = zero ? '0' : ' ';
+        if (!left && !zero) {
             while (pad-- > 0) {
-                tracer_xputc(pc);
+                tracer_xputc(' ');
             }
+        }
+        if (neg) {
+            tracer_xputc('-');
+        }
+        if (!left && zero) {
+            /* '0' padding goes right after the sign (printf %05d -> -0042). */
+            while (pad-- > 0) {
+                tracer_xputc('0');
+            }
+        }
+        while (lead-- > 0) {
+            tracer_xputc('0');
         }
         while (n > 0) {
             tracer_xputc(tmp[--n]);
@@ -160,6 +178,29 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
             width = width * 10 + (*p - '0');
             p++;
         }
+        /* .<precision>: digits, or '*' = an int vararg (printf argument
+         * order: width '*' first, then precision '*').  Used to cap %s
+         * output and as the minimum digit count for d/i/u/x (leading
+         * zeros).  -1 = no precision given. */
+        int prec = -1;
+        if (*p == '.') {
+            p++;
+            if (*p == '*') {
+                prec = va_arg(ap, int);
+                if (prec < 0) {
+                    prec = -1;   /* negative precision == omitted */
+                }
+                p++;
+            } else {
+                prec = 0;
+                while (*p >= '0' && *p <= '9') {
+                    if (prec < 100000) {
+                        prec = prec * 10 + (*p - '0');
+                    }
+                    p++;
+                }
+            }
+        }
         int islong = 0;
         int isll = 0; /* "ll" length modifier -> long long */
         while (*p == 'l') {
@@ -184,7 +225,11 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
             if (s == NULL) {
                 s = "(null)";
             }
+            /* precision caps the printed length (%s max chars). */
             for (q = s; *q != '\0'; q++) {
+                if (prec >= 0 && len >= prec) {
+                    break;
+                }
                 len++;
             }
             {
@@ -194,7 +239,7 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
                         tracer_xputc(' ');
                     }
                 }
-                while (*s != '\0') {
+                while (len-- > 0) {
                     tracer_xputc(*s++);
                 }
                 if (left) {
@@ -211,13 +256,13 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
                 int neg = (v < 0);
                 tracer_putn(neg ? (unsigned long long)(-(v + 1)) + 1ull
                                 : (unsigned long long)v,
-                            10, 0, width, zero, left, neg);
+                            10, 0, width, zero, left, neg, prec);
             } else {
                 long v = islong ? va_arg(ap, long) : (long)va_arg(ap, int);
                 int neg = (v < 0);
                 tracer_putn(neg ? (unsigned long)(-(v + 1)) + 1u
                                 : (unsigned long)v,
-                            10, 0, width, zero, left, neg);
+                            10, 0, width, zero, left, neg, prec);
             }
         } else if (conv == 'u' || conv == 'x' || conv == 'X') {
             unsigned long long v;
@@ -229,7 +274,7 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
                 v = (unsigned long long)va_arg(ap, unsigned int);
             }
             tracer_putn(v, (conv == 'u') ? 10 : 16, (conv == 'X'),
-                        width, zero, left, 0);
+                        width, zero, left, 0, prec);
         } else if (conv == 'p') {
             /* Pointer: "0x" + lowercase hex (C leaves the exact %p spelling
              * implementation-defined; this matches the common printf form).
@@ -241,7 +286,7 @@ static void tracer_xvprintf(const char *fmt, va_list ap) {
             uintptr_t v = (uintptr_t)va_arg(ap, void *);
             tracer_xputc('0');
             tracer_xputc('x');
-            tracer_putn((unsigned long long)v, 16, 0, 0, 0, left, 0);
+            tracer_putn((unsigned long long)v, 16, 0, 0, 0, left, 0, -1);
         } else {
             tracer_xputc('%');
             if (conv != '\0') {
@@ -332,9 +377,6 @@ static void tracer_ring_prefix(void) {
     while (n > 0) {
         s_emit(NULL, tmp[--n]);
     }
-    s_emit(NULL, ' ');
-    s_emit(NULL, 'm');
-    s_emit(NULL, 's');
     s_emit(NULL, ']');
     s_emit(NULL, ' ');
 }
@@ -532,12 +574,12 @@ uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
         }
     }
 
-    /* Stream the record "[<ms> ms]X: <body>\r\n" -- no length limit. */
+    /* Stream the record "[<ms>]X: <body>\r\n" -- no length limit. */
     pm = tracer_pm_save();
     s_log_chunk_len = 0u;
     s_log_bytes = 0u;
     s_emit = tracer_log_sink_char;
-    /* "[<ms> ms] " then the level tag. */
+    /* "[<ms>] " then the level tag. */
     tracer_ring_prefix();
     tracer_xputc(lc);
     tracer_xputc(':');
@@ -831,7 +873,7 @@ void TRACER_WEAK tracer_dump_tasks(void) {
 
 uint32_t TRACER_WEAK tracer_uptime_ms(void) {
     /* Default "simplest system tick": count SysTick reloads.  Best effort,
-     * no CMSIS / RTOS dependency, so logs (tracer_log prefix "[<ms> ms]") and
+     * no CMSIS / RTOS dependency, so logs (tracer_log prefix "[<ms>]") and
      * every dump's "Up:" line carry a time stamp out of the box when a
      * SysTick is running:
      *   - SysTick enabled (CTRL.ENABLE): every wrap (it counts down) is one

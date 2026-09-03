@@ -117,7 +117,8 @@ extern "C" {
  * exactly as before).  The shared infra (mini-printf / PRIMASK / ring) is
  * compiled when EITHER switch is on; a build that touches the ring needs the
  * format subset mini-printf supports (%s %c %d %u %x %X %p with 'l'
- * (long) / 'll' (long long) lengths, the %% escape, '-'/'0'/width).
+ * (long) / 'll' (long long) lengths, .N / %.*s precision,
+ * the %% escape, '-'/'0'/width).
  *
  *   TRACER_USE_CRASH=1 -- crash "black box":
  *     - tracer_ring_printf() keeps the most recent TRACER_RING_SIZE bytes of
@@ -315,7 +316,8 @@ uint32_t tracer_stack_limit(void);
  * adapters override it (FreeRTOS: vTaskList). */
 void tracer_dump_tasks(void);
 /* System up-time in milliseconds, printed in every dump and as the
- * "[<ms> ms]" prefix of every tracer_log() line.  Weak.  Default: a
+ * "[<ms>]" prefix of every tracer_log() line (the number is the up-time in
+ * ms; no unit text is printed).  Weak.  Default: a
  * no-dependency SysTick wrap counter (SysTick running -> monotonic ms with
  * the usual ~1 ms reload; else 0).  RTOS adapters override it with the more
  * accurate tick source (FreeRTOS: xTaskGetTickCount()*portTICK_PERIOD_MS). */
@@ -375,9 +377,10 @@ void tracer_crash_save(const void *data, uint32_t len);
  * no compile-time filter, so the runtime level may move freely in both
  * directions.
  *
- * Each record ("[<ms> ms]X: <body>\r\n", X = level letter; <ms> from the weak
- * tracer_uptime_ms(), which by default counts SysTick wraps -- so every log
- * already carries a monotonic time stamp, no extra wiring) is STREAMED
+ * Each record ("[<ms>]X: <body>\r\n", X = level letter; <ms> = the up-time
+ * in ms from the weak tracer_uptime_ms(), which by default counts SysTick
+ * wraps -- so every log already carries a monotonic time stamp, no extra
+ * wiring) is STREAMED
  * character-by-character -- printf-like: there is NO line-length limit and
  * the caller never has to split long output; put '\n' in the format string
  * for explicit line breaks, and a final CRLF is added automatically.

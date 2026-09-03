@@ -272,10 +272,10 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 把 `tracer_log()` 当成普通日志 API 用即可：应用只要链上 tracer 并开了 `TRACER_USE_LOG`，调用它就能打印。
 
 - **API**：`uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...)`。
-  级别：`TRACER_LOG_TRACE/DEBUG/INFO/WARN/ERROR`（0..4）。行格式：`[<ms> ms]X: <内容>\r\n`，`X` 为
-  `T/D/I/W/E`。`<ms>` 来自 weak `tracer_uptime_ms()`——**默认已带 SysTick wrap 计数**（SysTick 以 ~1ms
-  reload 跑时=真实运行毫秒，免接线），RTOS/应用可覆盖成更准的 tick（FreeRTOS 用
-  `xTaskGetTickCount()*portTICK_PERIOD_MS`，mps2 已覆盖）。
+  级别：`TRACER_LOG_TRACE/DEBUG/INFO/WARN/ERROR`（0..4）。行格式：`[<ms>]X: <内容>\r\n`，`X` 为
+  `T/D/I/W/E`。`<ms>` 为 up-time 毫秒数（只打数字，无单位字），来自 weak `tracer_uptime_ms()`——**默认已带
+  SysTick wrap 计数**（SysTick 以 ~1ms reload 跑时=真实运行毫秒，免接线），RTOS/应用可覆盖成更准的 tick
+  （FreeRTOS 用 `xTaskGetTickCount()*portTICK_PERIOD_MS`，mps2 已覆盖）。
 - **分级便捷宏（不带 level 参数）**：级别写死在宏名里，调用不再传 level——`TRACER_LOGI("call %u", n)` ≡
   `tracer_log(TRACER_LOG_INFO, ...)`。一组 `TRACER_LOGT/LOGD/LOGI/LOGW/LOGE`；仍受运行期级别过滤。
 - **运行期分级开关**（非编译期过滤）：所有级别都编译进去，输出与否看运行值。默认 `TRACER_LOG_DEFAULT_LEVEL`

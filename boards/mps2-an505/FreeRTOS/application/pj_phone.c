@@ -133,22 +133,6 @@ static unsigned g_dial_port = PJ_PHONE_DIAL_PORT;
 static pj_phone_cb_t g_cb = NULL;
 static void *g_cb_user = NULL;
 
-/* The tracer mini-printf has no %.*s, so render a pj_str_t into a
- * NUL-terminated buffer for use as %s in a log call. */
-static const char *pjstr_cstr(const pj_str_t *s, char *buf, size_t cap) {
-    size_t n = (s != NULL && s->ptr != NULL && s->slen > 0)
-                   ? (size_t)s->slen
-                   : 0u;
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    if (n > 0) {
-        memcpy(buf, s->ptr, n);
-    }
-    buf[n] = '\0';
-    return buf;
-}
-
 static void phone_notify(void) {
     if (g_cb != NULL) {
         g_cb(g_cb_user);
@@ -489,12 +473,9 @@ static void on_reg_state(pjsua_acc_id acc_id) {
         return;
     }
 
-    {
-        char stxt[64];
-        pjstr_cstr(&info.status_text, stxt, sizeof(stxt));
-        TRACER_LOGI("pj_phone: acc %d reg state=%d (%s)", acc_id,
-                    (int)info.status, stxt);
-    }
+    TRACER_LOGI("pj_phone: acc %d reg state=%d (%.*s)", acc_id,
+                (int)info.status, (int)info.status_text.slen,
+                info.status_text.ptr);
 
     if (info.status >= 200 && info.status < 300) {
         /* Registered OK (2xx).  The UI drives calls; no auto-dial by default. */
@@ -584,13 +565,9 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
     }
 
     pj_gettimeofday(&t);
-    {
-        char stxt[64];
-        pjstr_cstr(&ci.state_text, stxt, sizeof(stxt));
-        TRACER_LOGI("pj_phone: [%lu.%03lu] call %d state=%d (%s)",
-                    (unsigned long)t.sec, (unsigned long)t.msec, call_id,
-                    (int)ci.state, stxt);
-    }
+    TRACER_LOGI("pj_phone: [%lu.%03lu] call %d state=%d (%.*s)",
+                (unsigned long)t.sec, (unsigned long)t.msec, call_id,
+                (int)ci.state, (int)ci.state_text.slen, ci.state_text.ptr);
 
     switch (ci.state) {
     case PJSIP_INV_STATE_CALLING:
@@ -619,20 +596,18 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
             pj_gettimeofday(&now);
             dur = now;
             PJ_TIME_VAL_SUB(dur, g_call_start);
-            {
-                char rtxt[64];
-                pjstr_cstr(&ci.last_status_text, rtxt, sizeof(rtxt));
-                TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%s) "
-                            "dur=%ldms",
-                            call_id, (int)ci.last_status, rtxt,
-                            (long)PJ_TIME_VAL_MSEC(dur));
-            }
+            TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%.*s) "
+                        "dur=%ldms",
+                        call_id, (int)ci.last_status,
+                        (int)ci.last_status_text.slen,
+                        ci.last_status_text.ptr,
+                        (long)PJ_TIME_VAL_MSEC(dur));
         } else {
-            char rtxt[64];
-            pjstr_cstr(&ci.last_status_text, rtxt, sizeof(rtxt));
-            TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%s) "
+            TRACER_LOGI("pj_phone: call %d disconnected: reason=%d (%.*s) "
                         "(call never established)",
-                        call_id, (int)ci.last_status, rtxt);
+                        call_id, (int)ci.last_status,
+                        (int)ci.last_status_text.slen,
+                        ci.last_status_text.ptr);
         }
 
         /* Record why the call ended so the UI can show it. */
