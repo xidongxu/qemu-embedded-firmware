@@ -69,3 +69,24 @@
 - 板级固件完整重链接通过（mps2-an505 FreeRTOS `an505-qemu.elf`，CRASH+LOG on）。
 - 待办（可选，另开任务）：把 `pj_phone.c` 的状态机事件从 `tracer_ring_printf` 视需要迁移/新增
   `tracer_log(...)` 到应用侧做"运行日志上屏 + 异步落 flash"演示；stm32 板同样可接入。
+
+## 更新（同日，第二轮）：流式输出 + 块式 sink —— 去掉行上限
+用户定：**日志要流式**（"哪有日志输出还要自己分行的？"），sink 改**块回调**（"输出满 128 字节回调 sink 一
+次，输出结束时若不满 128 字节调用 flush 输出缓冲区中所有数据"）。
+- **删除 `TRACER_LOG_LINE_SIZE`**（原 160 行缓冲/截断）→ 引入 `TRACER_LOG_SINK_CHUNK_SIZE`（默认 128，
+  纯 sink 推送块，不限制单次日志长度）。
+- `tracer_log()` 改**逐字符流式**（无行长上限）：一次 PRIMASK 临界区内 ① 每字符同步串口 ② 每字符进共享
+  ring ③ 每累计 128B 调用一次 weak `tracer_log_sink(chunk,len)`，`tracer_log()` 结束时把残余（<128B）再
+  flush 一次；`s_log_chunk[128]` 单全局缓冲（临界区内独占），移除旧 `s_log_buf`/`tracer_log_buf_char`。
+- sink 语义：块可能**横跨行边界**（一条 >128B 日志会分成多块回调），接收方只需 append；sink 在 PRIMASK
+  临界区内被调 → 必须轻量（拷贝/入队），勿阻塞写 flash。
+- `tracer_log()` 返回值 = 本次流出的字节数（0=被运行期级别过滤），与 drain/串口一致。
+- 测试更新：`test_tracer_log.c` 第 5 节截断测试改为 **320B 长记录完整流出**（串口全量 + ring 每字节、旧字节
+  卷走）；`test_tracer_log_sink.c` 改为**累积块**校验——短行 1 次 sink 调用、长行分 `ceil(n/128)` 块、每块
+  ≤128、末尾残余 = n%128、重组字节与流式记录逐字节一致。
+- `main.c`（mps2 试点）`tracer_dump_tasks()` 简化：原来为 160B 上限按 `\n` 手动拆行逐条 `TRACER_LOGI` →
+  现在直接 `TRACER_LOGI("%s", buf)` 整表一条（0-printf 策略不变）。全文件已无 `printf`。
+- **验证**：host 日志两测 + 其余 4 回归全过；ARM fsyntax 三组合零警告；mps2 FreeRTOS 重链 rc=0；QEMU 启动
+  clean（`[0 ms] I: Start`，pjsua 进媒体）。
+- **坑**：zig cc 编译 `..\tracer.c` 这类**相对父目录源码**会报 `CacheCheckFailed`（zig 缓存缺陷）→ host 测试
+  命令一律用绝对路径输入源文件。

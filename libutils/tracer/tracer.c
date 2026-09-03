@@ -401,40 +401,27 @@ static void tracer_crash_finalize(void) {
 #endif /* TRACER_USE_CRASH */
 
 #if TRACER_USE_LOG
-/* ===== Leveled runtime log (unified ring; async persistence hooks) =====
- * tracer_log() formats one line on the caller's stack and, inside a short
- * critical section, prints it to the serial sink AND appends it to the same
- * pre-crash ring used by tracer_ring_printf() -- so when the crash black box
- * is also enabled the record automatically ends with the recent run log.
- * The level filter is a runtime switch (see tracer.h).  File/flash
- * persistence is left to the app through two optional interfaces: the weak
- * per-line tracer_log_sink() hook and the incremental tracer_log_drain()
- * cursor.  All of this lives under TRACER_USE_LOG (declared in tracer.h). */
+/* ===== Leveled runtime log (streaming; unified ring; async hooks) =====
+ * tracer_log() streams one formatted record character-by-character to the
+ * serial sink AND the shared pre-crash ring -- printf-like: no line-length
+ * limit and no need for the caller to split long output (embed '\n' in the
+ * format string for explicit line breaks; a final CRLF is added
+ * automatically so consecutive records never merge).  It runs inside a short
+ * PRIMASK section, so it is IRQ-safe and re-entrant.  The level filter is a
+ * runtime switch (see tracer.h).  Persistence is left to the app through two
+ * optional interfaces: the weak tracer_log_sink() hook (block push, flushed
+ * every TRACER_LOG_SINK_CHUNK_SIZE bytes and once more at the end of each
+ * call) and the incremental tracer_log_drain() cursor.  All of this lives
+ * under TRACER_USE_LOG (declared in tracer.h). */
 
-/* Format target for one log line (caller's stack buffer). */
-typedef struct {
-    /* destination */
-    char *buffer;
-    /* content bytes written so far */
-    uint32_t length;
-    /* content limit; the caller keeps CRLF room after it */
-    uint32_t capacity;
-} tracer_log_buf_t;
-
-/* Active line buffer while tracer_log() formats.  The mini-printf path
- * (tracer_xputc / tracer_ring_prefix) always calls the current sink with
- * ctx = NULL, so the target buffer travels in this pointer instead.  It is
- * only touched under the PRIMASK critical section that wraps the format, so
- * an ISR logging mid-format cannot corrupt it. */
-static tracer_log_buf_t *s_log_buf = NULL;
-
-static void tracer_log_buf_char(void *ctx, char c) {
-    tracer_log_buf_t *b = s_log_buf;
-    (void)ctx;
-    if (b != NULL && b->length < b->capacity) {
-        b->buffer[b->length++] = c;
-    }
-}
+/* Sink push block: filled during output and handed to tracer_log_sink() each
+ * time it fills (and once more at the end of a call with the remainder), so
+ * an arbitrarily long record can be persisted without any line buffer.
+ * Single global buffer -- only touched under the PRIMASK section. */
+static uint8_t s_log_chunk[TRACER_LOG_SINK_CHUNK_SIZE];
+static volatile uint32_t s_log_chunk_len = 0u;
+/* Bytes streamed by the running tracer_log() call (its return value). */
+static volatile uint32_t s_log_bytes = 0u;
 
 /* Runtime level filter (initialized from TRACER_LOG_DEFAULT_LEVEL). */
 static volatile tracer_log_level_t s_log_level = TRACER_LOG_DEFAULT_LEVEL;
@@ -448,24 +435,55 @@ tracer_log_level_t tracer_log_get_level(void) {
     return (tracer_log_level_t)s_log_level;
 }
 
-/* Weak per-line asynchronous persistence hook.  Default no-op: an app that
- * does not override it simply gets the synchronous serial + ring output. */
+/* Weak per-record persistence hook (block push).  Default no-op: an app that
+ * does not override it simply gets the synchronous serial + ring output.
+ * Called with (data, len <= TRACER_LOG_SINK_CHUNK_SIZE) each time a block
+ * fills and once per tracer_log() call with the remainder; blocks may split
+ * lines, so a file/flash backend should just append the bytes.  Called inside
+ * the PRIMASK critical section -- the implementation must be quick (e.g. copy
+ * into its own queue/buffer), not block on flash there. */
 #if defined(__ICCARM__)
 #pragma weak tracer_log_sink
 #define TRACER_LOG_WEAK
 #else
 #define TRACER_LOG_WEAK __attribute__((weak))
 #endif
-void TRACER_LOG_WEAK tracer_log_sink(const void *line, uint32_t len) {
-    (void)line;
+void TRACER_LOG_WEAK tracer_log_sink(const void *data, uint32_t len) {
+    (void)data;
     (void)len;
+}
+
+static void tracer_log_sink_flush(void) {
+    if (s_log_chunk_len != 0u) {
+        tracer_log_sink(s_log_chunk, s_log_chunk_len);
+        s_log_chunk_len = 0u;
+    }
+}
+
+/* Emit one record character: synchronous serial + shared ring + sink-block
+ * accumulation.  Runs under the PRIMASK section of tracer_log(). */
+static void tracer_log_char(char c) {
+    tracer_serial_char(NULL, c);
+    tracer_ring_char(NULL, c);
+    s_log_bytes++;
+    if (s_log_chunk_len < (uint32_t)sizeof(s_log_chunk)) {
+        s_log_chunk[s_log_chunk_len++] = (uint8_t)c;
+    }
+    if (s_log_chunk_len == (uint32_t)sizeof(s_log_chunk)) {
+        /* block full: push it to the sink now (still under PRIMASK) */
+        tracer_log_sink_flush();
+    }
+}
+
+/* s_emit target feeding tracer_log_char() (mini-printf passes a NULL ctx). */
+static void tracer_log_sink_char(void *ctx, char c) {
+    (void)ctx;
+    tracer_log_char(c);
 }
 
 uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
     static const char kLev[] = { 'T', 'D', 'I', 'W', 'E' };
-    char buf[TRACER_LOG_LINE_SIZE];
-    tracer_log_buf_t b;
-    uint32_t pm, n, i;
+    uint32_t pm;
     char lc;
     va_list ap;
 
@@ -482,18 +500,12 @@ uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
         }
     }
 
-    /* Format the whole line on the caller's stack: "[<ms> ms]X: <body>". */
-    b.buffer = buf;
-    b.length = 0u;
-    /* Keep CRLF room; clamp so a (mis-set) tiny TRACER_LOG_LINE_SIZE can
-     * never make the subtract underflow into a huge capacity. */
-    b.capacity = ((uint32_t)sizeof(buf) > 2u)
-                     ? ((uint32_t)sizeof(buf) - 2u)
-                     : 0u;
+    /* Stream the record "[<ms> ms]X: <body>\r\n" -- no length limit. */
     pm = tracer_pm_save();
-    s_log_buf = &b;
-    s_emit = tracer_log_buf_char;
-    /* "[<ms> ms] " into the line */
+    s_log_chunk_len = 0u;
+    s_log_bytes = 0u;
+    s_emit = tracer_log_sink_char;
+    /* "[<ms> ms] " then the level tag. */
     tracer_ring_prefix();
     tracer_xputc(lc);
     tracer_xputc(':');
@@ -501,31 +513,14 @@ uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...) {
     va_start(ap, fmt);
     tracer_xvprintf(fmt, ap);
     va_end(ap);
-    /* Terminate with CRLF when there is room (always true for sane sizes). */
-    if (b.length + 1u < (uint32_t)sizeof(buf)) {
-        buf[b.length] = '\r';
-        buf[b.length + 1u] = '\n';
-        n = b.length + 2u;
-    } else {
-        /* absurdly small buffer: emit body only */
-        n = b.length;
-    }
+    /* Terminate the record so consecutive logs never merge on the wire. */
+    tracer_xputc('\r');
+    tracer_xputc('\n');
     s_emit = NULL;
-    s_log_buf = NULL;
-
-    /* 1) synchronous serial output, 2) unified ring write (same bytes) --
-     * one critical section so an ISR cannot split a log line. */
-    for (i = 0u; i < n; i++) {
-        tracer_serial_char(NULL, buf[i]);
-    }
-    for (i = 0u; i < n; i++) {
-        tracer_ring_char(NULL, buf[i]);
-    }
+    /* Push the (< block-size) remainder of this record to the sink. */
+    tracer_log_sink_flush();
     tracer_pm_restore(pm);
-
-    /* 3) async persistence hook (weak; app override; no lock held). */
-    tracer_log_sink(buf, n);
-    return n;
+    return s_log_bytes;
 }
 
 uint32_t tracer_log_drain(uint8_t *out, uint32_t max) {

@@ -9,10 +9,10 @@
  *   - runtime level can be raised / lowered with tracer_log_set_level();
  *   - tracer_log_drain(): incremental pull, then nothing new, then more, and
  *     the overwrite case (consumer slower than the ring);
- *   - over-long lines are truncated at TRACER_LOG_LINE_SIZE (CRLF kept);
+ *   - long records stream in full (printf-like, no line-length limit);
  *   - a fault dump capture ends with the recent log (black-box replay).
  *
- * The weak per-line sink is NOT overridden here (default no-op path); the
+ * The weak per-record sink is NOT overridden here (default no-op path); the
  * override is tested separately in test_tracer_log_sink.c because the weak
  * definition lives in this same translation unit (tracer.c is #included).
  *
@@ -30,10 +30,9 @@ static void tr_putc(char c) {
     }
 }
 
-/* Small sizes so the tests exercise ring overwrite and line truncation. */
+/* Small sizes so the tests exercise ring overwrite. */
 #define TRACER_RING_SIZE 256u
 #define TRACER_CRASH_SIZE 1024u
-#define TRACER_LOG_LINE_SIZE 64u
 #define TRACER_USE_CRASH 1
 #define TRACER_USE_LOG 1
 #define TRACER_PUTCHAR tr_putc
@@ -155,18 +154,32 @@ int main(void) {
         CHECK(tracer_log_drain((uint8_t *)out, sizeof(out)) == 0u);
     }
 
-    /* ---- 5. over-long lines are truncated, CRLF kept ---- */
+    /* ---- 5. long records stream in full (no length limit) ---- */
     reset_all();
     tracer_log_set_level(TRACER_LOG_TRACE);
-    n = tracer_log(TRACER_LOG_INFO, "%s", "0123456789abcdef"
-                                            "0123456789abcdef"
-                                            "0123456789abcdef"
-                                            "0123456789abcdef"
-                                            "0123456789abcdef"); /* 80 B */
-    CHECK(n == TRACER_LOG_LINE_SIZE);  /* capped at the line buffer */
-    CHECK(s_ser_len == TRACER_LOG_LINE_SIZE);
-    CHECK(s_ser[s_ser_len - 2u] == '\r');
-    CHECK(s_ser[s_ser_len - 1u] == '\n');
+    {
+        /* 20 x 16 = 320 B of body, far past any line-buffer limit. */
+        static const char big[] =
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef" "0123456789abcdef"
+            "0123456789abcdef" "0123456789abcdef";
+        uint32_t pre = (uint32_t)strlen("[0 ms] I: ");
+        uint32_t n2;
+        n2 = tracer_log(TRACER_LOG_INFO, "%s", big);
+        CHECK(n2 == pre + (uint32_t)strlen(big) + 2u); /* not truncated */
+        CHECK(s_ser_len == n2);
+        CHECK(s_ser[n2 - 2u] == '\r');  /* record still CRLF-terminated */
+        CHECK(s_ser[n2 - 1u] == '\n');
+        /* the whole 320 B body appears verbatim on the serial sink. */
+        CHECK(contains(s_ser, s_ser_len, big));
+        /* the (bounded) ring got every byte too -- oldest wrapped off. */
+        CHECK(s_ring_total == n2);
+        CHECK(s_ring_count == TRACER_RING_SIZE);
+    }
 
     /* ---- 6. crash capture auto-includes the recent run log ---- */
     reset_all();

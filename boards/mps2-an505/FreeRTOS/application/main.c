@@ -32,23 +32,26 @@
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 
 void HardFault_Handler_Legency(void) {
-    printf("%s\n", __func__);
+    TRACER_LOGI("%s", __func__);
 }
 
 void Default_Handler(void) {
-    printf("%s\n", __func__);
+    TRACER_LOGI("%s", __func__);
 }
 
 void vApplicationIdleHook(void) {
     __WFI();
 }
 
-/* tracer hook: print the faulting FreeRTOS task name before the dump. */
+/* tracer hook: print the faulting FreeRTOS task name before the dump.  Goes
+ * through tracer_log() (not printf) so the line is also kept in the log
+ * ring / sink and survives a crash (0 printf policy: everything must flow
+ * through the tracer log pipeline to be persistable). */
 void tracer_on_fault(const tracer_fault_t *f) {
     (void)f;
     TaskHandle_t h = xTaskGetCurrentTaskHandle();
     if (h != NULL) {
-        printf("  CurrentTask: %s\r\n", pcTaskGetName(h));
+        TRACER_LOGI("  CurrentTask: %s", pcTaskGetName(h));
     }
 }
 
@@ -66,12 +69,15 @@ uint32_t tracer_stack_limit(void) {
 }
 
 /* tracer hook: list all FreeRTOS tasks (state / stack high-water mark).
- * V11 vTaskList() formats into a caller buffer (no internal print), so we
- * provide one and printf it.  Stack-high-water is in StackType_t words. */
+ * V11 vTaskList() formats into a caller buffer (no internal print), so we log
+ * it as one streamed record -- tracer_log() is printf-like with no line-length
+ * limit, so the whole table flows through the log pipeline (0-printf policy:
+ * task state is kept in the log ring / sink).  Stack-high-water is in
+ * StackType_t words. */
 void tracer_dump_tasks(void) {
     static char buf[1024];
     vTaskList(buf);
-    printf("%s", buf);
+    TRACER_LOGI("%s", buf);
 }
 
 /* tracer hook: system up-time in ms, printed in every dump (crash-to-boot
@@ -85,33 +91,33 @@ void dump_callstack(void) {
 }
 
 void test0(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     dump_callstack();
     tracer_trigger_unalign();
 }
 
 void test1(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     test0();
 }
 
 void test2(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     test1();
 }
 
 void test3(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     test2();
 }
 
 void test4(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     test3();
 }
 
 void test5(void) {
-    printf("this is %s.\r\n", __func__);
+    TRACER_LOGI("this is %s", __func__);
     test4();
 }
 
@@ -174,13 +180,13 @@ static void main_task_entry(void *parameters) {
     rc = spi_flash_init(NULL);
     if (rc == SPI_FLASH_OK) {
         spi_flash_get_info(&fi);
-        printf("spi_flash: JEDEC %02X %02X %02X, size=%uMiB, page=%u, "
-               "sector=%u, 4B-addr=%d\r\n",
-               fi.jedec[0], fi.jedec[1], fi.jedec[2],
-               (unsigned)(fi.size >> 20), (unsigned)fi.page_size,
-               (unsigned)fi.sector_size, fi.four_byte_addr ? 1 : 0);
+        TRACER_LOGI("spi_flash: JEDEC %02X %02X %02X, size=%uMiB, page=%u, "
+                    "sector=%u, 4B-addr=%d",
+                    fi.jedec[0], fi.jedec[1], fi.jedec[2],
+                    (unsigned)(fi.size >> 20), (unsigned)fi.page_size,
+                    (unsigned)fi.sector_size, fi.four_byte_addr ? 1 : 0);
     } else {
-        printf("spi_flash: init failed (%d)\r\n", (int)rc);
+        TRACER_LOGI("spi_flash: init failed (%d)", (int)rc);
     }
 
     /* FatFS over the SPI NOR flash - mount/format, write/read a file. */
@@ -279,7 +285,7 @@ static void main_task_init(void) {
     if (xReturn == pdPASS) {
         vTaskStartScheduler();
     } else {
-        printf("main task create failed(%d).\r\n", (int)(xReturn));
+        TRACER_LOGI("main task create failed(%d)", (int)(xReturn));
     }
 }
 
@@ -297,7 +303,7 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 void vApplicationMallocFailedHook(void)
 {
-    printf("FATAL: FreeRTOS heap exhausted\r\n");
+    TRACER_LOGI("FATAL: FreeRTOS heap exhausted");
     while (1) { }
 }
 
@@ -305,13 +311,13 @@ int main(void) {
     int count = 0;
     uart_init();
     lan9118_open();
-    printf("Start\r\n");
+    TRACER_LOGI("Start");
     tracer_init();
     main_task_init();
 
     while (1) {
         __NOP();
-        printf("hello world - %d.\r\n", count++);
+        TRACER_LOGI("hello world - %d", count++);
     }
     return 0;
 }

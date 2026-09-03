@@ -234,7 +234,7 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 | `TRACER_RING_SIZE` | 2048 | 共享环形缓冲（`tracer_ring_printf()` 事件与 `tracer_log()` 日志共用，字节） |
 | `TRACER_CRASH_SIZE` | 8192 | 崩溃 record 捕获缓冲（dump 文本 + ring 尾 + CRC footer） |
 | `TRACER_LOG_DEFAULT_LEVEL` | `INFO` | `tracer_log` 运行期初始级别（可随时 `tracer_log_set_level` 调） |
-| `TRACER_LOG_LINE_SIZE` | 160 | `tracer_log` 单行上限（前缀+内容+CRLF，超长截断） |
+| `TRACER_LOG_SINK_CHUNK_SIZE` | 128 | sink 推送块上限：日志流每满该字节数回调一次 `tracer_log_sink` |
 
 ### 崩溃黑匣子（crash black box，可选，TRACER_USE_CRASH=1）
 
@@ -281,25 +281,31 @@ IAR `__section_begin/end`）。链接脚本没有这些符号时，用 `-D` 覆�
 - **运行期分级开关**（非编译期过滤）：所有级别都编译进去，输出与否看运行值。默认 `TRACER_LOG_DEFAULT_LEVEL`
   = `INFO`（可 `-D` 覆盖）；任意时刻用 `tracer_log_set_level()`/`tracer_log_get_level()` 调整（如加一条 shell
   命令 `log level`，调试时提到 TRACE、正式跑提到 WARN）。
-- **每行输出三步（一次临界区内）**：① 同步打到串口（不对接任何异步后端时，这就是"同步日志"）；② 写入
-  共享崩溃 ring（与 `tracer_ring_printf()` 同一缓冲）；③ 出临界区后把整行 `(line,len)` 交给 weak
-  `tracer_log_sink()`。行缓冲在**调用者栈上**（`TRACER_LOG_LINE_SIZE`，默认 160，超长截断仍保留 `\r\n`），
-  因此 `tracer_log()` 可重入、可在 ISR 里调用。
+- **流式输出（printf 风格，无行长上限）**：`tracer_log()` 逐字符流式输出（一次 PRIMASK 临界区内）——
+  ① 同步打到串口（不对接任何异步后端时，这就是"同步日志"）；② 写入共享崩溃 ring（与
+  `tracer_ring_printf()` 同一缓冲）；③ 每累计满 `TRACER_LOG_SINK_CHUNK_SIZE`（默认 128）字节回调一次
+  weak `tracer_log_sink()` 块回调，单次 `tracer_log()` 结束时若还有残余再 flush 一次（块可能横跨行边界，
+  接收方只需追加字节）。**调用者不需要自己分行**：格式串里的 `\n` 即换行，末尾自动补 `\r\n`；超长输出整段
+  通过（同步串口、ring、sink 三路都不截断）。临界区短（只做拷贝/追加），因此 `tracer_log()` 可重入、可在
+  ISR 里调用。
 - **预留异步存储接口（写文件 / 写 flash），两选一或都用；都不实现则纯同步输出**：
-  - **push（weak 回调）**：覆盖 `void tracer_log_sink(const void *line, uint32_t len)`（默认 no-op），每行
-    完成后回调给你，自行追加到文件/flash。例如接到 littlefs：
+  - **push（weak 块回调）**：覆盖 `void tracer_log_sink(const void *data, uint32_t len)`（默认 no-op），
+    每当日志流凑满一块或本次输出结束收到残余块时回调给你（`len<=TRACER_LOG_SINK_CHUNK_SIZE`），自行追加到
+    文件/flash。例如接到 littlefs：
     ```c
-    void tracer_log_sink(const void *line, uint32_t len) {
-        /* 追加到日志文件（非崩溃路径，可用 FS/锁） */
-        log_file_append(line, len);
+    void tracer_log_sink(const void *data, uint32_t len) {
+        /* 追加到日志文件（非崩溃路径，可用 FS/锁）；sink 在临界区内被调，
+         * 只应拷贝/入队，不要在这里做耗时写操作 */
+        log_file_append(data, len);
     }
     ```
   - **pull（增量导出）**：后台低优先级任务/空闲钩子调
     `uint32_t tracer_log_drain(uint8_t *out, uint32_t max)`，拿到自上次以来的新增字节流（内含事件与日志的
     混合顺序），自行落盘；ring 被消费过慢覆盖时，从仍可用的最旧字节开始返回。
-- 行缓冲宏：`TRACER_LOG_LINE_SIZE`（默认 `160u`，单行上限，可 `-D` 覆盖）。
-- host 单测 `tests/test_tracer_log.c`（格式/运行期分级/合一 ring/截断/drain/崩溃 record 自动含最近日志）与
-  `tests/test_tracer_log_sink.c`（weak sink 强覆盖、过滤不回调）随 CI 运行。
+- 块推送宏：`TRACER_LOG_SINK_CHUNK_SIZE`（默认 `128u`，一块字节数，可 `-D` 覆盖；调小可让 sink 更及时、
+  调大可减少回调次数）。sink 在 PRIMASK 临界区内被调——必须保持轻量（拷贝/入队），勿阻塞（如等 flash）。
+- host 单测 `tests/test_tracer_log.c`（格式/运行期分级/合一 ring/超长不截断/drain/崩溃 record 自动含最近
+  日志）与 `tests/test_tracer_log_sink.c`（weak sink 强覆盖、过滤不回调、长行分块+残余 flush）随 CI 运行。
 
 ---
 

@@ -375,23 +375,26 @@ void tracer_crash_save(const void *data, uint32_t len);
  * no compile-time filter, so the runtime level may move freely in both
  * directions.
  *
- * One formatted line ("[<ms> ms]X: <body>\r\n", X = level letter; <ms> from
- * the weak tracer_uptime_ms(), which by default counts SysTick wraps -- so
- * every log line already carries a monotonic time stamp, no extra wiring) is
- * built on the CALLER's stack (TRACER_LOG_LINE_SIZE bytes, so tracer_log()
- * is re-entrant and safe from an ISR) and then, inside a short critical
- * section:
- *   1. printed synchronously to the serial sink -- a stock build is
- *      immediately visible on the console (the "sync output" path used when
- *      no async backend is attached);
- *   2. appended to the shared pre-crash ring (the crash log);
- * and afterwards
- *   3. handed whole (line,len) to the weak tracer_log_sink() hook.
+ * Each record ("[<ms> ms]X: <body>\r\n", X = level letter; <ms> from the weak
+ * tracer_uptime_ms(), which by default counts SysTick wraps -- so every log
+ * already carries a monotonic time stamp, no extra wiring) is STREAMED
+ * character-by-character -- printf-like: there is NO line-length limit and
+ * the caller never has to split long output; put '\n' in the format string
+ * for explicit line breaks, and a final CRLF is added automatically.
+ * tracer_log() is IRQ-safe and re-entrant (it streams under a short PRIMASK
+ * section):
+ *   1. every character is printed synchronously to the serial sink (visible
+ *      immediately on the console when no async backend is attached);
+ *   2. every character is appended to the shared pre-crash ring (the log);
+ * and the output is pushed in blocks to the weak tracer_log_sink() hook.
  *
  * Asynchronous persistence (file / flash / network) is left to the app with
  * TWO independent interfaces -- use either, both, or neither:
- *   - tracer_log_sink(): push model.  Override the weak hook to receive every
- *     finished line and persist it.  Default is a no-op (pure sync output).
+ *   - tracer_log_sink(): push model.  Override the weak hook; it is called
+ *     with a block of <= TRACER_LOG_SINK_CHUNK_SIZE bytes every time that
+ *     many bytes accumulate and once more at the end of each tracer_log()
+ *     call with the remainder (blocks may split lines, so just append the
+ *     bytes to your storage).  Default is a no-op (pure sync output).
  *   - tracer_log_drain(): pull model.  Call from a low-priority background
  *     task / idle hook to copy the incremental byte stream (everything
  *     written since the previous call) and write it out.  Independent,
@@ -409,14 +412,16 @@ typedef enum {
 #define TRACER_LOG_DEFAULT_LEVEL TRACER_LOG_INFO
 #endif
 
-/* Max bytes of one formatted log line (prefix + body + CRLF); a longer line
- * is truncated.  Allocated on the caller's stack by tracer_log(). */
-#ifndef TRACER_LOG_LINE_SIZE
-#define TRACER_LOG_LINE_SIZE 160u
+/* Block size handed to the weak tracer_log_sink() hook: tracer_log() pushes
+ * a block every time this many bytes accumulate, and the (< block) remainder
+ * at the end of each call.  A file/flash backend just appends the blocks. */
+#ifndef TRACER_LOG_SINK_CHUNK_SIZE
+#define TRACER_LOG_SINK_CHUNK_SIZE 128u
 #endif
 
-/* Log one line at 'level'.  Returns the number of bytes the line produced
- * (0 when filtered out by the current runtime level). */
+/* Log one record at 'level' (streamed, printf-like, no length limit).
+ * Returns the number of bytes emitted (0 when filtered out by the current
+ * runtime level). */
 uint32_t tracer_log(tracer_log_level_t level, const char *fmt, ...);
 void tracer_log_set_level(tracer_log_level_t level);
 tracer_log_level_t tracer_log_get_level(void);
@@ -433,10 +438,13 @@ tracer_log_level_t tracer_log_get_level(void);
 #define TRACER_LOGW(...) tracer_log(TRACER_LOG_WARN,  __VA_ARGS__)
 #define TRACER_LOGE(...) tracer_log(TRACER_LOG_ERROR, __VA_ARGS__)
 
-/* Weak per-line asynchronous persistence hook.  Override to store each
- * finished line (e.g. append to a flash file / a log file on an FS).
- * 'line' is not NUL-terminated; use 'len'.  Default no-op. */
-void tracer_log_sink(const void *line, uint32_t len);
+/* Weak block-push persistence hook.  Called inside tracer's critical section
+ * with up to TRACER_LOG_SINK_CHUNK_SIZE bytes (once per filled block and once
+ * per tracer_log() call with the remainder).  Blocks may split lines -- just
+ * append them to your file / flash log; 'data' is not NUL-terminated.  Keep
+ * it quick (copy into your own queue) since it runs with IRQs masked.
+ * Default no-op. */
+void tracer_log_sink(const void *data, uint32_t len);
 
 /* Incremental pull: copy up to 'max' bytes of the log stream produced since
  * the previous call into 'out' and advance the internal read cursor.
