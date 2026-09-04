@@ -24,7 +24,7 @@
 sip_autoconf.h: No such file or directory
 ```
 
-**排查**：这些头（`sip_autoconf.h`、`pjmedia/config_auto.h`、`pjmedia-codec/config_auto.h`）是上游 CMake 用 `configure_file()` 生成的，且被 gitignore。本项目 pjproject 是**手工精简构建**（`libutils/pjprojec/ports/freertos/CMakeLists.txt`），不执行上游 CMakeLists，所以这些头从未被生成。
+**排查**：这些头（`sip_autoconf.h`、`pjmedia/config_auto.h`、`pjmedia-codec/config_auto.h`）是上游 CMake 用 `configure_file()` 生成的，且被 gitignore。本项目 pjproject 是**手工精简构建**（`libutils/pjproject/ports/freertos/CMakeLists.txt`），不执行上游 CMakeLists，所以这些头从未被生成。
 
 **解决**：在 `ports/freertos/CMakeLists.txt` 顶部补 `configure_file()`，输出到 `ports/freertos/include/{pjsip,pjmedia,pjmedia-codec}/`，并设 `PJMEDIA_HAS_G711_CODEC=1`。
 

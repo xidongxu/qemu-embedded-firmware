@@ -72,7 +72,7 @@ target_include_directories(${TARGET} PRIVATE
     ../Drivers/CMSIS_5/CMSIS/Core/Include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/src/include
     ${CMAKE_SOURCE_DIR}/libutils/lwip/ports
-    ${CMAKE_SOURCE_DIR}/libutils/pjprojec/pjnath/include
+    ${CMAKE_SOURCE_DIR}/libutils/pjproject/pjnath/include
     ${CMAKE_SOURCE_DIR}/libutils/tracer
 )
 if(LWIP_OS STREQUAL "FreeRTOS")

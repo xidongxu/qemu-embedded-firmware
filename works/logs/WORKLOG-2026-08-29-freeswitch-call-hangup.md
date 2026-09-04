@@ -154,7 +154,7 @@ guest (QEMU) 10.0.2.15 ─────► 10.0.2.2 (网关/宿主) ──► 宿
 
 ### 6.2 补丁 B：固定 RTP 端口 4000（库内，防 hostfwd 失配）
 
-- **文件**：`libutils/pjprojec/pjsip/src/pjsua-lib/pjsua_media.c`
+- **文件**：`libutils/pjproject/pjsip/src/pjsua-lib/pjsua_media.c`
 - **位置**：`create_rtp_rtcp_sock()` 函数开头、STUN 解析之后（参考行 ~457-461）
 - **修改前**（标准 pjsua：`next_rtp_port` 每次调用后 +2 递增 → 4000, 4002, 4004 ...）：
   ```c
@@ -179,7 +179,7 @@ guest (QEMU) 10.0.2.15 ─────► 10.0.2.2 (网关/宿主) ──► 宿
 
 ### 6.3 补丁 C：强制 guest 出方向 RTP/RTCP 指向 10.0.2.2（库内，打通 guest→FS RTP）
 
-- **文件**：`libutils/pjprojec/pjsip/src/pjsua-lib/pjsua_media.c`
+- **文件**：`libutils/pjproject/pjsip/src/pjsua-lib/pjsua_media.c`
 - **位置**：`apply_med_update()` 的 audio 分支，`pjmedia_stream_info_from_sdp()` 成功返回、
   `stream_info.info.aud = asi; enc_name = &asi.fmt.encoding_name;` 之后（参考行 ~4094-4130）
 - **修改前**：
@@ -232,7 +232,7 @@ guest (QEMU) 10.0.2.15 ─────► 10.0.2.2 (网关/宿主) ──► 宿
 
 ### 6.4 补丁 D：强制 in-dialog 请求（ACK/BYE/UPDATE）指向 10.0.2.2（库内，打通 guest→FS SIP）
 
-- **文件**：`libutils/pjprojec/pjsip/src/pjsip/sip_dialog.c`
+- **文件**：`libutils/pjproject/pjsip/src/pjsip/sip_dialog.c`
 - **位置**：`pjsip_dlg_send_request()` 函数开头：`pj_log_push_indent(); PJ_LOG(5,...)` 之后、
   `pjsip_dlg_inc_lock(dlg);` 之前（参考行 ~1375-1400）
 - **修改前**：

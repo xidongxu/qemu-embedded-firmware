@@ -7,7 +7,7 @@
 
 ## 1. 备份内容
 
-备份位置：`libutils/pjprojec/ports/freeswitch/`（保持与 FS conf 相同的相对目录结构）
+备份位置：`libutils/pjproject/ports/freeswitch/`（保持与 FS conf 相同的相对目录结构）
 
 | 备份文件 | 用途 / 关键配置 |
 |---|---|
@@ -25,7 +25,7 @@
 ### 2.1 复制两个备份文件回 conf 目录（管理员 PowerShell）
 
 ```powershell
-$src = 'C:\Users\xidon\code\github\qemu-embedded-firmware\libutils\pjprojec\ports\freeswitch'
+$src = 'C:\Users\xidon\code\github\qemu-embedded-firmware\libutils\pjproject\ports\freeswitch'
 $dst = 'C:\Program Files\FreeSWITCH\conf'
 
 Copy-Item "$src\sip_profiles\internal-lo.xml"      "$dst\sip_profiles\" -Force
@@ -57,7 +57,7 @@ FS 运行中（手动 `FreeSwitchConsole.exe` 或服务）执行：
 
 **方式 A：用备份的已修复版直接覆盖**（带回完整 dialplan，含 9196 echo）：
 ```powershell
-Copy-Item 'C:\Users\xidon\code\github\qemu-embedded-firmware\libutils\pjprojec\ports\freeswitch\dialplan\default.xml' 'C:\Program Files\FreeSWITCH\conf\dialplan\' -Force
+Copy-Item 'C:\Users\xidon\code\github\qemu-embedded-firmware\libutils\pjproject\ports\freeswitch\dialplan\default.xml' 'C:\Program Files\FreeSWITCH\conf\dialplan\' -Force
 ```
 
 **方式 B：只改 sleep 行、保留新版 dialplan**（管理员运行，把 `sleep 10000 → 0`，不改密码）：

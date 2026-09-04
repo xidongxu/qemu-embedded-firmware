@@ -50,4 +50,4 @@ RUN-D(首轮): 两边 FAILED —— callee rtcp loss=75/200(37.5%，slirp 随机
 
 ## 涉及文件
 
-- `libutils/pjprojec/ports/freertos/src/os_timestamp_freertos.c` — 改为 SysTick 组合计数器（CMSIS-free 寄存器访问 + extern SystemCoreClock）
+- `libutils/pjproject/ports/freertos/src/os_timestamp_freertos.c` — 改为 SysTick 组合计数器（CMSIS-free 寄存器访问 + extern SystemCoreClock）

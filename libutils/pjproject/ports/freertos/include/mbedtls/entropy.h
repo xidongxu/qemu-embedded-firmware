@@ -1,5 +1,5 @@
 /*
- * mbedtls/entropy.h 兼容层  --  libutils/pjprojec/ports/freertos/include/mbedtls/
+ * mbedtls/entropy.h 兼容层  --  libutils/pjproject/ports/freertos/include/mbedtls/
  *
  * mbedtls 4.x 移除公开的 mbedtls_entropy_* API（熵已并入 PSA）。pjproject 的
  * ssl_sock_mbedtls.c 仍引用它们，这里提供兼容实现：

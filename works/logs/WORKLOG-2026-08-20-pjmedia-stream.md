@@ -106,10 +106,10 @@ powershell -ExecutionPolicy Bypass -File works/tools/run_dual_call.ps1
 ## 涉及文件
 
 - `boards/mps2-an505/FreeRTOS/application/pj_sip_dual_test.c` — 媒体层重写为 pjmedia_stream + pjmedia_clock 同步驱动
-- `libutils/pjprojec/ports/freertos/include/pj/config_site.h` — `PJMEDIA_RTP_NAT_PROBATION_CNT 0`（hostfwd 拓扑合理配置）
+- `libutils/pjproject/ports/freertos/include/pj/config_site.h` — `PJMEDIA_RTP_NAT_PROBATION_CNT 0`（hostfwd 拓扑合理配置）
 - ~~`pjmedia/src/pjmedia/stream.c`、`jbuf.c` — 曾改过，**已还原为原始**（非 bug，勿再改）~~
-- `libutils/pjprojec/ports/freertos/CMakeLists.txt` — pjmedia 目标加 `av_sync.c`
-- `libutils/pjprojec/pjsip/include/pjsip/sip_autoconf.h`（新增 stub）、`pjmedia/config_auto.h`、`pjmedia-codec/config_auto.h`（新增 stub）
+- `libutils/pjproject/ports/freertos/CMakeLists.txt` — pjmedia 目标加 `av_sync.c`
+- `libutils/pjproject/pjsip/include/pjsip/sip_autoconf.h`（新增 stub）、`pjmedia/config_auto.h`、`pjmedia-codec/config_auto.h`（新增 stub）
 - `boards/mps2-an505/FreeRTOS/application/lwip_os_test.c` — dual 模式跳过 http/ping
 
 ## 后续工作

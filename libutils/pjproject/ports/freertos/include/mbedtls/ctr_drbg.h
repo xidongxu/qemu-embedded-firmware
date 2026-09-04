@@ -1,5 +1,5 @@
 /*
- * mbedtls/ctr_drbg.h 兼容层  --  libutils/pjprojec/ports/freertos/include/mbedtls/
+ * mbedtls/ctr_drbg.h 兼容层  --  libutils/pjproject/ports/freertos/include/mbedtls/
  *
  * mbedtls 4.x 把 CTR_DRBG 变为 TF-PSA-Crypto 内部(私有)模块，公开的
  * mbedtls_ctr_drbg_* API 已移除。pjproject 的 ssl_sock_mbedtls.c 仍使用该 API，

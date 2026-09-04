@@ -23,7 +23,7 @@
 | 层 | 选型 | 说明 |
 |---|---|---|
 | 信令栈 | PJSUA（pjsua-lib 高层 API） | 封装 REGISTER/INVITE/ACK/BYE，回调驱动 |
-| 协议栈 | pjsip + pjmedia + pjnath + pjmedia-audiodev | 项目手工精简构建（见 `libutils/pjprojec/ports/freertos/CMakeLists.txt`） |
+| 协议栈 | pjsip + pjmedia + pjnath + pjmedia-audiodev | 项目手工精简构建（见 `libutils/pjproject/ports/freertos/CMakeLists.txt`） |
 | 音视频后端 | mpsx audio/mic（QEMU 虚拟声卡） | `application/mpsx_dev.c`，走 `pjmedia_aud_register_factory` 运行时注册 |
 | UI | LVGL 9.5（450×450，双缓冲，触摸屏） | 复用项目自带 `lv_disp.c` 显示/触摸基建 |
 | 对端 | FreeSWITCH（宿主）+ Android 手机 1005 | 经 QEMU slirp/hostfwd 互联 |
@@ -179,7 +179,7 @@ cmake --build build-phone
 
 - **现象**：clean 后构建报找不到 `sip_autoconf.h` / `config_auto.h`。
 - **根因**：手工精简构建不执行上游 CMakeLists 的 `configure_file()`，这些 gitignored 生成头在 fresh clone / `git clean` 后缺失。
-- **解决**：在 `libutils/pjprojec/ports/freertos/CMakeLists.txt` 顶部补 `configure_file()`，生成到 `ports/freertos/include/{pjsip,pjmedia,pjmedia-codec}/`；`PJMEDIA_HAS_G711_CODEC=1`。
+- **解决**：在 `libutils/pjproject/ports/freertos/CMakeLists.txt` 顶部补 `configure_file()`，生成到 `ports/freertos/include/{pjsip,pjmedia,pjmedia-codec}/`；`PJMEDIA_HAS_G711_CODEC=1`。
 - **结果**：构建通过，elf 正常产出。
 
 ### 3.2 UI 冻结 / 死锁：外部任务调 pjsua

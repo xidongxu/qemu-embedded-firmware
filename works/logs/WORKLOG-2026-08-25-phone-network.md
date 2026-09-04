@@ -175,7 +175,7 @@ qemu-system-arm.exe -machine mps2-an505 -cpu cortex-m33 -m 16M `
 |---|---|
 | `boards/mps2-an505/FreeRTOS/application/pj_phone.c` | 全部网络相关配置（宏 + acc_cfg/transport/media_cfg） |
 | `boards/mps2-an505/FreeRTOS/application/pj_phone.h` | 标准电话接口 |
-| `libutils/pjprojec/ports/freertos/CMakeLists.txt` | pjproject 精简构建 + autoconf 头生成 |
+| `libutils/pjproject/ports/freertos/CMakeLists.txt` | pjproject 精简构建 + autoconf 头生成 |
 | `works/tools/fs_*.ps1` | FreeSWITCH 配置脚本（绑定 / loopback profile / 域 / 去 sleep） |
 | `works/tools/run_phone_fs_test.ps1` | 自动起 QEMU + FreeSWITCH 联调 |
 | `works/logs/WORKLOG-2026-08-25-phone-app.md` | 功能开发总结（设计/实现/调试） |

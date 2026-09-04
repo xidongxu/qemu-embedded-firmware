@@ -1,5 +1,5 @@
 /*
- * mbedtls/version.h 兼容包裹头  --  libutils/pjprojec/ports/freertos/include/mbedtls/
+ * mbedtls/version.h 兼容包裹头  --  libutils/pjproject/ports/freertos/include/mbedtls/
  *
  * mbedtls 4.2 的 mbedtls_version_get_string_full() 变为 0 参数并返回
  * const char *（旧版为 void 版本写入用户缓冲区）。pjproject 的

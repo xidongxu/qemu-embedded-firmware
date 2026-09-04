@@ -160,7 +160,7 @@ RUN3: callee rtcp tx=200 loss=0 | caller rtcp tx=200 loss=0 | 双 ALL PASSED
 ```
 
 - **双向 200/200 帧全收、RTCP loss=0**。
-- `git status libutils/pjprojec/` 为空 → **jbuf.c/stream.c/transport_udp.c/g711.c 全部还原**，
+- `git status libutils/pjproject/` 为空 → **jbuf.c/stream.c/transport_udp.c/g711.c 全部还原**，
   之前（08-20）"QEMU 通道丢帧"结论被彻底推翻。
 - **结论**：socket 直连 + lan9118 修复 + 固件 lwIP/pjmedia 全部正常；"丢包"是测试应用自身的
   启动时序、ptime 协商、VAD 三个配置问题。真实场景（双方就绪后通话）无此问题。
@@ -463,7 +463,7 @@ A/B 实测（frm_per_pkt=1 保留，10s 长通话 x3 轮，6/6 PASS）：
 
 **若未来要调 PLC（不改 pjproject 源码的两种方式）**：
 1. CMake 编译参数：PJMEDIA_MAX_PLC_DURATION_MSEC 是 #ifndef 保护的宏，可在项目 CMakeLists/工具链对 pjmedia 目标加 -DPJMEDIA_MAX_PLC_DURATION_MSEC=1000（config.h 的 #ifndef 自动跳过）。
-2. ports 配置头：在 libutils/pjprojec/ports/ 放配置头（如 ports/config_extra.h），用 -include 强制包含同样 #ifndef 覆盖。ports 目录本就是"配置/移植"层，不算改源码逻辑。
+2. ports 配置头：在 libutils/pjproject/ports/ 放配置头（如 ports/config_extra.h），用 -include 强制包含同样 #ifndef 覆盖。ports 目录本就是"配置/移植"层，不算改源码逻辑。
 3. 当前不需要：240ms 已验证足够。
 
 **提交清单（更新）**：pj_sip_dual_test.c、run_dual_slirp.ps1、analyze_audio_deep.py（新增）、WORKLOG。config.h 不含（已还原，pjproject 干净）。

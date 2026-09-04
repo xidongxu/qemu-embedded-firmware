@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 
 $fs  = 'C:\Program Files\FreeSWITCH'
-$src = Join-Path $PSScriptRoot '..\..\libutils\pjprojec\ports\freeswitch'
+$src = Join-Path $PSScriptRoot '..\..\libutils\pjproject\ports\freeswitch'
 
 if (-not (Test-Path "$fs\cert")) {
     New-Item -ItemType Directory -Path "$fs\cert" | Out-Null

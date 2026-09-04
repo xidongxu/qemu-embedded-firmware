@@ -5,7 +5,7 @@
 > `sip_profiles/internal-lo.xml`（自建 profile）和 `autoload_configs/acl.conf.xml`（放行网段），
 > 重装时这 2 个都会被安装器保留；而 `dialplan/default.xml` 重装时**会被重置**
 > （默认密码 sleep 10000 回归）。已把 3 个自定义文件（含 default.xml 已修复版）备份到
-> `libutils/pjprojec/ports/freeswitch/`，还原步骤见 `WORKLOG-2026-08-29-fs-config-restore.md`；
+> `libutils/pjproject/ports/freeswitch/`，还原步骤见 `WORKLOG-2026-08-29-fs-config-restore.md`；
 > 也可用 `works/tools/fs_remove_default_password_sleep.ps1` 只处理 sleep（见 1.5 节）。
 > 重装会用默认配置覆盖，需按下述步骤**重新配置**。
 
@@ -131,4 +131,4 @@ powershell -ExecutionPolicy Bypass -File works\tools\run_smoke_regression.ps1 -I
 2. **`internal-lo` 的 context 必须是 `default`**，否则 9196 echo 拨不通（480）
 3. 手机 1005 走 `internal` profile（0.0.0.0:5060），重装后确认 internal.xml 监听正常
 4. 重装后 `local_ip_v4`（FS 主 IP）可能变化——若变，需同步改 guest 固件的 `PJ_PHONE_DIAL_HOST`（编译）或运行时 `host` 命令
-5. 自定义配置备份在 `libutils/pjprojec/ports/freeswitch/`（3 个文件：`internal-lo.xml`、`acl.conf.xml`、`dialplan/default.xml` 已修复版），还原步骤见 `WORKLOG-2026-08-29-fs-config-restore.md`
+5. 自定义配置备份在 `libutils/pjproject/ports/freeswitch/`（3 个文件：`internal-lo.xml`、`acl.conf.xml`、`dialplan/default.xml` 已修复版），还原步骤见 `WORKLOG-2026-08-29-fs-config-restore.md`

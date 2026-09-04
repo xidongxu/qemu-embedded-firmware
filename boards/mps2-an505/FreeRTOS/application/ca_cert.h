@@ -1,6 +1,6 @@
 /*
  * ca_cert.h -- QEMU test CA certificate (PEM) embedded for TLS server
- * verification.  Generated from libutils/pjprojec/ports/freeswitch/certs/ca.pem
+ * verification.  Generated from libutils/pjproject/ports/freeswitch/certs/ca.pem
  * (do not hand-edit; regenerate with works/tools/gen_tls_certs.ps1).
  */
 #ifndef PJ_PHONE_CA_CERT_H

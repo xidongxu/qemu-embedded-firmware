@@ -23,7 +23,7 @@ set(PJPROJECT_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 # the generation here, writing into ports/freertos/include which is already on
 # every target's include path - same "shadow the autoconf header" pattern the
 # hand-written os_auto.h / m_auto.h / config_site.h use.  Output files are
-# gitignored (see libutils/pjprojec/.gitignore).
+# gitignored (see libutils/pjproject/.gitignore).
 # ---------------------------------------------------------------------------
 # PJMEDIA: only the built-in G.711 codec is enabled (see pj/config_site.h).
 set(PJMEDIA_HAS_G711_CODEC 1)

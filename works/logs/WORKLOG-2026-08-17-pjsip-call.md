@@ -8,7 +8,7 @@
 > - 新增 `FreeRTOS/application/pj_sip_dual_test.c/.h`（双实例通话测试，角色化）
 > - 修改 `FreeRTOS/application/main.c`（dual 模式分流）
 > - 修改 `FreeRTOS/CMakeLists.txt`（`-DPJ_DUAL_ROLE=caller|callee|none`）
-> - 修改 `libutils/pjprojec/ports/freertos/CMakeLists.txt`（pjmedia 目标加入 `jbuf.c`）
+> - 修改 `libutils/pjproject/ports/freertos/CMakeLists.txt`（pjmedia 目标加入 `jbuf.c`）
 > - 修改 `FreeRTOS/application/pj_sip_inv_test.c`（stage 9/10：INVITE 会话内媒体 + jbuf + 10ms 节拍）
 
 ---

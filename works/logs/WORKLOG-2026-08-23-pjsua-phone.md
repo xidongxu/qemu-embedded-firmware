@@ -65,12 +65,12 @@
 - **⚠ 已修复（QEMU 后端播放 500Hz，2026-08-23）**：QEMU `-audiodev wav` 录 guest 播放 500Hz 的根因 = `qemu-embedded-platform` 的 `hw/audio/mpsx_simple_audio.c` 自定义宏 `AUDIO_FORMAT_S16 (1)` 与 QEMU `AudioFormat` 枚举冲突（QEMU 里 `AUDIO_FORMAT_S16=3`）→ `as.fmt=1` 被音频引擎当作 **S8（8bit）** → 采样数翻倍 → 1kHz 播成 500Hz。**修复**：设备格式宏改名 `MPSX_FMT_*`、`mpsx_audio_fmt()` 返回 QEMU 枚举（S16=3/U8=0）、reset/FORMAT 校验用 `MPSX_FMT_*`。**验证**：播放录制中位 **1000Hz**。**注意**：QEMU 已用 mingw64 环境重编（`qemu-configure` ninja，PATH 加 `usr/bin`(sh)+`mingw64/bin`；`touch build.ninja` 可避免全量 regen），exe 拷到 `qemu-build`。宿主 `--rec-file` 录 guest 为空：宿主 pjsua rec-file 连接未执行（宿主配置问题，非 guest——guest conf tx=99 证明在发）
 
 ## 改动文件
-- `libutils/pjprojec/ports/freertos/CMakeLists.txt`：补编 pjnath/pjmedia-audiodev/pjsua-lib + 依赖源
-- `libutils/pjprojec/ports/freertos/include/pj/config_site.h`：PJMEDIA_HAS_AUDIODEV=1、音频后端裁剪、PJ_THREAD_DEFAULT_STACK_SIZE 16K
-- `libutils/pjprojec/ports/freertos/src/audiodev_stub.c`：删 aud_subsys stub、补 snd_port stubs
-- `libutils/pjprojec/ports/freertos/src/os_core_freertos.c`：**pj_thread_this TLS 惰性修复（核心）**、find_current_thread 256 guard
-- `libutils/pjprojec/pjlib/src/pj/lock.c`：grp_lock_acquire 16 链表遍历 guard
-- `libutils/pjprojec/pjsip/include/pjsua-lib/pjsua_internal.h`：PJSUA_UNLOCK 防下溢、PJSUA_RELEASE_LOCK 32 上限
+- `libutils/pjproject/ports/freertos/CMakeLists.txt`：补编 pjnath/pjmedia-audiodev/pjsua-lib + 依赖源
+- `libutils/pjproject/ports/freertos/include/pj/config_site.h`：PJMEDIA_HAS_AUDIODEV=1、音频后端裁剪、PJ_THREAD_DEFAULT_STACK_SIZE 16K
+- `libutils/pjproject/ports/freertos/src/audiodev_stub.c`：删 aud_subsys stub、补 snd_port stubs
+- `libutils/pjproject/ports/freertos/src/os_core_freertos.c`：**pj_thread_this TLS 惰性修复（核心）**、find_current_thread 256 guard
+- `libutils/pjproject/pjlib/src/pj/lock.c`：grp_lock_acquire 16 链表遍历 guard
+- `libutils/pjproject/pjsip/include/pjsua-lib/pjsua_internal.h`：PJSUA_UNLOCK 防下溢、PJSUA_RELEASE_LOCK 32 上限
 - `boards/mps2-an505/FreeRTOS/application/pj_phone.c`：PJSUA 电话应用 + watchdog + rtp_cfg.public_addr + media_cfg.no_vad + snd_auto_close_time=-1（A1）
 - `boards/mps2-an505/FreeRTOS/application/main.c`：PJ_PHONE 分支（lwip 网络后）+ 栈溢出/malloc hooks
 - `boards/mps2-an505/FreeRTOS/application/FreeRTOSConfig.h`：configCHECK_FOR_STACK_OVERFLOW=2

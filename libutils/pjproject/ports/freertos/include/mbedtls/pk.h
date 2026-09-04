@@ -1,5 +1,5 @@
 /*
- * mbedtls/pk.h 兼容包裹头  --  libutils/pjprojec/ports/freertos/include/mbedtls/
+ * mbedtls/pk.h 兼容包裹头  --  libutils/pjproject/ports/freertos/include/mbedtls/
  *
  * mbedtls 4.2 移除 mbedtls_pk_parse_key() 的 f_rng/p_rng 参数（7 参数 -> 5 参数）。
  * pjproject 的 ssl_sock_mbedtls.c 仍按 7 参数调用，这里用 include_next 引入真实

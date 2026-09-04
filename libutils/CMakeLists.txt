@@ -68,7 +68,7 @@ if(TARGET_PROJECT STREQUAL "FreeRTOS")
     add_subdirectory(fatfs)
     # libopus (wideband/fullband codec via pjmedia-codec/opus.c).
     # FIXED_POINT for Cortex-M33 (no float path); intrinsics off (no NEON
-    # on M33); static library only.  Built before pjprojec so pjmedia can
+    # on M33); static library only.  Built before pjproject so pjmedia can
     # link it.
     set(OPUS_FIXED_POINT ON CACHE BOOL "opus fixed point" FORCE)
     set(OPUS_DISABLE_INTRINSICS ON CACHE BOOL "opus no intrinsics" FORCE)
@@ -81,5 +81,5 @@ if(TARGET_PROJECT STREQUAL "FreeRTOS")
     # 配置集中在 libutils/mbedtls/ports/（含裸机时间/熵对接）。
     add_subdirectory(mbedtls/ports)
     # PJLIB (SIP/RTP stack) FreeRTOS port - stage 1: pjlib core only.
-    add_subdirectory(pjprojec/ports/freertos)
+    add_subdirectory(pjproject/ports/freertos)
 endif()

@@ -1,5 +1,5 @@
 /*
- * mbedtls/ssl.h 兼容包裹头  --  libutils/pjprojec/ports/freertos/include/mbedtls/
+ * mbedtls/ssl.h 兼容包裹头  --  libutils/pjproject/ports/freertos/include/mbedtls/
  *
  * mbedtls 4.2 移除了 mbedtls_ssl_conf_rng()（TLS RNG 改走 PSA）。pjproject 的
  * ssl_sock_mbedtls.c 仍调用它，这里提供空实现（RNG 已由 mbedtls 内部 PSA 处理，

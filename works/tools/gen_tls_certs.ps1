@@ -1,6 +1,6 @@
 # gen_tls_certs.ps1 - regenerate the FreeSWITCH SIPS/TLS test certificates.
 #
-# Outputs (overwrites) into libutils/pjprojec/ports/freeswitch/certs/:
+# Outputs (overwrites) into libutils/pjproject/ports/freeswitch/certs/:
 #   agent.pem   = server cert + private key (FreeSWITCH TLS server)
 #   cafile.pem  = CA certificate
 #   ca.pem      = CA certificate (embedded into the guest as ca_cert.h)
@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 
 $ssl  = 'C:\Program Files\Git\usr\bin\openssl.exe'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$dst  = Join-Path $root 'libutils\pjprojec\ports\freeswitch\certs'
+$dst  = Join-Path $root 'libutils\pjproject\ports\freeswitch\certs'
 
 if (-not (Test-Path $ssl)) {
     Write-Error "openssl not found at $ssl (install Git for Windows)"
