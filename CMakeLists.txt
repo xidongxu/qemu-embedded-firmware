@@ -10,6 +10,14 @@ message(STATUS "Building board: ${BOARD}")
 message(STATUS "Building project: ${PROJECT}")
 
 add_compile_options(-O2)
+# Debug aid: build EVERY target with .ARM.exidx unwind tables so tracer's
+# exact backtrace (tracer_dump_callstack / tracer_get_callstack with
+# TRACER_USE_EXIDX) can walk through ANY library (app, lvgl, pjproject, ...).
+# An exidx unwind needs unwind tables in every frame of the chain, so this is
+# global rather than per-library.  Costs a little flash for the extra
+# .ARM.exidx tables.  (tracer and the app CMake still list it explicitly --
+# harmless redundancy that keeps the requirement obvious per target.)
+add_compile_options(-funwind-tables)
 
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     set(FREERTOS_PORT GCC_ARM_CM33_NTZ_NONSECURE CACHE STRING "FreeRTOS port")
