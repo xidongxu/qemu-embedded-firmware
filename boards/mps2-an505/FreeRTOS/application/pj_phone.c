@@ -156,23 +156,28 @@ static void phone_to_idle(void) {
 static int phone_srtp_key_len(const pj_str_t *name) {
     if (pj_stricmp2(name, "AES_256_CM_HMAC_SHA1_80") == 0 ||
         pj_stricmp2(name, "AES_256_CM_HMAC_SHA1_32") == 0) {
-        return 46;   /* 32 key + 14 salt */
+        /* 32 key + 14 salt */
+        return 46;
     }
     if (pj_stricmp2(name, "AEAD_AES_256_GCM") == 0 ||
         pj_stricmp2(name, "AEAD_AES_256_GCM_8") == 0) {
-        return 44;   /* 32 key + 12 salt */
+        /* 32 key + 12 salt */
+        return 44;
     }
     if (pj_stricmp2(name, "AES_192_CM_HMAC_SHA1_80") == 0 ||
         pj_stricmp2(name, "AES_192_CM_HMAC_SHA1_32") == 0) {
-        return 38;   /* 24 key + 14 salt */
+        /* 24 key + 14 salt */
+        return 38;
     }
     if (pj_stricmp2(name, "AEAD_AES_128_GCM") == 0 ||
         pj_stricmp2(name, "AEAD_AES_128_GCM_8") == 0) {
-        return 28;   /* 16 key + 12 salt */
+        /* 16 key + 12 salt */
+        return 28;
     }
     if (pj_stricmp2(name, "AES_CM_128_HMAC_SHA1_80") == 0 ||
         pj_stricmp2(name, "AES_CM_128_HMAC_SHA1_32") == 0) {
-        return 30;   /* 16 key + 14 salt */
+        /* 16 key + 14 salt */
+        return 30;
     }
     return 0;
 }
@@ -832,13 +837,17 @@ int pj_phone_get_rx_dtmf(char *buf, int size) {
 static void phone_pjlog_writer(int level, const char *data, int len) {
     tracer_log_level_t lv;
     if (level <= 1) {
-        lv = TRACER_LOG_ERROR;   /* FATAL / ERROR */
+        /* FATAL / ERROR */
+        lv = TRACER_LOG_ERROR;
     } else if (level == 2) {
-        lv = TRACER_LOG_WARN;    /* WARN */
+        /* WARN */
+        lv = TRACER_LOG_WARN;
     } else if (level == 3) {
-        lv = TRACER_LOG_INFO;    /* INFO */
+        /* INFO */
+        lv = TRACER_LOG_INFO;
     } else {
-        lv = TRACER_LOG_DEBUG;   /* DEBUG / TRACE / DETAIL */
+        /* DEBUG / TRACE / DETAIL */
+        lv = TRACER_LOG_DEBUG;
     }
     /* Drop early so filtered lines never even touch pjlib's buffer. */
     if (lv < tracer_log_get_level()) {
