@@ -1,0 +1,12 @@
+{
+  "name": "m55-an547",
+  "core": "cortex-m55",
+  "arch": "armv8m",
+  "machine": "mps3-an547",
+  "startup": "application/startup_armv8m.s",
+  "mfloat": "soft",
+  "fpu": "fpv5-d16",
+  "uart0": "0x49303000",
+  "busfault_addr": "0xE0100000u",
+  "tracer_macros": ["TRACER_USE_CRASH=1"]
+}

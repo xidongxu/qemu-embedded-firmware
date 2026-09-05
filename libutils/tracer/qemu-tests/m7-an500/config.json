@@ -1,0 +1,12 @@
+{
+  "name": "m7-an500",
+  "core": "cortex-m7",
+  "arch": "armv7m",
+  "machine": "mps2-an500",
+  "startup": "application/startup_armv7m.s",
+  "linker": "application/link_mps2.ld",
+  "mfloat": "soft",
+  "fpu": "fpv5-d16",
+  "uart0": "0x40004000",
+  "tracer_macros": ["TRACER_USE_CRASH=1"]
+}

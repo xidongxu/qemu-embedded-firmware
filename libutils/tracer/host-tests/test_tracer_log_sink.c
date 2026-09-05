@@ -13,9 +13,9 @@
  * Build (links tracer.c with TRACER_USE_LOG only; memory macros pinned):
  *   gcc -std=c99 -Wall -Wextra -DTRACER_USE_LOG=1 \
  *       -DTRACER_STACK_DUMP_BYTES=0 \
- *       -DTRACER_STACK_BASE=0x20000000 -DTRACER_STACK_TOP=0x20010000 \
+ *       -DTRACER_STACK_BASE=0x800 -DTRACER_STACK_TOP=0x1000 \
  *       -DTRACER_TEXT_START=0x08000000 -DTRACER_TEXT_END=0x08020000 \
- *       -I.. tests/test_tracer_log_sink.c ../tracer.c -o t && ./t
+ *       -I.. host-tests/test_tracer_log_sink.c ../tracer.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON and into CI).
  */
 #include <stdio.h>
@@ -42,6 +42,12 @@ void tracer_log_sink(const void *data, uint32_t len) {
     } else {
         s_all_len = (uint32_t)-1;   /* overflow marker -> test fails */
     }
+}
+
+/* Override: report an unknown stack limit (0), so the on-demand walkers'
+ * TRACER_STACK_TOP fallback branch is taken. */
+uint32_t tracer_stack_limit(void) {
+    return 0u;
 }
 
 static void sink_reset(void) {
@@ -130,6 +136,16 @@ int main(void) {
         CHECK(memcmp(out, "[0][I] aaa\r\n[0][W] bbb\r\n", d) == 0);
         CHECK(tracer_log_drain(out, sizeof(out)) == 0u);
     }
+
+    /* 6. on-demand call-stack snapshot through the REAL renderer (the empty
+     * TRACER_PRINTF builds cannot reach these lines): exercises the walker
+     * fallback (stack_limit() == 0) and the banner output. */
+    sink_reset();
+    {
+        uint32_t buf[8];
+        CHECK(tracer_get_callstack(buf, 8u) == 0u);
+    }
+    tracer_dump_callstack();
 
     if (s_fail != 0) {
         fprintf(stderr, "tracer log sink test: %d FAILURE(S)\n", s_fail);

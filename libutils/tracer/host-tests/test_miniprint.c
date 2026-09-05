@@ -6,7 +6,7 @@
  * lengths, .N / %.*s precision, %% escape, with '-'/'0' flags and decimal
  * width).
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_miniprint.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_miniprint.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  *
  * Note: the host may be LP64 (Unix `long` = 64-bit) or LLP64 (Windows
@@ -32,8 +32,11 @@ static void tr_putc(char c) {
 /* Host has no _sstack/_estack/_stext/_etext (ARM linker-script symbols);
  * the raw dump and code-region checks are disabled here, so harmless
  * constants are enough to satisfy the linker. */
-#define TRACER_STACK_BASE 0x20000000u
-#define TRACER_STACK_TOP  0x20010000u
+/* Host test: fake stack region must be below any real host stack (the
+ * dump-style walkers scan up to TRACER_STACK_TOP; a high top would cross
+ * unmapped host pages and crash under ASLR). */
+#define TRACER_STACK_BASE 0x00000800u
+#define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
 #include "../tracer.c"
@@ -54,6 +57,13 @@ static void check(const char *expected, const char *what) {
 }
 
 int main(void) {
+    /* Exercise tracer_init()/tracer_dump_header() through the REAL renderer
+     * so the fw/text/stack banner lines are covered, then throw it away. */
+    reset();
+    tracer_init();
+    tracer_dump_header("Unit");
+    reset();
+
     /* Register / frame lines as emitted by the fault dump. */
     reset();
     tracer_xprintf(" R12=%08lX  SP =%08lX  LR =%08lX  PC =%08lX\r\n",
@@ -165,7 +175,6 @@ int main(void) {
     reset();
     tracer_xprintf("u=%.3u\r\n", 5u);
     check("u=005\r\n", "%.3u min digits");
-
     reset();
     tracer_xprintf("x=%04X|\r\n", 0x1Au);
     check("x=001A|\r\n", "%04X pad");
@@ -177,6 +186,36 @@ int main(void) {
     reset();
     tracer_xprintf("z=[%.0u]\r\n", 0u);
     check("z=[]\r\n", "%.0u of 0 is empty");
+
+    /* ---- extra format corners (coverage) ---- */
+    reset();
+    tracer_xprintf("c=%c\r\n", 'A');
+    check("c=A\r\n", "%c char");
+
+    reset();
+    tracer_xprintf("[%-6s]\r\n", "ab");
+    check("[ab    ]\r\n", "%-s left-align pad");
+
+    reset();
+    tracer_xprintf("abc%");
+    check("abc", "trailing bare %% dropped");
+
+    reset();
+    tracer_xprintf("v=%q\r\n", 1);
+    check("v=%q\r\n", "unknown conversion echoed");
+
+    reset();
+    tracer_xprintf("d=%ld\r\n", (long)-5);
+    check("d=-5\r\n", "%ld negative");
+
+    reset();
+    tracer_xprintf("s=%s!\r\n", (const char *)NULL);
+    check("s=(null)!\r\n", "%s NULL renders (null)");
+
+    /* long long non-negative -> the (unsigned) branch of the %lld negation. */
+    reset();
+    tracer_xprintf("v=%lld\r\n", (long long)1234567890123LL);
+    check("v=1234567890123\r\n", "lld positive");
 
     if (s_failures != 0) {
         fprintf(stderr, "tracer mini-printf test: %d FAILURE(S)\n", s_failures);

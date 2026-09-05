@@ -162,9 +162,8 @@ void tracer_crash_save(const void *record, uint32_t len) {
     } else {
         slot = 0u;
     }
-    if (slot >= m.slot_count) {
-        slot = 0u;
-    }
+    /* slot is always < m.slot_count here (m.slot_count >= 1 was checked
+     * above, 1 % count < count, and the other branches pick 0). */
     addr = m.slot_base + slot * m.slot_size;
 
     h.magic = TRACER_CRASH_STORE_MAGIC;

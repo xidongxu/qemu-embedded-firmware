@@ -16,7 +16,7 @@
  * override is tested separately in test_tracer_log_sink.c because the weak
  * definition lives in this same translation unit (tracer.c is #included).
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_tracer_log.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_tracer_log.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  */
 #include <stdio.h>
@@ -37,8 +37,10 @@ static void tr_putc(char c) {
 #define TRACER_USE_LOG 1
 #define TRACER_PUTCHAR tr_putc
 #define TRACER_STACK_DUMP_BYTES 0u
-#define TRACER_STACK_BASE 0x20000000u
-#define TRACER_STACK_TOP  0x20010000u
+/* Host test: fake stack region must be below any real host stack so the
+ * dump-style walkers never cross unmapped host pages (ASLR-safe). */
+#define TRACER_STACK_BASE 0x00000800u
+#define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
 #include "../tracer.c"
@@ -91,6 +93,19 @@ int main(void) {
     CHECK(n > 0u);
     CHECK(contains(s_ser, s_ser_len, "[0][I] hello 42\r\n"));
     CHECK(s_ring_count == n);          /* unified: ring got the same line */
+
+    /* ---- 1b. drain argument edge cases + small-buffer cap ---- */
+    reset_all();
+    CHECK(tracer_log_drain(NULL, 100u) == 0u);
+    CHECK(tracer_log_drain((uint8_t *)s_ser, 0u) == 0u);
+    tracer_log_set_level(TRACER_LOG_TRACE);
+    n = tracer_log(TRACER_LOG_INFO, "long line abcdefghijklmnopqrstuvwxyz");
+    {
+        static char small[64];
+        uint32_t d = tracer_log_drain((uint8_t *)small, 8u);
+        CHECK(d == 8u);                /* capped at the requested max */
+        CHECK(d <= n);
+    }
 
     /* ---- 2. level letters + runtime switch up and down ---- */
     reset_all();

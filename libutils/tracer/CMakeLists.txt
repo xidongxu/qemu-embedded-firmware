@@ -49,8 +49,15 @@ endif()
 add_library(tracer STATIC
     tracer.c
     tracer_crash_store.c
-    ${TRACER_ASM}
 )
+# The fault-vector entry assembly is ARM-only.  Host unit-test builds
+# (TRACER_BUILD_TESTS=ON: gcc/clang on x86, no ARM assembler) compile the
+# library purely for its C logic and never need the .s -- the tests
+# #include tracer.c directly.  So only add the vector entry when building
+# for a target (the normal embedded add_subdirectory / find_package path).
+if(NOT TRACER_BUILD_TESTS)
+    target_sources(tracer PRIVATE ${TRACER_ASM})
+endif()
 
 # Build-tree consumers see the source dir; the installed (find_package) target
 # sees the headers relative to its install prefix.  (Plain source-dir paths are
@@ -109,7 +116,7 @@ add_library(tracer::tracer ALIAS tracer)
 option(TRACER_BUILD_TESTS "Build tracer host unit tests" OFF)
 if(TRACER_BUILD_TESTS)
     enable_testing()
-    add_subdirectory(tests)
+    add_subdirectory(host-tests)
 endif()
 
 # --- Install / export: lets an external project use find_package(tracer) ---

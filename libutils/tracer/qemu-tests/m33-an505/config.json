@@ -1,0 +1,11 @@
+{
+  "name": "m33-an505",
+  "core": "cortex-m33",
+  "arch": "armv8m",
+  "machine": "mps2-an505",
+  "startup": "application/startup_armv8m.s",
+  "mfloat": "soft",
+  "fpu": "fpv5-sp-d16",
+  "uart0": "0x40200000",
+  "tracer_macros": ["TRACER_USE_CRASH=1"]
+}

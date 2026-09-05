@@ -335,6 +335,11 @@ void tracer_dump_all(void);
  * file:line and the current call stack, then auto-resets (if
  * TRACER_AUTO_RESET_MS>0) or traps forever.  Never returns. */
 void tracer_assert_fail(const char *expr, const char *file, int line);
+/* Halt forever after a fault/assert dump (also after a re-entrancy rejection
+ * and after issuing the system reset).  Weak: a host unit test overrides it
+ * with an empty body so the dump handlers can return to the caller; on the
+ * target it never returns. */
+void tracer_halt(void);
 
 #if TRACER_USE_CRASH
 /* Append a formatted event line to the pre-crash RAM ring log (the "black

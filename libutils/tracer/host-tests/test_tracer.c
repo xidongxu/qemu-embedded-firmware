@@ -5,10 +5,10 @@
  * detection, exception/fault-name decoding, byte-wise 32-bit loads and the
  * stack-scan walker.  Run it wherever you build:
  *
- *   gcc -std=c99 -Wall -Wextra -I.. tests/test_tracer.c -o /tmp/test_tracer
+ *   gcc -std=c99 -Wall -Wextra -I.. host-tests/test_tracer.c -o /tmp/test_tracer
  *   /tmp/test_tracer
  *
- * Also wired into CTest via -DTRACER_BUILD_TESTS=ON (tests/CMakeLists.txt).
+ * Also wired into CTest via -DTRACER_BUILD_TESTS=ON (host-tests/CMakeLists.txt).
  *
  * Pointer-based helpers (tracer_load32, tracer_walk_callstack) pass memory
  * addresses through uint32_t, so they only work on 32-bit hosts; on 64-bit
@@ -29,9 +29,15 @@
 /* The host has no _sstack/_estack (those symbols come from the ARM linker
  * script); tracer.c falls back to &_estack for its region markers.  The raw
  * dump is disabled above and the walker tests pass explicit bounds, so pin
- * them to harmless constants so the host link succeeds. */
-#define TRACER_STACK_BASE 0x20000000u
-#define TRACER_STACK_TOP  0x20010000u
+ * them to harmless constants so the host link succeeds.
+ *
+ * IMPORTANT: the fake stack top must sit FAR BELOW any real host stack
+ * pointer.  tracer_dump_callstack()/get_callstack()/dump_all() walk from
+ * the CURRENT stack pointer up to TRACER_STACK_TOP; a high top (0x20010000)
+ * made that walk cross unmapped host pages -> access violation in ~13% of
+ * runs (ASLR moves the host stack below/above it per process). */
+#define TRACER_STACK_BASE 0x00000800u
+#define TRACER_STACK_TOP  0x00001000u
 
 static uint8_t s_fake_text[64]; /* fake .text the walker may read from */
 #define TRACER_TEXT_START ((uint32_t)(uintptr_t)s_fake_text)
@@ -80,6 +86,11 @@ static void test_names(void) {
     CHECK(strcmp(tracer_exc_name(15), "SysTick") == 0);
     CHECK(strcmp(tracer_exc_name(16), "IRQn") == 0);
     CHECK(strcmp(tracer_exc_name(0), "IRQn") == 0);
+    /* remaining named system exceptions (coverage) */
+    CHECK(strcmp(tracer_exc_name(7), "SecureFault") == 0);
+    CHECK(strcmp(tracer_exc_name(11), "SVCall") == 0);
+    CHECK(strcmp(tracer_exc_name(12), "DebugMonitor") == 0);
+    CHECK(strcmp(tracer_exc_name(14), "PendSV") == 0);
 
     tracer_fault_t f = {0};
     f.mmfsr = 1u;  CHECK(strcmp(tracer_fault_name(&f), "MemManage") == 0);
@@ -131,11 +142,35 @@ static void test_walker(void) {
 #endif
 }
 
+/* Public / never-was-called entry points (host-safe; on a real stack these
+ * only exercise the empty/zero paths because the host stack is far above
+ * TRACER_STACK_TOP).  Kept as smoke calls: must not crash. */
+static void test_public(void) {
+    uint32_t buf[8];
+
+    tracer_init();
+    tracer_dump_header("Unit");        /* static dump header printer */
+    CHECK(tracer_get_callstack(NULL, 0u) == 0u);
+    CHECK(tracer_get_callstack(buf, 8u) == 0u);
+    tracer_stack_limit();
+    tracer_dump_tasks();
+    tracer_dump_callstack();
+    tracer_dump_all();
+    {
+        /* weak default hook bodies (only run when nothing overrides them). */
+        tracer_fault_t f0 = {0};
+        tracer_on_fault(&f0);
+        tracer_watchdog_kick();
+        tracer_uptime_ms();
+    }
+}
+
 int main(void) {
     test_bl_blx();
     test_names();
     test_load32();
     test_walker();
+    test_public();
 
     if (s_failures != 0) {
         fprintf(stderr, "tracer host test: %d FAILURE(S)\n", s_failures);

@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain + QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi qemu-system-arm python3
+
+      - name: Host unit tests
+        run: |
+          cmake -S . -B build-host -DTRACER_BUILD_TESTS=ON
+          cmake --build build-host
+          ctest --test-dir build-host --output-on-failure
+
+      - name: Board matrix (QEMU machine-adaptive) + compile matrix
+        env:
+          CC: arm-none-eabi-gcc
+          QEMU: qemu-system-arm
+        run: |
+          python3 scripts/test_all.py
+          python3 scripts/fsyntax_check.py
+
+      - name: Package source tarball
+        run: |
+          mkdir -p dist
+          tar -czf "dist/tracer-${GITHUB_REF_NAME}.tar.gz" \
+            --exclude=.git --exclude=build --exclude='build-*' \
+            --exclude='__pycache__' .
+          cd dist
+          sha256sum "tracer-${GITHUB_REF_NAME}.tar.gz" > "tracer-${GITHUB_REF_NAME}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tracer-*.tar.gz
+            dist/tracer-*.sha256
+          generate_release_notes: true

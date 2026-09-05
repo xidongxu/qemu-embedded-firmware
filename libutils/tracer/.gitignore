@@ -1,0 +1,10 @@
+# build outputs
+build-*/
+*.elf
+*.bin
+*.hex
+*.map
+__pycache__/
+*.pyc
+
+build/

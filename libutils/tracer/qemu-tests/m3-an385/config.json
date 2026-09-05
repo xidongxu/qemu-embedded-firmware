@@ -1,0 +1,11 @@
+{
+  "name": "m3-an385",
+  "core": "cortex-m3",
+  "arch": "armv7m",
+  "machine": "mps2-an385",
+  "startup": "application/startup_armv7m.s",
+  "mfloat": "soft",
+  "mabi": "",
+  "uart0": "0x40004000",
+  "tracer_macros": ["TRACER_USE_CRASH=1"]
+}

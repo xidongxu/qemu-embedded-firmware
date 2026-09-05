@@ -706,15 +706,32 @@ extern uint32_t STACK$$Length;
 #endif
 #endif
 
+/* --- optional MMIO backend for HOST unit tests ---------------------------
+ * On the target every tracer register access is a direct load/store at the
+ * fixed Cortex-M system-control address.  A host test that #includes
+ * tracer.c can redefine TRACER_READ32 / TRACER_WRITE32 / TRACER_READ16
+ * (before the include) to back these registers with a RAM array, so every
+ * fault-handler branch is drivable from the host without a real fault.
+ * The defaults generate the same direct accesses as before. --- */
+#ifndef TRACER_READ32
+#define TRACER_READ32(a) (*(volatile uint32_t *)(uintptr_t)(a))
+#endif
+#ifndef TRACER_WRITE32
+#define TRACER_WRITE32(a, v) (*(volatile uint32_t *)(uintptr_t)(a) = (uint32_t)(v))
+#endif
+#ifndef TRACER_READ16
+#define TRACER_READ16(a) (*(volatile uint16_t *)(uintptr_t)(a))
+#endif
+
 /* System control block base is 0xE000ED00 on every Cortex-M (M3..M85). */
 #define TRACER_SCB_BASE   0xE000ED00u
-#define TRACER_CCR        (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x14u))
-#define TRACER_CFSR       (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x28u))
-#define TRACER_UFSR       (*(volatile uint16_t *)(TRACER_SCB_BASE + 0x2Au))
-#define TRACER_HFSR       (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x2Cu))
-#define TRACER_DFSR       (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x30u))
-#define TRACER_MMFAR      (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x34u))
-#define TRACER_BFAR       (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x38u))
+#define TRACER_CCR_ADDR   (TRACER_SCB_BASE + 0x14u)
+#define TRACER_CFSR       (TRACER_READ32(TRACER_SCB_BASE + 0x28u))
+#define TRACER_UFSR       (TRACER_READ16(TRACER_SCB_BASE + 0x2Au))
+#define TRACER_HFSR       (TRACER_READ32(TRACER_SCB_BASE + 0x2Cu))
+#define TRACER_DFSR       (TRACER_READ32(TRACER_SCB_BASE + 0x30u))
+#define TRACER_MMFAR      (TRACER_READ32(TRACER_SCB_BASE + 0x34u))
+#define TRACER_BFAR       (TRACER_READ32(TRACER_SCB_BASE + 0x38u))
 
 /* CCR flags used by tracer_trigger_unalign(). */
 #define TRACER_CCR_UNALIGN_TRP  0x00000008u
@@ -727,7 +744,7 @@ extern uint32_t STACK$$Length;
 static volatile uint32_t s_tracer_dumping = 0u;
 
 /* SCB application interrupt and reset control register (SYSRESETREQ). */
-#define TRACER_AIRCR (*(volatile uint32_t *)(TRACER_SCB_BASE + 0x0Cu))
+#define TRACER_AIRCR_OFF 0x0Cu
 #define TRACER_SYSRESETREQ_VAL 0x05FA0004u
 
 #if TRACER_AUTO_RESET_MS
@@ -769,8 +786,8 @@ static void tracer_delay_ms(uint32_t ms) {
 
 /* Issue a system reset (SCB->AIRCR.SYSRESETREQ) via a raw address. */
 static void tracer_system_reset(void) {
-    TRACER_AIRCR = TRACER_SYSRESETREQ_VAL;
-    for (;;) {}
+    TRACER_WRITE32(TRACER_SCB_BASE + TRACER_AIRCR_OFF, TRACER_SYSRESETREQ_VAL);
+    tracer_halt();
 }
 #endif /* TRACER_AUTO_RESET_MS */
 
@@ -910,6 +927,22 @@ void TRACER_WEAK tracer_watchdog_kick(void) {
      * periodically while the pre-reset delay (TRACER_AUTO_RESET_MS) runs, so
      * the delay is not cut short.  A plain trap never calls it, leaving the
      * watchdog as the final recovery backstop. */
+}
+
+/* Weak trap: loop forever.  Every fault/assert dump ends here (also after a
+ * re-entrancy rejection and after issuing the system reset).  A HOST unit
+ * test overrides this with an empty body so the dump handlers return to the
+ * caller after exercising their logic; on the target it never returns. */
+void TRACER_WEAK tracer_halt(void) {
+#if defined(TRACER_TEST_TRAP_RETURNS)
+    /* Host unit-test build: let the dump/assert handlers return to the
+     * caller so it can assert on the emitted dump text.  Never defined on
+     * the target (which keeps the infinite loop below). */
+    return;
+#else
+    for (;;) {
+    }
+#endif
 }
 
 void tracer_init(void) {
@@ -1256,7 +1289,8 @@ static void tracer_dump_trace(void) {
 #endif /* TRACER_USE_FINSTRUMENT */
 
 void tracer_trigger_unalign(void) {
-    TRACER_CCR |= TRACER_CCR_UNALIGN_TRP;
+    TRACER_WRITE32(TRACER_CCR_ADDR,
+                   TRACER_READ32(TRACER_CCR_ADDR) | TRACER_CCR_UNALIGN_TRP);
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
@@ -1284,7 +1318,7 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
      * never recurse into another dump.  Note and stop. */
     if (s_tracer_dumping != 0u) {
         TRACER_PRINTF("\r\n===== Tracer: fault while dumping, ignored =====\r\n");
-        for (;;) {}
+        tracer_halt();
     }
     s_tracer_dumping = 1u;
 
@@ -1479,7 +1513,7 @@ void tracer_fault_handler(uint32_t *exc_frame, uint32_t exc_return,
     tracer_system_reset();
 #else
     TRACER_PRINTF("===== End of dump (trapped) =====\r\n");
-    for (;;) {}
+    tracer_halt();
 #endif
 }
 
@@ -1491,7 +1525,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
     (void)line;
     if (s_tracer_dumping != 0u) {
         TRACER_PRINTF("\r\n===== Tracer: assert while dumping, ignored =====\r\n");
-        for (;;) {}
+        tracer_halt();
     }
     s_tracer_dumping = 1u;
 #if TRACER_USE_CRASH
@@ -1516,7 +1550,7 @@ void tracer_assert_fail(const char *expr, const char *file, int line) {
     tracer_system_reset();
 #else
     TRACER_PRINTF("===== End of assert (trapped) =====\r\n");
-    for (;;) {}
+    tracer_halt();
 #endif
 }
 

@@ -1,0 +1,12 @@
+{
+  "name": "m4-an386",
+  "core": "cortex-m4",
+  "arch": "armv7m",
+  "machine": "mps2-an386",
+  "startup": "application/startup_armv7m.s",
+  "linker": "application/link_mps2.ld",
+  "mfloat": "soft",
+  "fpu": "fpv4-sp-d16",
+  "uart0": "0x40004000",
+  "tracer_macros": ["TRACER_USE_CRASH=1"]
+}

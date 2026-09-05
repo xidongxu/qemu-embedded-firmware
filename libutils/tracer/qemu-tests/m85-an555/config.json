@@ -1,0 +1,13 @@
+{
+  "name": "m85-an555",
+  "core": "cortex-m85",
+  "arch": "armv8m",
+  "machine": "mps3-an555",
+  "build_only": true,
+  "startup": "application/startup_armv8m.s",
+  "mfloat": "soft",
+  "fpu": "fpv5-d16",
+  "uart0": "0x49303000",
+  "tracer_macros": ["TRACER_USE_CRASH=1"],
+  "pending_qemu": "mps3-an555 needs a QEMU release with Cortex-M85 (>= ~10/11.x); layout/UART assumed, verify on such a QEMU"
+}

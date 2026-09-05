@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - '*.c'
+      - '*.h'
+      - '*.s'
+      - 'CMakeLists.txt'
+      - 'host-tests/**'
+      - 'qemu-tests/**'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - '*.c'
+      - '*.h'
+      - '*.s'
+      - 'CMakeLists.txt'
+      - 'host-tests/**'
+      - 'qemu-tests/**'
+      - 'scripts/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain + QEMU + python + multilib
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi qemu-system-arm python3 gcc-multilib libc6-dev-i386
+
+      - name: Host unit tests (CTest)
+        run: |
+          cmake -S . -B build-host -DTRACER_BUILD_TESTS=ON
+          cmake --build build-host
+          ctest --test-dir build-host --output-on-failure
+
+      - name: Host line coverage (gcov aggregation)
+        env:
+          CC: gcc
+        run: |
+          python3 scripts/coverage_report.py
+          tail -20 build/cov/report.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            build/cov/report.txt
+            build/cov/uncovered.txt
+
+      - name: Host unit tests (32-bit, -m32: load32/walker paths)
+        run: |
+          cmake -S . -B build-m32 -DTRACER_BUILD_TESTS=ON \
+            -DCMAKE_C_FLAGS="-m32"
+          cmake --build build-m32
+          ctest --test-dir build-m32 --output-on-failure
+
+      - name: Board matrix under QEMU (machine-adaptive)
+        env:
+          CC: arm-none-eabi-gcc
+          QEMU: qemu-system-arm
+        run: |
+          python3 scripts/test_all.py
+
+      # QEMU-layer line coverage: the firmware is built with gcov + GCC's
+      # -fprofile-info-section and streams every TU's .gcda over the UART
+      # (gcov_dump.c) before trapping; qemu_coverage.py splits the frames and
+      # aggregates line coverage across (board, case), then merge_coverage.py
+      # unions it with the host report.  Needs an arm-none-eabi toolchain with
+      # -fprofile-info-section (gcc >= 13, e.g. Ubuntu 24.04's 15.3); kept
+      # non-blocking so an older distro toolchain cannot fail the pipeline.
+      - name: QEMU line coverage (gcov export + host/QEMU merge)
+        continue-on-error: true
+        env:
+          CC: arm-none-eabi-gcc
+          QEMU: qemu-system-arm
+          GCOV: arm-none-eabi-gcov
+        run: |
+          python3 scripts/qemu_coverage.py --boards m3-an385 m33-an505
+          python3 scripts/merge_coverage.py
+          tail -30 build/cov/combined.txt
+
+      # Line + branch coverage across host (build/cov/run) and QEMU
+      # (build/cov_qemu) gcno/gcda via gcov -b; branch edges need walking
+      # both sides of every condition, so they sit below the line numbers.
+      - name: Line + branch coverage (gcov -b over host + QEMU runs)
+        continue-on-error: true
+        env:
+          HOST_GCOV: gcov
+          GCOV: arm-none-eabi-gcov
+        run: |
+          python3 scripts/branch_coverage.py
+          tail -40 build/cov_branch/branch_report.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qemu-coverage
+          path: |
+            build/cov_qemu/gcov
+            build/cov/combined.txt
+            build/cov_branch
+
+      - name: Compile matrix across all Cortex-M cores (fsyntax + entry asm)
+        env:
+          CC: arm-none-eabi-gcc
+        run: |
+          python3 scripts/fsyntax_check.py

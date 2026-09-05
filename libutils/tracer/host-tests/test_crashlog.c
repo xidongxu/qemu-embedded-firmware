@@ -6,7 +6,7 @@
  * capture is active) against a collecting sink, then verifies the assembled
  * record in the capture buffer.
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. tests/test_crashlog.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_crashlog.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  *
  * The ring / capture buffers and helpers are static in tracer.c; including
@@ -29,8 +29,10 @@ static void tr_putc(char c) {
 #define TRACER_USE_CRASH 1
 #define TRACER_PUTCHAR tr_putc
 #define TRACER_STACK_DUMP_BYTES 0u
-#define TRACER_STACK_BASE 0x20000000u
-#define TRACER_STACK_TOP  0x20010000u
+/* Host test: fake stack region must be below any real host stack so the
+ * dump-style walkers never cross unmapped host pages (ASLR-safe). */
+#define TRACER_STACK_BASE 0x00000800u
+#define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
 #include "../tracer.c"
@@ -111,6 +113,13 @@ int main(void) {
     s_ser_len = 0u;
     tracer_ring_printf("ringonly\n");
     CHECK(s_ser_len == 0u);
+
+    /* ---- 4. crash_finalize without an active capture is a no-op ---- */
+    s_cap_len = 0u;
+    s_cap_active = 0;
+    tracer_crash_finalize();
+    CHECK(s_cap_len == 0u);
+    CHECK(s_cap_active == 0);
 
     if (s_fail != 0) {
         fprintf(stderr, "tracer crashlog test: %d FAILURE(S)\n", s_fail);
