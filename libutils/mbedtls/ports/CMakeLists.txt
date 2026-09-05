@@ -22,6 +22,13 @@ set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GEN_FILES OFF CACHE BOOL "" FORCE)
 
+# 上游 mbedtls/CMakeLists.txt 声明 cmake_minimum_required(3.5.1)，低于 CMake 4
+# 的 3.10 兼容门槛 → 每次 configure 报 "Compatibility with CMake < 3.10" 的
+# deprecated 警告。不修改上游源码：CMake 4.4 的 CMD_DEPRECATED 诊断由
+# cmake_diagnostic() 控制（旧版 CMAKE_WARN_DEPRECATED 变量已被 CMP0218 忽略），
+# 在拉入 mbedtls 子树前把该诊断设为 IGNORE。子目录的诊断栈继承本设置。
+cmake_diagnostic(SET CMD_DEPRECATED IGNORE)
+
 # 上游 mbedtls 根目录（ports 的上一级）
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/.. mbedtls_build)
 
