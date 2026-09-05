@@ -15,7 +15,7 @@ Usage:
 import subprocess
 import sys
 
-KEY = b"qemu-phone-cred01"   # 16 bytes, must match pj_crypto.c
+KEY = b"qemu-phone-cred0"    # 16 bytes, must match pj_crypto.c
 IV = b"0123456789abcdef"     # 16 bytes, must match pj_crypto.c
 OPENSSL = r"C:\Program Files\Git\usr\bin\openssl.exe"
 

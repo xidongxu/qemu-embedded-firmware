@@ -33,6 +33,7 @@
 #include <pjsip/sip_endpoint.h>
 #include <pj/timer.h>
 #include <pjsua-lib/pjsua.h>
+#include <pjmedia/transport_srtp.h>
 #include "mpsx_dev.h"
 #include "ca_cert.h"
 #include "pj_crypto.h"
@@ -147,6 +148,69 @@ static void phone_to_idle(void) {
     g_call_state = PJ_PHONE_CALL_IDLE;
     taskEXIT_CRITICAL();
     phone_notify();
+}
+
+/* SDES-SRTP master-key length (bytes, key+salt) for a crypto suite name.
+ * Mirrors pjmedia's crypto_suites[] cipher_key_len (transport_srtp.c).
+ * Returns 0 for an unknown suite. */
+static int phone_srtp_key_len(const pj_str_t *name) {
+    if (pj_stricmp2(name, "AES_256_CM_HMAC_SHA1_80") == 0 ||
+        pj_stricmp2(name, "AES_256_CM_HMAC_SHA1_32") == 0) {
+        return 46;   /* 32 key + 14 salt */
+    }
+    if (pj_stricmp2(name, "AEAD_AES_256_GCM") == 0 ||
+        pj_stricmp2(name, "AEAD_AES_256_GCM_8") == 0) {
+        return 44;   /* 32 key + 12 salt */
+    }
+    if (pj_stricmp2(name, "AES_192_CM_HMAC_SHA1_80") == 0 ||
+        pj_stricmp2(name, "AES_192_CM_HMAC_SHA1_32") == 0) {
+        return 38;   /* 24 key + 14 salt */
+    }
+    if (pj_stricmp2(name, "AEAD_AES_128_GCM") == 0 ||
+        pj_stricmp2(name, "AEAD_AES_128_GCM_8") == 0) {
+        return 28;   /* 16 key + 12 salt */
+    }
+    if (pj_stricmp2(name, "AES_CM_128_HMAC_SHA1_80") == 0 ||
+        pj_stricmp2(name, "AES_CM_128_HMAC_SHA1_32") == 0) {
+        return 30;   /* 16 key + 14 salt */
+    }
+    return 0;
+}
+
+/* Pre-provision a cryptographically strong SDES master key for EVERY crypto
+ * suite pjmedia would otherwise offer (pjmedia_srtp_enum_crypto returns the
+ * full compiled-in list, minus NULL).  By default pjmedia generates those
+ * keys with pj_rand() -- the "simple random generator is used for
+ * generating SRTP key" warning, not cryptographically strong -- so we fill
+ * them from the mbedtls PSA RNG instead.  With a key present, sdes skips its
+ * own generation entirely (no warning, and the negotiated session uses a
+ * strong key). */
+static void phone_prekey_srtp(pjsua_srtp_opt *srtp_opt) {
+    static char s_key_buf[PJMEDIA_SRTP_MAX_CRYPTOS][48];
+    pjmedia_srtp_crypto list[PJMEDIA_SRTP_MAX_CRYPTOS];
+    unsigned n = PJMEDIA_SRTP_MAX_CRYPTOS;
+    unsigned i;
+
+    srtp_opt->crypto_count = 0;
+    if (pjmedia_srtp_enum_crypto(&n, list) != PJ_SUCCESS || n == 0) {
+        return;
+    }
+    for (i = 0; i < n && srtp_opt->crypto_count < PJMEDIA_SRTP_MAX_CRYPTOS;
+         ++i) {
+        int klen = phone_srtp_key_len(&list[i].name);
+        if (klen <= 0 || (size_t)klen > sizeof(s_key_buf[0])) {
+            continue;
+        }
+        if (cred_random_bytes((uint8_t *)s_key_buf[srtp_opt->crypto_count],
+                              (size_t)klen) != 0) {
+            continue;
+        }
+        srtp_opt->crypto[srtp_opt->crypto_count] = list[i];
+        srtp_opt->crypto[srtp_opt->crypto_count].key.ptr =
+            s_key_buf[srtp_opt->crypto_count];
+        srtp_opt->crypto[srtp_opt->crypto_count].key.slen = klen;
+        srtp_opt->crypto_count++;
+    }
 }
 
 /* Deferred call-control on the pjsua worker thread.
@@ -480,7 +544,7 @@ static void on_reg_state(pjsua_acc_id acc_id) {
     if (info.status >= 200 && info.status < 300) {
         /* Registered OK (2xx).  The UI drives calls; no auto-dial by default. */
         g_reg_state = PJ_PHONE_REG_REGISTERED;
-        tracer_ring_printf("phone: registered (acc=%d)\r\n", (int)acc_id);
+        TRACER_LOGI("phone: registered (acc=%d)", (int)acc_id);
 #if PJ_PHONE_AUTO_DIAL
         if (!g_auto_dialed) {
             if (pj_phone_dial(PJ_PHONE_DEFAULT_NUMBER) == PJ_SUCCESS) {
@@ -494,8 +558,8 @@ static void on_reg_state(pjsua_acc_id acc_id) {
         TRACER_LOGW("pj_phone: reg attempt %u FAILED (%d) - pjsua will retry",
                     ++g_reg_attempts, (int)info.status);
         g_reg_state = PJ_PHONE_REG_FAILED;
-        tracer_ring_printf("phone: reg FAIL %d (attempt %u)\r\n",
-                           (int)info.status, (unsigned)g_reg_attempts);
+        TRACER_LOGW("phone: reg FAIL %d (attempt %u)",
+                    (int)info.status, (unsigned)g_reg_attempts);
     } else {
         /* info.status == 0: REGISTER still in flight. */
         g_reg_state = PJ_PHONE_REG_REGISTERING;
@@ -536,7 +600,7 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 
     TRACER_LOGI("pj_phone: incoming call %d from '%s' - waiting for answer",
                 call_id, tmp);
-    tracer_ring_printf("phone: incoming from '%s'\r\n", tmp);
+    TRACER_LOGI("phone: incoming from '%s'", tmp);
 
     taskENTER_CRITICAL();
     g_incoming_call_id = call_id;
@@ -574,7 +638,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
     case PJSIP_INV_STATE_EARLY:
     case PJSIP_INV_STATE_CONNECTING:
         g_call_state = PJ_PHONE_CALL_DIALING;
-        tracer_ring_printf("phone: call setup (st=%d)\r\n", (int)ci.state);
+        TRACER_LOGI("phone: call setup (st=%d)", (int)ci.state);
         phone_notify();
         break;
 
@@ -583,7 +647,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
         if (call_id == g_call_id) {
             pj_gettimeofday(&g_call_start);
             g_call_state = PJ_PHONE_CALL_ACTIVE;
-            tracer_ring_printf("phone: call ACTIVE\r\n");
+            TRACER_LOGI("phone: call ACTIVE");
         }
         phone_notify();
         break;
@@ -615,7 +679,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
         snprintf(g_last_call_status_text, sizeof(g_last_call_status_text),
                  "%.*s", (int)ci.last_status_text.slen,
                  ci.last_status_text.ptr);
-        tracer_ring_printf("phone: call end st=%d\r\n", g_last_call_status);
+        TRACER_LOGI("phone: call end st=%d", g_last_call_status);
 
         if (call_id == g_call_id) {
             g_call_id = PJSUA_INVALID_ID;
@@ -649,7 +713,7 @@ static void on_call_media_state(pjsua_call_id call_id) {
         /* Wire the call's conference slot to the sound device (slot 0) once
          * media is up, so the real mpsx audio/mic is used. */
         if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
-            tracer_ring_printf("phone: media active\r\n");
+            TRACER_LOGI("phone: media active");
             /* pjsua does NOT create the echo canceller automatically; it must
              * be enabled explicitly once the sound device exists. */
             {
@@ -699,7 +763,7 @@ int pj_phone_dial(const char *number) {
     if (number == NULL || !*number || g_acc == PJSUA_INVALID_ID) {
         return -1;
     }
-    tracer_ring_printf("phone: dial '%s'\r\n", number);
+    TRACER_LOGI("phone: dial '%s'", number);
 
     /* Show the dial state immediately; the actual make_call runs on the
      * pjsua worker thread (see phone_job_exec) so the UI never blocks. */
@@ -804,6 +868,14 @@ int pj_phone_init(void) {
 
     TRACER_LOGI("=== PJSUA PHONE (high-level API) ===");
 
+    /* Route pjsua/pjlib logs (PJ_LOG) through the tracer pipeline from the
+     * very start.  pjsua_init() swaps the global log writer for its own
+     * (pjsua_reconfigure_logging -> pj_log_set_log_func) part-way through
+     * init, so install ours BEFORE pjsua_create()/init() to also cover that
+     * early window; the "pjsua_init OK" path below re-installs it afterwards
+     * to win it back. */
+    pj_log_set_log_func(&phone_pjlog_writer);
+
     st = pjsua_create();
     if (st != PJ_SUCCESS) {
         TRACER_LOGE("pj_phone: pjsua_create failed (%d)", st);
@@ -823,6 +895,13 @@ int pj_phone_init(void) {
      * phone_pjlog_writer + the tracer runtime level), so the higher pjlib
      * per-frame media logs never reach the serial port or the log ring. */
     log_cfg.level = 3;
+    /* pjsua_init() swaps the global log writer for its own log_writer()
+     * (pjsua_reconfigure_logging -> pj_log_set_log_func).  Register
+     * phone_pjlog_writer as the app log callback so that even that internal
+     * init window (e.g. the "pjsua version ... initialized" banner printed
+     * after the swap) is routed back through the tracer pipeline instead of
+     * a bare console printf. */
+    log_cfg.cb = &phone_pjlog_writer;
 
     pjsua_media_config_default(&media_cfg);
     /* 48k fullband: Opus needs clock_rate 48000 (RFC 7587 fixes the RTP
@@ -852,9 +931,9 @@ int pj_phone_init(void) {
     }
     TRACER_LOGI("pj_phone: pjsua_init OK");
 
-    /* Route all pjsua/pjlib logs (PJ_LOG) through the tracer log pipeline.
-     * pjsua replaced the default writer with its own during init, so install
-     * ours afterwards. */
+    /* pjsua_init() replaced our writer with its own (pjsua_reconfigure_logging
+     * inside init calls pj_log_set_log_func), so re-install ours so the
+     * pjsua/pjlib logs keep flowing through the tracer pipeline. */
     pj_log_set_log_func(&phone_pjlog_writer);
 
     /* Prefer Opus (fullband 48k) for audio quality, then G.722; G.711 as
@@ -1004,6 +1083,14 @@ int pj_phone_init(void) {
      * plaintext for now (srtp_secure_signaling needs a TLS transport). */
     acc_cfg.use_srtp = PJMEDIA_SRTP_MANDATORY;
     acc_cfg.srtp_secure_signaling = 0;
+    /* SDES-SRTP keys: pjmedia's default generator is pj_rand()-based (the
+     * "simple random generator is used for generating SRTP key" warning -
+     * not cryptographically strong).  Pre-provision a strong key for every
+     * offered suite from the mbedtls PSA RNG (same source as the TLS
+     * handshake) so the weak generator is never used. */
+    phone_prekey_srtp(&acc_cfg.srtp_opt);
+    TRACER_LOGI("pj_phone: srtp pre-keyed %u crypto suite(s)",
+                (unsigned)acc_cfg.srtp_opt.crypto_count);
     st = pjsua_acc_add(&acc_cfg, PJ_TRUE, &g_acc);
     if (st != PJ_SUCCESS) {
         TRACER_LOGE("pj_phone: acc_add failed (%d)", st);
@@ -1040,19 +1127,19 @@ const char *pj_phone_get_dial_host(void) {
 
 /* Answer the pending incoming call. */
 int pj_phone_answer(void) {
-    tracer_ring_printf("phone: answer\r\n");
+    TRACER_LOGI("phone: answer");
     return (int)phone_job_post(PHONE_JOB_ANSWER, NULL);
 }
 
 /* Reject the pending incoming call. */
 int pj_phone_reject(void) {
-    tracer_ring_printf("phone: reject\r\n");
+    TRACER_LOGI("phone: reject");
     return (int)phone_job_post(PHONE_JOB_REJECT, NULL);
 }
 
 /* Hang up the active or ringing call. */
 int pj_phone_hangup(void) {
-    tracer_ring_printf("phone: hangup\r\n");
+    TRACER_LOGI("phone: hangup");
     return (int)phone_job_post(PHONE_JOB_HANGUP, NULL);
 }
 

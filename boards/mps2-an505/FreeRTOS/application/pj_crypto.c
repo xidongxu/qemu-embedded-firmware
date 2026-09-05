@@ -11,8 +11,9 @@
 
 #include "psa/crypto.h"
 
-/* Key/IV must match works/tools/encrypt_cred.py. */
-static const uint8_t s_key[16] = "qemu-phone-cred01";
+/* Key/IV must match works/tools/encrypt_cred.py.  Exactly 16 bytes (no NUL
+ * terminator is stored in the array). */
+static const uint8_t s_key[16] = "qemu-phone-cred0";
 static const uint8_t s_iv[16]  = "0123456789abcdef";
 
 /* AES-128-CBC(PKCS7) of "1234". */
@@ -55,4 +56,18 @@ const char *cred_get_password(void)
         s_done = 1;
     }
     return s_pt;
+}
+
+int cred_random_bytes(uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len == 0) {
+        return -1;
+    }
+    if (psa_crypto_init() != PSA_SUCCESS) {
+        return -1;
+    }
+    if (psa_generate_random(buf, len) != PSA_SUCCESS) {
+        return -1;
+    }
+    return 0;
 }

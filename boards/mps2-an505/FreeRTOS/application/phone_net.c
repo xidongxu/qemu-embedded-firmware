@@ -17,6 +17,7 @@
 #include "lwip/stats.h"
 #include "pj/os.h"
 #include "pj_phone.h"
+#include "tracer.h"
 #include "tlsf_port.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -40,7 +41,10 @@ static void pnet_exec(const char *line, char *resp, int rsize)
     char *arg;
     int rc = -1;
 
-    snprintf(tmp, sizeof(tmp), "%s", line);
+    /* Copy the command line (buf is 200B, tmp only 128B -> truncate safely
+     * and NUL-terminate, strtok needs a NUL terminator). */
+    strncpy(tmp, line, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
     cmd = strtok(tmp, " \t");
     if (cmd == NULL) {
         snprintf(resp, rsize, "ERR empty");
@@ -178,7 +182,7 @@ void phone_net_task(void *arg)
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        printf("phone_net: socket() failed\r\n");
+        TRACER_LOGE("phone_net: socket() failed");
         vTaskDelete(NULL);
         return;
     }
@@ -187,12 +191,12 @@ void phone_net_task(void *arg)
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(PHONE_CMD_PORT);
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("phone_net: bind :%d failed\r\n", PHONE_CMD_PORT);
+        TRACER_LOGE("phone_net: bind :%d failed", PHONE_CMD_PORT);
         closesocket(sock);
         vTaskDelete(NULL);
         return;
     }
-    printf("phone_net: UDP cmd server on :%d\r\n", PHONE_CMD_PORT);
+    TRACER_LOGI("phone_net: UDP cmd server on :%d", PHONE_CMD_PORT);
 
     for (;;) {
         flen = sizeof(from);
@@ -208,7 +212,7 @@ void phone_net_task(void *arg)
         }
         resp[0] = '\0';
         pnet_exec(buf, resp, sizeof(resp));
-        printf("phone_net: cmd '%s' -> %s\r\n", buf, resp);
+        TRACER_LOGI("phone_net: cmd '%s' -> %s", buf, resp);
         sendto(sock, resp, (size_t)strlen(resp), 0,
                (struct sockaddr *)&from, flen);
     }
