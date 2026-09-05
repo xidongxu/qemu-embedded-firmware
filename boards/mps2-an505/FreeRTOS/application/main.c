@@ -77,7 +77,7 @@ uint32_t tracer_stack_limit(void) {
 void tracer_dump_tasks(void) {
     static char buf[1024];
     vTaskList(buf);
-    TRACER_LOGI("%s", buf);
+    TRACER_LOGI("\r\n %s \r\n", buf);
 }
 
 /* tracer hook: system up-time in ms, printed in every dump (crash-to-boot
