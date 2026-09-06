@@ -73,11 +73,12 @@ tests/
 | M7 | m7-an500 | mps2-an500 | ✅ QEMU 实测 11/11（含 FPU） |
 | M33 | m33-an505 | mps2-an505 | ✅ QEMU 实测 11/11（含 FPU） |
 | M55 | m55-an547 | mps3-an547 | ✅ QEMU 实测 11/11（含 FPU） |
-| M85 | m85-an555 | mps3-an555 | 🔶 编译级 11/11（QEMU 11.1.0 尚无 `mps3-an555`，需含 an555 的更新版 ~11.2+；脚本检测缺失自动 build-only） |
+| M85 | m85-an555 | mps3-an555 | ✅ QEMU 实测 11/11（需含 `mps3-an555` 的 QEMU，如自编译 11.1.50 / 主线 ~11.2+；旧 QEMU 自动降级编译级） |
 | M23 | —（无标准 QEMU 板） | — | 🔶 C 层 fsyntax 编译通过；fault 入口汇编为 armv8-M **main** profile（`push {r4-r11}`），M23 baseline 需专用入口 |
 
-> 备注：`m85-an555` 的链接布局与 UART 基址沿用 `m55-an547` 假设，拿到含 `mps3-an555`
-> 的 QEMU 后请先核对再启用运行用例。M0/M0+ 与 M23 运行期 fault dump 的限制见
+> 备注：`m85-an555` 已在含 `mps3-an555` 的 QEMU（自编译 11.1.50，v11.1.0+1168）上
+> **实测通过 11/11** —— code@0x0 / RAM@0x21000000 / UART0@0x49303000 假设与 AN555 真机一致；
+> 机器缺失时自动降级为编译验证。M0/M0+ 与 M23 运行期 fault dump 的限制见
 > [常见问题 FAQ](#常见问题-faq)。
 
 ## 快速上手
@@ -393,8 +394,9 @@ PC/SP/LR + Raw stack 出发在**主机上逐帧展开**，无启发式误报，�
    默认仍是直接 MMIO，零变化）；`tests/host/test_fault_handler.c` 用 RAM 数组模拟寄存器 +
    伪造异常帧直接驱动 `tracer_fault_handler()`/`tracer_assert_fail()` 并逐 fault 类型断言。
 2. **QEMU 固件实测**（`tests/qemu/`）—— 真异常入口 → 帧解码 → dump → 黑匣子 → trap（或
-   自动复位）。每板 11 用例，当前 5 板 **66/66 通过**（M85 编译级 11/11；M3 无 FPU 自动跳过
-   `7/8`）。覆盖 host 无法复现的真异常入口、UsageFault 触发、FPU lazy 帧、任务栈 raw dump。
+   自动复位）。每板 11 用例，6 板全矩阵 **66/66 通过**（M85 需含 `mps3-an555` 的 QEMU，
+   实机 11/11；M3 无 FPU 自动跳过 `7/8`）。覆盖 host 无法复现的真异常入口、UsageFault
+   触发、FPU lazy 帧、任务栈 raw dump。
 3. **QEMU 层 gcov**（`tests/qemu/`）—— 固件以 `-fprofile-arcs -ftest-coverage
    -fprofile-info-section` 编译，guest 侧 `tests/qemu/application/gcov_dump.c`（仅该模式链入，
    同时提供强 `tracer_halt` 与 `tracer_stack_limit()=0`）在 trap 前把每个插桩 TU 的 `.gcda`
@@ -452,8 +454,9 @@ ARM asm 分支，固件 fault 由汇编 trampoline 传 SP）、1394（FPU eager-
 9. **M23（armv8-M Baseline）**：库 C 层（含 crash/log）可在 `-mcpu=cortex-m23` 编译；
    但 `tracer_gnugcc.s` 的 `push {r4-r11}` 是 main-profile 指令，M23 运行期 fault dump 需
    专用 baseline 入口（高低寄存器组拆开保存）—— 尚未实现，属已知边界。
-10. **M85 的 `mps3-an555`** 是 QEMU 主线较晚合入的机器（官方 11.1.0 实测尚无，约
-    11.2/master+）；本仓库脚本对缺失机器自动降级为编译验证。
+10. **M85 的 `mps3-an555`** 是 QEMU 主线较晚合入的机器（官方 11.1.0 尚无，约 11.2/
+    master+）；本仓库已在含该机器的自编译 QEMU（11.1.50）上**实测通过 11/11**，对缺失
+    机器自动降级为编译验证。
 
 ## 许可与出处
 

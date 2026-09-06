@@ -9,5 +9,5 @@
   "fpu": "fpv5-d16",
   "uart0": "0x49303000",
   "tracer_macros": ["TRACER_USE_CRASH=1"],
-  "pending_qemu": "mps3-an555 needs a QEMU release with Cortex-M85 (>= ~10/11.x); layout/UART assumed, verify on such a QEMU"
+  "note": "mps3-an555 verified on custom QEMU 11.1.50 (v11.1.0-1168-gff1d2d19d7e): code@0x0 / RAM@0x21000000 / UART0@0x49303000 all match AN555; matrix 11/11 real run. build_only kept so a machine-less CI falls back to compile-level."
 }
