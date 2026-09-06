@@ -84,32 +84,34 @@ extern "C" {
  *    to TRACER_PRINTF (simpler, but can deadlock if the fault interrupted
  *    printf or its lock). */
 
-/* 1. Default output backend: standard printf(), used only when the app has
- *    not defined its own TRACER_PRINTF. */
-#ifndef TRACER_PRINTF
-#include <stdio.h>
-#define TRACER_PRINTF printf
-#endif
-
-/* 2. CRASH-SAFE / CRASH-LOG mode: when the app defines TRACER_PUTCHAR (a
+/* Output backend selection (mutually exclusive, in priority order):
+ *
+ * 1. CRASH-SAFE / CRASH-LOG mode -- when the app defines TRACER_PUTCHAR (a
  *    lock-free char sink, e.g. a bare UART data register or Segger RTT), the
  *    fault/assert dump must not touch printf or its lock -- so TRACER_PRINTF
  *    is redirected to tracer's own mini-printf (defined in tracer.c), which
  *    renders one char at a time through TRACER_PUTCHAR.  This intentionally
- *    overrides step 1 (and any app-defined TRACER_PRINTF): crash-safety wins
- *    on the fault path.
+ *    overrides any app-defined TRACER_PRINTF: crash-safety wins on the fault
+ *    path, and a TRACER_PUTCHAR build has NO stdio/printf dependency at all.
  *
  *    TRACER_USE_CRASH / TRACER_USE_LOG (the crash "black box" record and the
  *    leveled runtime log) also force the same per-char mini-printf path --
- *    even without TRACER_PUTCHAR (a stdio putchar() fallback is used then) --
- *    because the crash record mirrors the dump one char at a time into a RAM
- *    capture buffer, and the runtime log renders through the same mini-printf
- *    (see tracer_ring_printf / tracer_crash_save / tracer_log below).  A
- *    TRACER_USE_CRASH / TRACER_USE_LOG build therefore redefines TRACER_PRINTF
- *    regardless of TRACER_PUTCHAR. */
+ *    even without TRACER_PUTCHAR (a stdio putchar() fallback is used then,
+ *    pulled in by tracer.c) -- because the crash record mirrors the dump one
+ *    char at a time into a RAM capture buffer, and the runtime log renders
+ *    through the same mini-printf (see tracer_ring_printf / tracer_crash_save
+ *    / tracer_log below).  A TRACER_USE_CRASH / TRACER_USE_LOG build therefore
+ *    redirects TRACER_PRINTF regardless of TRACER_PUTCHAR.
+ *
+ * 2. Otherwise the default output backend is standard printf(), used only
+ *    when the app has not defined its own TRACER_PRINTF.  <stdio.h> is pulled
+ *    in here solely to declare that default printf(). */
 #if defined(TRACER_PUTCHAR) || TRACER_USE_CRASH || TRACER_USE_LOG
 #undef TRACER_PRINTF
 #define TRACER_PRINTF tracer_xprintf
+#elif !defined(TRACER_PRINTF)
+#include <stdio.h>
+#define TRACER_PRINTF printf
 #endif
 
 /* Crash "black box" + leveled runtime log.  Both are opt-in and INDEPENDENT
