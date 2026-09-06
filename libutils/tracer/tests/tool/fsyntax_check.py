@@ -17,8 +17,8 @@ import os
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOARDS = os.path.join(ROOT, "qemu-tests")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BOARDS = os.path.join(ROOT, "tests", "qemu")
 TRACER = ROOT
 COMMON = os.path.join(BOARDS, "application")
 

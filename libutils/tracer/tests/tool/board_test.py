@@ -2,9 +2,9 @@
 """Build one board test firmware and run it under QEMU, asserting markers.
 
 Usage:
-    python scripts/board_test.py <board> <case> [--build-only] [--keep]
+    python tests/tool/board_test.py <board> <case> [--build-only] [--keep]
 
-  <board>  board directory name under qemu-tests/ (must contain config.json)
+  <board>  board directory name under tests/qemu/ (must contain config.json)
   <case>   test case id from config.json "cases" (e.g. 0,1,2)
 
 Environment:
@@ -22,8 +22,8 @@ import sys
 import tempfile
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOARDS = os.path.join(ROOT, "qemu-tests")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BOARDS = os.path.join(ROOT, "tests", "qemu")
 COMMON = os.path.join(BOARDS, "application")
 TRACER = ROOT
 BUILD_ROOT = os.path.join(ROOT, "build")
@@ -93,7 +93,7 @@ def board_dir(board):
 
 def linker_path(cfg, board):
     """Linker script: board-local linker.ld unless cfg['linker'] overrides
-    (path relative to qemu-tests/)."""
+    (path relative to tests/qemu/)."""
     if cfg.get("linker"):
         return os.path.join(BOARDS, cfg["linker"])
     return os.path.join(board_dir(board), "linker.ld")

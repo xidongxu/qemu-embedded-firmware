@@ -3,7 +3,7 @@
 machine is not available on this host.  Exits 0 only if all ran PASS.
 
 Usage:
-    python scripts/test_all.py [--build-only] [--boards m3-an385 m33-an505 ...]
+    python tests/tool/test_all.py [--build-only] [--boards m3-an385 m33-an505 ...]
 
 Environment: CC, QEMU (see board_test.py)
 """
@@ -13,8 +13,8 @@ import os
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOARDS = os.path.join(ROOT, "qemu-tests")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BOARDS = os.path.join(ROOT, "tests", "qemu")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reuse the shared per-case table (descriptions + FPU/AUTO_RESET metadata)

@@ -116,7 +116,7 @@ add_library(tracer::tracer ALIAS tracer)
 option(TRACER_BUILD_TESTS "Build tracer host unit tests" OFF)
 if(TRACER_BUILD_TESTS)
     enable_testing()
-    add_subdirectory(host-tests)
+    add_subdirectory(tests/host)
 endif()
 
 # --- Install / export: lets an external project use find_package(tracer) ---

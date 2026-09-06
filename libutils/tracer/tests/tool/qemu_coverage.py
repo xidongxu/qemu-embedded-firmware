@@ -2,7 +2,7 @@
 """QEMU-layer line coverage for the library (Zephyr-style gcov export).
 
 The board firmware is built with gcov instrumentation plus GCC's
--fprofile-info-section; a small guest-side exporter (qemu-tests/application/
+-fprofile-info-section; a small guest-side exporter (tests/qemu/application/
 gcov_dump.c, linked only here) streams every instrumented TU's .gcda over the
 UART just before trapping.  This script:
   1. builds one coverage firmware per (board, test case) with RELATIVE source
@@ -16,10 +16,11 @@ Auto-reset cases (TEST_CASE 6/10) are skipped: a system reset would wipe the
 counters.  FPU cases 7/8 still run on FPU boards only (like the main matrix).
 
 Usage:
-    python scripts/qemu_coverage.py [--boards m3-an385 ...]
+    python tests/tool/qemu_coverage.py [--boards m3-an385 ...]
 Environment: CC (arm-none-eabi), QEMU, GCOV (default: arm-none-eabi-gcov).
 """
 import argparse
+import glob
 import json
 import os
 import shutil
@@ -27,8 +28,8 @@ import subprocess
 import sys
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOARDS = os.path.join(ROOT, "qemu-tests")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BOARDS = os.path.join(ROOT, "tests", "qemu")
 COMMON = os.path.join(BOARDS, "application")
 TRACER = ROOT
 COV = os.path.join(ROOT, "build", "cov_qemu")
@@ -42,7 +43,7 @@ LIB_UNITS = {"tracer": "tracer.c",
 CASES = ["0", "1", "2", "3", "4", "5", "7", "8", "9"]  # skip 6/10 (auto-reset)
 
 # import shared helpers without side effects
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "tests", "tool"))
 import board_test as bt  # noqa: E402
 
 
@@ -104,15 +105,15 @@ def build(board, case):
     comp("tracer_crash_store", "tracer_crash_store.c", cov, ROOT)
     # app/asm are built plain (no instrumentation -> no extra frames).  The
     # smoke case needs the export hook symbol so pass -DTRACER_GCOV.
-    comp("app", os.path.join("qemu-tests", "application", "app.c"),
+    comp("app", os.path.join("tests", "qemu", "application", "app.c"),
          ["-DTRACER_GCOV"], ROOT)
     # asm trampolines: plain.
     comp("tracer_gnugcc", os.path.join(TRACER, "tracer_gnugcc.s"), [], ROOT)
     # gcov_dump provides the strong tracer_halt() that streams .gcda at trap
     # time; nosys supplies the newlib syscall stubs for bare-metal linking.
-    comp("gcov_dump", os.path.join("qemu-tests", "application", "gcov_dump.c"),
+    comp("gcov_dump", os.path.join("tests", "qemu", "application", "gcov_dump.c"),
          [], ROOT)
-    comp("nosys", os.path.join("qemu-tests", "application", "nosys.c"),
+    comp("nosys", os.path.join("tests", "qemu", "application", "nosys.c"),
          [], ROOT)
     comp("startup", os.path.join(BOARDS, cfg["startup"]), [], None)
 

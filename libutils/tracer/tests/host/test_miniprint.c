@@ -6,14 +6,16 @@
  * lengths, .N / %.*s precision, %% escape, with '-'/'0' flags and decimal
  * width).
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_miniprint.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I. tests/host/test_miniprint.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  *
  * Note: the host may be LP64 (Unix `long` = 64-bit) or LLP64 (Windows
  * `long` = 32-bit); the tests below only use small values whose low 32 bits
  * are what the 32-bit ARM target prints.  %p is the exception: it is widened
  * to unsigned long long inside the mini-printf, so a 64-bit host pointer
- * prints in full either way.
+ * prints in full either way.  On a genuine 32-bit-pointer host (e.g. the
+ * -m32 CI job) a pointer only carries 32 bits, so the %p full-width check is
+ * guarded by UINTPTR_MAX and uses a value that fits in that case.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -39,7 +41,7 @@ static void tr_putc(char c) {
 #define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
-#include "../tracer.c"
+#include "../../tracer.c"
 
 static int s_failures = 0;
 
@@ -130,9 +132,20 @@ int main(void) {
     check("p=0x2000a0ff\r\n", "ptr lowercase hex");
 
     reset();
+#if UINTPTR_MAX > 0xffffffffu
+    /* 64-bit-pointer host (LP64 or LLP64): uintptr_t holds the full value,
+     * assert all 64 bits print (mini-printf widens %p internally). */
     tracer_xprintf("p=%p\r\n",
                    (void *)(uintptr_t)0x123456789ABCDEF0ull);
     check("p=0x123456789abcdef0\r\n", "ptr 64-bit full width");
+#else
+    /* Genuine 32-bit-pointer host (e.g. the -m32 CI job): a pointer only
+     * carries 32 bits, so assert the widest representable value prints
+     * whole (full 8 hex digits, matching what an ARM32 target shows). */
+    tracer_xprintf("p=%p\r\n",
+                   (void *)(uintptr_t)0x9ABCDEF0u);
+    check("p=0x9abcdef0\r\n", "ptr 32-bit full width");
+#endif
 
     /* %% escape: one percent sign (printf semantics). */
     reset();

@@ -11,7 +11,7 @@
  *
  * Build (per mode):
  *   gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASH=1 -DTCS_STUB_MODE=1 \
- *       -I.. host-tests/test_crash_store_stubs.c ../tracer_crash_store.c -o t && ./t
+ *       -I. tests/host/test_crash_store_stubs.c tracer_crash_store.c -o t && ./t
  * (also wired into CTest / the coverage run).
  */
 #include <stdio.h>

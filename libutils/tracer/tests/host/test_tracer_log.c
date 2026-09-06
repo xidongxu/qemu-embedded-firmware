@@ -16,7 +16,7 @@
  * override is tested separately in test_tracer_log_sink.c because the weak
  * definition lives in this same translation unit (tracer.c is #included).
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_tracer_log.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I. tests/host/test_tracer_log.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  */
 #include <stdio.h>
@@ -43,7 +43,7 @@ static void tr_putc(char c) {
 #define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
-#include "../tracer.c"
+#include "../../tracer.c"
 
 static int s_fail = 0;
 #define CHECK(cond)                                                          \

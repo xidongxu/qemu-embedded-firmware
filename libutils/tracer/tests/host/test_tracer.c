@@ -5,10 +5,10 @@
  * detection, exception/fault-name decoding, byte-wise 32-bit loads and the
  * stack-scan walker.  Run it wherever you build:
  *
- *   gcc -std=c99 -Wall -Wextra -I.. host-tests/test_tracer.c -o /tmp/test_tracer
+ *   gcc -std=c99 -Wall -Wextra -I. tests/host/test_tracer.c -o /tmp/test_tracer
  *   /tmp/test_tracer
  *
- * Also wired into CTest via -DTRACER_BUILD_TESTS=ON (host-tests/CMakeLists.txt).
+ * Also wired into CTest via -DTRACER_BUILD_TESTS=ON (tests/host/CMakeLists.txt).
  *
  * Pointer-based helpers (tracer_load32, tracer_walk_callstack) pass memory
  * addresses through uint32_t, so they only work on 32-bit hosts; on 64-bit
@@ -43,7 +43,7 @@ static uint8_t s_fake_text[64]; /* fake .text the walker may read from */
 #define TRACER_TEXT_START ((uint32_t)(uintptr_t)s_fake_text)
 #define TRACER_TEXT_END   ((uint32_t)(uintptr_t)(s_fake_text + sizeof(s_fake_text)))
 
-#include "../tracer.c"
+#include "../../tracer.c"
 
 static int s_failures = 0;
 

@@ -24,7 +24,7 @@ source line):
     branch  0 taken 100% (fallthrough)
     branch  1 taken 0%
 
-Usage: python scripts/branch_coverage.py
+Usage: python tests/tool/branch_coverage.py
 Output: stdout summary + build/cov_branch/branch_report.txt
 """
 import glob
@@ -34,7 +34,7 @@ import shutil
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST_RUN = os.path.join(ROOT, "build", "cov", "run")      # *.gcno per test
 QEMU_DIRS = os.path.join(ROOT, "build", "cov_qemu")        # <board>/<case>/
 OUT = os.path.join(ROOT, "build", "cov_branch")

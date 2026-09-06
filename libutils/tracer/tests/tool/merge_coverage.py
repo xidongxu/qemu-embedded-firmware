@@ -15,7 +15,7 @@ Output:
 import glob
 import os
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST_GCOV = os.path.join(ROOT, "build", "cov", "gcov")
 QEMU_GCOV = os.path.join(ROOT, "build", "cov_qemu", "gcov")
 OUT = os.path.join(ROOT, "build", "cov", "combined.txt")

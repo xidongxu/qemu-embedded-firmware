@@ -15,13 +15,13 @@
  *       -DTRACER_STACK_DUMP_BYTES=0 \
  *       -DTRACER_STACK_BASE=0x800 -DTRACER_STACK_TOP=0x1000 \
  *       -DTRACER_TEXT_START=0x08000000 -DTRACER_TEXT_END=0x08020000 \
- *       -I.. host-tests/test_tracer_log_sink.c ../tracer.c -o t && ./t
+ *       -I. tests/host/test_tracer_log_sink.c tracer.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON and into CI).
  */
 #include <stdio.h>
 #include <string.h>
 
-#include "../tracer.h"
+#include "../../tracer.h"
 
 static char s_all[8192];
 static uint32_t s_all_len = 0u;

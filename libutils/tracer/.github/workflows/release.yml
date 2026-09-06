@@ -17,7 +17,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi qemu-system-arm python3
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm python3
 
       - name: Host unit tests
         run: |
@@ -30,8 +31,8 @@ jobs:
           CC: arm-none-eabi-gcc
           QEMU: qemu-system-arm
         run: |
-          python3 scripts/test_all.py
-          python3 scripts/fsyntax_check.py
+          python3 tests/tool/test_all.py
+          python3 tests/tool/fsyntax_check.py
 
       - name: Package source tarball
         run: |

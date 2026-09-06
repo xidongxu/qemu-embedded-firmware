@@ -10,7 +10,7 @@
  *
  * Build (links tracer_crash_store.c with TRACER_USE_CRASH):
  *   gcc -std=c99 -Wall -Wextra -DTRACER_USE_CRASH=1 \
- *       -I.. host-tests/test_crash_store.c ../tracer_crash_store.c -o t && ./t
+ *       -I. tests/host/test_crash_store.c tracer_crash_store.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON and into CI).
  */
 #include <stdio.h>

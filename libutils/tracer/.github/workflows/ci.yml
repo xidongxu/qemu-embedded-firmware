@@ -8,9 +8,9 @@ on:
       - '*.h'
       - '*.s'
       - 'CMakeLists.txt'
-      - 'host-tests/**'
-      - 'qemu-tests/**'
-      - 'scripts/**'
+      - 'tests/host/**'
+      - 'tests/qemu/**'
+      - 'tests/tool/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
@@ -18,9 +18,9 @@ on:
       - '*.h'
       - '*.s'
       - 'CMakeLists.txt'
-      - 'host-tests/**'
-      - 'qemu-tests/**'
-      - 'scripts/**'
+      - 'tests/host/**'
+      - 'tests/qemu/**'
+      - 'tests/tool/**'
 
 jobs:
   test:
@@ -32,7 +32,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi qemu-system-arm python3 gcc-multilib libc6-dev-i386
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm python3 gcc-multilib libc6-dev-i386
 
       - name: Host unit tests (CTest)
         run: |
@@ -44,7 +45,7 @@ jobs:
         env:
           CC: gcc
         run: |
-          python3 scripts/coverage_report.py
+          python3 tests/tool/coverage_report.py
           tail -20 build/cov/report.txt
 
       - uses: actions/upload-artifact@v4
@@ -54,7 +55,7 @@ jobs:
             build/cov/report.txt
             build/cov/uncovered.txt
 
-      - name: Host unit tests (32-bit, -m32: load32/walker paths)
+      - name: "Host unit tests (32-bit, -m32: load32/walker paths)"
         run: |
           cmake -S . -B build-m32 -DTRACER_BUILD_TESTS=ON \
             -DCMAKE_C_FLAGS="-m32"
@@ -66,7 +67,7 @@ jobs:
           CC: arm-none-eabi-gcc
           QEMU: qemu-system-arm
         run: |
-          python3 scripts/test_all.py
+          python3 tests/tool/test_all.py
 
       # QEMU-layer line coverage: the firmware is built with gcov + GCC's
       # -fprofile-info-section and streams every TU's .gcda over the UART
@@ -82,8 +83,8 @@ jobs:
           QEMU: qemu-system-arm
           GCOV: arm-none-eabi-gcov
         run: |
-          python3 scripts/qemu_coverage.py --boards m3-an385 m33-an505
-          python3 scripts/merge_coverage.py
+          python3 tests/tool/qemu_coverage.py --boards m3-an385 m33-an505
+          python3 tests/tool/merge_coverage.py
           tail -30 build/cov/combined.txt
 
       # Line + branch coverage across host (build/cov/run) and QEMU
@@ -95,7 +96,7 @@ jobs:
           HOST_GCOV: gcov
           GCOV: arm-none-eabi-gcov
         run: |
-          python3 scripts/branch_coverage.py
+          python3 tests/tool/branch_coverage.py
           tail -40 build/cov_branch/branch_report.txt
 
       - uses: actions/upload-artifact@v4
@@ -111,4 +112,4 @@ jobs:
         env:
           CC: arm-none-eabi-gcc
         run: |
-          python3 scripts/fsyntax_check.py
+          python3 tests/tool/fsyntax_check.py

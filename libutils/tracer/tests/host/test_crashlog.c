@@ -6,7 +6,7 @@
  * capture is active) against a collecting sink, then verifies the assembled
  * record in the capture buffer.
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_crashlog.c -o t && ./t
+ * Run:  gcc -std=c99 -Wall -Wextra -I. tests/host/test_crashlog.c -o t && ./t
  * (also wired into CTest via -DTRACER_BUILD_TESTS=ON).
  *
  * The ring / capture buffers and helpers are static in tracer.c; including
@@ -35,7 +35,7 @@ static void tr_putc(char c) {
 #define TRACER_STACK_TOP  0x00001000u
 #define TRACER_TEXT_START 0x08000000u
 #define TRACER_TEXT_END   0x08020000u
-#include "../tracer.c"
+#include "../../tracer.c"
 
 static int s_fail = 0;
 #define CHECK(cond)                                                          \

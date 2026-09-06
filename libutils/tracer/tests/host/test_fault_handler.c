@@ -17,7 +17,7 @@
  * immediately; the walker is covered on 32-bit hosts (-m32 job) and by the
  * QEMU boards.
  *
- * Run:  gcc -std=c99 -Wall -Wextra -I.. host-tests/test_fault_handler.c -o t
+ * Run:  gcc -std=c99 -Wall -Wextra -I. tests/host/test_fault_handler.c -o t
  *       && ./t
  */
 #include <stdint.h>
@@ -52,7 +52,7 @@ static void putc_out(int c) {
 #define TRACER_TEXT_START 0x00000100u
 #define TRACER_TEXT_END   0x00000200u
 
-#include "../tracer.c"
+#include "../../tracer.c"
 
 static int s_fail = 0;
 #define CHECK(cond)                                                          \

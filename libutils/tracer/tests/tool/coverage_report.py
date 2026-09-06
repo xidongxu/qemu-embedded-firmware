@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host line-coverage report for the tracer library.
 
- * Compiles every host unit test under host-tests/ with gcov instrumentation
+ * Compiles every host unit test under tests/host/ with gcov instrumentation
 (gcc --coverage), runs each one, runs gcov per translation unit, then
 aggregates line coverage of tracer.c / tracer_crash_store.c across all
 tests (a line is "covered" if ANY test executed it).
@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD = os.path.join(ROOT, "build", "cov")
 RUN = os.path.join(BUILD, "run")
 GCOVDIR = os.path.join(BUILD, "gcov")
@@ -121,7 +121,7 @@ def main():
         cmd = [cc, "--coverage", "-std=c99",
                "-Wno-pointer-to-int-cast", "-Wno-int-to-pointer-cast",
                "-I", ROOT] + ["-D%s" % x for x in defs]
-        cmd.append(os.path.join("host-tests", src))
+        cmd.append(os.path.join("tests", "host", src))
         for obj in extra_objs:
             cmd += ["-I", ROOT, os.path.join(ROOT, obj)]
         cmd += ["-o", out]
