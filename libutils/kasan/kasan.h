@@ -55,6 +55,12 @@ extern "C" {
 #ifndef KASAN_HEAP_SIZE
 #define KASAN_HEAP_SIZE (64u * 1024u)
 #endif
+/* Leak detection record-table size: every live allocation is logged while
+ * kasan_malloc() hands it out.  The table is fixed-size (a debug aid); when
+ * it fills up new allocations are still served but not logged. */
+#ifndef KASAN_LEAK_MAX
+#define KASAN_LEAK_MAX 32u
+#endif
 /* Host tests may point the heap arena at their own RAM inside a fake region
  * via KASAN_ARENA_EXT (an integer expression giving the arena base); the
  * arena size defaults to KASAN_HEAP_SIZE unless KASAN_ARENA_SIZE is set. */
@@ -78,6 +84,14 @@ void *kasan_malloc(uint32_t nbytes);
 /* Free a block: the whole area is re-poisoned (use-after-free caught) and
  * the header magic catches double-free / bad-free. */
 void kasan_free(void *p);
+/* Recount every allocation still in the leak record table and refresh the
+ * kasan_leak_* markers.  A workload that frees everything it should can
+ * assert kasan_leak_count == 0 afterwards. */
+void kasan_leak_dump(void);
+/* Walk the live records: returns the user pointer of the index-th record
+ * still held (index 0 = first) and stores its size / callsite in the out
+ * pointers (optional); returns 0 past the end. */
+uint32_t kasan_leak_live(uint32_t index, uint32_t *size, uint32_t *pc);
 /* Fault report side-channel: kasan_report() parks the fault info in the
  * markers below then traps (the QEMU test reads them via gdb; a real port
  * can hook an UART/tracer sink instead).  Define KASAN_TEST_RETURNS to make
@@ -89,6 +103,15 @@ extern volatile uint32_t kasan_report_addr;
 extern volatile uint32_t kasan_report_size;
 extern volatile uint32_t kasan_report_shadow;
 extern volatile uint32_t kasan_report_pc;
+/* Leak-detection markers, refreshed by kasan_leak_dump(): count and total
+ * bytes of allocations still live, plus the first live record (user ptr,
+ * size, callsite) for a quick gdb read. */
+extern volatile uint32_t kasan_leak_count;
+extern volatile uint32_t kasan_leak_bytes;
+extern volatile uint32_t kasan_leak_ptr;
+extern volatile uint32_t kasan_leak_size;
+extern volatile uint32_t kasan_leak_pc;
+extern volatile uint32_t kasan_leak_lost;
 
 #ifdef __cplusplus
 }

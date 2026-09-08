@@ -4,14 +4,16 @@
 # -fsanitize=kernel-address, linked against the kasan library.  KHEAP_CASE
 # selects the injected fault:
 #   1 = heap overflow   2 = use-after-free   3 = double-free
-# Run under QEMU, then read ks_* markers with gdb:
+#   4 = leak detection (kasan_leak_dump)
+# Run under QEMU, then read kasan_* markers with gdb:
 #   qemu-system-arm -machine mps2-an505 -cpu cortex-m33 -m 16M \
 #       -kernel <elf> -display none -serial null -monitor none -no-reboot \
 #       -gdb tcp::1237
 #   arm-none-eabi-gdb <elf> -batch -ex 'target remote :1237' \
-#       -ex 'p ks_reports' -ex 'p ks_type' -ex 'p ks_addr' -ex 'bt'
+#       -ex 'p kasan_leak_count' -ex 'p kasan_leak_bytes' -ex 'bt'
 
-set(KASAN_TEST_CASE 1 CACHE STRING "kasan QEMU test case (1=overflow 2=uaf 3=doublefree)")
+set(KASAN_TEST_CASE 1 CACHE STRING
+    "kasan QEMU test case (1=overflow 2=uaf 3=doublefree 4=leak)")
 
 add_executable(kasan_qemu_test
     kasan_test.c
