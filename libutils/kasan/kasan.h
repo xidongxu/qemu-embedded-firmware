@@ -17,11 +17,15 @@
  * QEMU values):
  *   KASAN_REGION_BASE  0x80000000   instrumented region base (real RAM)
  *   KASAN_REGION_SIZE  0x00040000   instrumented region size (256 KB)
- *   KASAN_SHADOW_BASE  0x38000000   shadow RAM base (independent real RAM)
  *   KASAN_HEAP_SIZE    (64 KB)      heap arena size (must fit in region)
  *
- * shadow_of(a) = KASAN_SHADOW_BASE + (a - KASAN_REGION_BASE) / 8, valid only
- * inside the region; accesses elsewhere pass through unchecked.
+ * The shadow map is carved out of the TAIL of the instrumented region itself
+ * (the top 1/8) by default, matching fixed MCU memory maps that have no spare
+ * RAM bank; define KASAN_SHADOW_BASE to place it in an independent RAM bank
+ * instead (then the whole region stays usable).
+ *
+ * shadow_of(a) = shadow_base + (a - region_base) / 8, valid only inside the
+ * usable part of the region; accesses elsewhere pass through unchecked.
  */
 #ifndef KASAN_H
 #define KASAN_H
@@ -38,9 +42,16 @@ extern "C" {
 #ifndef KASAN_REGION_SIZE
 #define KASAN_REGION_SIZE 0x00040000u
 #endif
-#ifndef KASAN_SHADOW_BASE
-#define KASAN_SHADOW_BASE 0x38000000u
+/* Inline shadow by default (tail of the region); an explicit
+ * KASAN_SHADOW_BASE switches to an independent shadow RAM bank. */
+#ifdef KASAN_SHADOW_BASE
+#define KASAN_USABLE_SIZE KASAN_REGION_SIZE
+#else
+#define KASAN_SHADOW_BASE (KASAN_REGION_BASE + KASAN_REGION_SIZE - \
+                           (KASAN_REGION_SIZE / 8u))
+#define KASAN_USABLE_SIZE (KASAN_SHADOW_BASE - KASAN_REGION_BASE)
 #endif
+#define KASAN_SHADOW_SIZE (KASAN_USABLE_SIZE / 8u)
 #ifndef KASAN_HEAP_SIZE
 #define KASAN_HEAP_SIZE (64u * 1024u)
 #endif

@@ -1,15 +1,16 @@
 /* Linker script for the mps2-an505 kasan QEMU test image.
  *   FLASH @0x10000000 (4MB) -- code/vectors/rodata
- *   RAM   @0x80000000 (256KB) -- .data/.bss/stack, INSTRUMENTED by kasan
- *        (its shadow lives in the separate 32KB real RAM at 0x38000000;
- *         see kasan.h defaults -- keep KASAN_REGION_SIZE <= 256KB here.)
+ *   RAM   @0x80000000 (224KB usable) -- .data/.bss/stack, INSTRUMENTED.
+ * The shadow map is carved from the TAIL of the 256KB region
+ * (0x80038000..0x80040000, 32KB); it stays out of this link so .data/.bss/
+ * stack never land on it (kasan.h defaults: KASAN_REGION_SIZE=0x40000).
  */
 ENTRY(Reset_Handler)
 
 MEMORY
 {
   FLASH (rx)  : ORIGIN = 0x10000000, LENGTH = 0x00400000
-  RAM   (rwx) : ORIGIN = 0x80000000, LENGTH = 0x00040000
+  RAM   (rwx) : ORIGIN = 0x80000000, LENGTH = 0x00038000
 }
 
 SECTIONS

@@ -15,9 +15,8 @@ RTOS / printf），GCC/armclang 皆可。
 - `free` 后整块重新 poison → 之后任何访问即 UAF 捕获。
 - 块头 magic 校验 → double-free / bad-free 捕获。
 
-```
-shadow_of(a) = KASAN_SHADOW_BASE + (a - KASAN_REGION_BASE) / 8   （区域内）
-```
+影子默认从**被测区自身尾部**划出（尾部 1/8），无需专门影子 RAM，符合固定
+MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区皆可测）。
 
 ## 使用
 
@@ -47,9 +46,12 @@ kasan_heap_init();   /* 建堆 arena */
 | 宏 | 默认 | 含义 |
 |---|---|---|
 | `KASAN_REGION_BASE` | `0x80000000` | 被测区基址（真实 RAM） |
-| `KASAN_REGION_SIZE` | `0x00040000` | 被测区大小（256 KB） |
-| `KASAN_SHADOW_BASE` | `0x38000000` | 影子 RAM 基址（独立真实 RAM） |
-| `KASAN_HEAP_SIZE` | 64 KB | 堆 arena 大小（须落在被测区内） |
+| `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
+| `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
+| `KASAN_HEAP_SIZE` | 64 KB | 堆 arena 大小（须落在除影子外的可用区内） |
+
+inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
+有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
 
 ## 目录
 

@@ -12,26 +12,29 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Redirect the library's memory map to host RAM. */
+/* Redirect the library's memory map to host RAM.  The shadow is inline: the
+ * top 1/8 of s_region (its last 128 bytes) is the shadow map. */
 #define KASAN_TEST_RETURNS
 #define KASAN_HEAP_SIZE 256u
 
-static unsigned char s_shadow[256] __attribute__((aligned(8)));
 static unsigned char s_region[1024] __attribute__((aligned(8)));
 
 #define KASAN_REGION_BASE ((uint32_t)(uintptr_t)s_region)
 #define KASAN_REGION_SIZE (sizeof(s_region))
-#define KASAN_SHADOW_BASE ((uint32_t)(uintptr_t)s_shadow)
 #define KASAN_ARENA_EXT   ((uint32_t)(uintptr_t)s_region + 64u)
 
 #include "../../kasan.c"
 
 static int sh_at(uint32_t a)
 {
-    if (a < KASAN_REGION_BASE || a >= KASAN_REGION_BASE + KASAN_REGION_SIZE) {
+    uint32_t shadow_offset = 0;
+
+    if (a < KASAN_REGION_BASE ||
+        a >= KASAN_REGION_BASE + KASAN_USABLE_SIZE) {
         return -1;
     }
-    return s_shadow[(a - KASAN_REGION_BASE) >> 3];
+    shadow_offset = (uint32_t)(KASAN_SHADOW_BASE - KASAN_REGION_BASE);
+    return s_region[shadow_offset + ((a - KASAN_REGION_BASE) >> 3)];
 }
 
 static void test_shadow_api(void)
@@ -50,8 +53,8 @@ static void test_shadow_api(void)
     assert(sh_at(base) == 0);
     assert(sh_at(base + 8u) == 0xff);
 
-    kasan_poison(KASAN_REGION_BASE + KASAN_REGION_SIZE, 8u);
-    assert(sh_at(KASAN_REGION_BASE + KASAN_REGION_SIZE) == -1);
+    kasan_poison(KASAN_REGION_BASE + KASAN_USABLE_SIZE + 16u, 8u);
+    assert(sh_at(KASAN_REGION_BASE + KASAN_USABLE_SIZE + 16u) == -1);
 }
 
 static void test_heap_layout(void)

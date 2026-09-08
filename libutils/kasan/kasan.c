@@ -11,8 +11,6 @@
  */
 #include "kasan.h"
 
-#define KASAN_SHADOW_SIZE (KASAN_REGION_SIZE / 8u)
-
 volatile uint32_t kasan_reports = 0;
 volatile uint32_t kasan_report_type = 0;
 volatile uint32_t kasan_report_addr = 0;
@@ -24,7 +22,7 @@ static uint8_t *kasan_shadow_of(uint32_t addr) {
     uint8_t *shadow = 0;
 
     if (addr < KASAN_REGION_BASE ||
-        addr >= KASAN_REGION_BASE + KASAN_REGION_SIZE) {
+        addr >= KASAN_REGION_BASE + KASAN_USABLE_SIZE) {
         return 0;
     }
     shadow = (uint8_t *)(uintptr_t)(KASAN_SHADOW_BASE +
