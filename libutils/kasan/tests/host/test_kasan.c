@@ -16,9 +16,6 @@
  * top 1/8 of s_region (its last 128 bytes) is the shadow map. */
 #define KASAN_TEST_RETURNS
 #define KASAN_HEAP_SIZE 256u
-/* Small leak table so the table-full (kasan_leak_lost) path is reachable
- * with the tiny 256-byte arena (a live record takes one heap block). */
-#define KASAN_LEAK_MAX 4u
 
 static unsigned char s_region[1024] __attribute__((aligned(8)));
 
@@ -129,54 +126,6 @@ static void test_bad_free_reports(void)
     assert(kasan_report_type == 4u);
 }
 
-static void test_leak_detection(void)
-{
-    uint8_t *a = 0;
-    uint8_t *b = 0;
-    uint8_t *c = 0;
-    uint8_t *d = 0;
-    uint8_t *e = 0;
-    uint32_t size = 0;
-    uint32_t pc = 0;
-
-    kasan_heap_init();
-    a = (uint8_t *)kasan_malloc(8u);
-    b = (uint8_t *)kasan_malloc(8u);
-    c = (uint8_t *)kasan_malloc(8u);
-    d = (uint8_t *)kasan_malloc(8u);
-    assert(a != 0 && b != 0 && c != 0 && d != 0);
-
-    /* Live records are dumped and walked. */
-    kasan_leak_dump();
-    assert(kasan_leak_count == 4u);
-    assert(kasan_leak_bytes == 32u);
-    assert(kasan_leak_live(0u, &size, &pc) == (uint32_t)(uintptr_t)a);
-    assert(size == 8u && pc != 0u);
-    assert(kasan_leak_live(3u, 0, 0) == (uint32_t)(uintptr_t)d);
-    assert(kasan_leak_live(4u, 0, 0) == 0u);
-
-    /* A 5th live allocation overflows the table: served but not logged. */
-    e = (uint8_t *)kasan_malloc(8u);
-    assert(e != 0);
-    assert(kasan_leak_lost == 1u);
-    kasan_leak_dump();
-    assert(kasan_leak_count == 4u);
-
-    /* Freeing a block drops its record. */
-    kasan_free(b);
-    kasan_leak_dump();
-    assert(kasan_leak_count == 3u);
-    assert(kasan_leak_live(1u, &size, 0) == (uint32_t)(uintptr_t)c);
-
-    kasan_free(a);
-    kasan_free(c);
-    kasan_free(d);
-    kasan_free(e);
-    kasan_leak_dump();
-    assert(kasan_leak_count == 0u);
-    assert(kasan_leak_bytes == 0u);
-}
-
 int main(void)
 {
     test_shadow_api();
@@ -185,7 +134,6 @@ int main(void)
     test_free_poisons();
     test_double_free_reports();
     test_bad_free_reports();
-    test_leak_detection();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

@@ -1,14 +1,12 @@
 /* kasan_test.c -- QEMU firmware test for the kasan library.
  * Instrumented with -fsanitize=kernel-address: every memory access calls the
- * kasan __asan_*_noabort hooks.  KHEAP_CASE injects one fault; the report is
- * parked in kasan_* markers then traps (gdb reads them).
+ * kasan __asan_*_noabort hooks.  KHEAP_CASE injects one fault; ks_report()
+ * parks the info in ks_* markers then traps (gdb reads them).
  *
  *   1 = heap overflow   : write past an allocation into the neighbour's
  *                         poisoned header -> caught on the spot
- *   2 = use-after-free  : write after kasan_free() (block re-poisoned)
- *   3 = double-free     : kasan_free() twice (header magic check)
- *   4 = leak detection  : allocate several, free one, then kasan_leak_dump()
- *                         -> kasan_leak_count == live blocks still held
+ *   2 = use-after-free  : write after ks_free() (block re-poisoned)
+ *   3 = double-free     : ks_free() twice (header magic check)
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -45,16 +43,6 @@ int main(void)
         uint8_t *a = (uint8_t *)kasan_malloc(32);
         kasan_free(a);
         kasan_free(a);                      /* double free -> trap     */
-    }
-#elif KHEAP_CASE == 4
-    {
-        uint8_t *a = (uint8_t *)kasan_malloc(32);
-        uint8_t *b = (uint8_t *)kasan_malloc(64);
-        a[0] = 0x11;
-        b[0] = 0x22;
-        kasan_free(a);                      /* a freed, b leaks */
-        kasan_leak_dump();
-        g_sink = b[0];
     }
 #endif
 

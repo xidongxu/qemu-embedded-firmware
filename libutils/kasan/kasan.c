@@ -17,12 +17,6 @@ volatile uint32_t kasan_report_addr = 0;
 volatile uint32_t kasan_report_size = 0;
 volatile uint32_t kasan_report_shadow = 0;
 volatile uint32_t kasan_report_pc = 0;
-volatile uint32_t kasan_leak_count = 0;
-volatile uint32_t kasan_leak_bytes = 0;
-volatile uint32_t kasan_leak_ptr = 0;
-volatile uint32_t kasan_leak_size = 0;
-volatile uint32_t kasan_leak_pc = 0;
-volatile uint32_t kasan_leak_lost = 0;
 
 static uint8_t *kasan_shadow_of(uint32_t addr) {
     uint8_t *shadow = 0;
@@ -124,60 +118,6 @@ typedef struct {
     uint32_t size;
 } kasan_hdr_t;
 
-/* Leak record table: every live allocation is logged (user pointer, size and
- * the caller's return address) when kasan_malloc() hands it out, and the
- * entry is dropped by kasan_free().  A fixed-size debug aid; when it fills
- * up new allocations are still served but not logged (kasan_leak_lost). */
-typedef struct {
-    uint32_t ptr;
-    uint32_t size;
-    uint32_t callsite;
-} kasan_leak_t;
-
-static kasan_leak_t kasan_leak_recs[KASAN_LEAK_MAX];
-
-static void kasan_leak_clear(void) {
-    uint32_t index = 0;
-
-    for (index = 0; index < KASAN_LEAK_MAX; index++) {
-        kasan_leak_recs[index].ptr = 0;
-        kasan_leak_recs[index].size = 0;
-        kasan_leak_recs[index].callsite = 0;
-    }
-    kasan_leak_count = 0;
-    kasan_leak_bytes = 0;
-    kasan_leak_ptr = 0;
-    kasan_leak_size = 0;
-    kasan_leak_pc = 0;
-}
-
-static void kasan_leak_add(uint32_t ptr, uint32_t size, uint32_t callsite) {
-    uint32_t index = 0;
-
-    for (index = 0; index < KASAN_LEAK_MAX; index++) {
-        if (kasan_leak_recs[index].ptr == 0) {
-            kasan_leak_recs[index].ptr = ptr;
-            kasan_leak_recs[index].size = size;
-            kasan_leak_recs[index].callsite = callsite;
-            return;
-        }
-    }
-    kasan_leak_lost++;
-}
-
-static void kasan_leak_remove(uint32_t ptr) {
-    uint32_t index = 0;
-
-    for (index = 0; index < KASAN_LEAK_MAX; index++) {
-        if (kasan_leak_recs[index].ptr == ptr) {
-            kasan_leak_recs[index].ptr = 0;
-            kasan_leak_recs[index].size = 0;
-            kasan_leak_recs[index].callsite = 0;
-            return;
-        }
-    }
-}
-
 /* Arena backing store.  Default is a static array inside the instrumented
  * region; host tests point KASAN_ARENA_EXT at their own RAM.  It is prepared
  * at kasan_heap_init() time (the external base is not a C constant
@@ -207,7 +147,6 @@ void kasan_heap_init(void) {
     kasan_hdr_t *header = 0;
 
     KASAN_ARENA_PREP();
-    kasan_leak_clear();
     header = (kasan_hdr_t *)(void *)kasan_arena;
     kasan_poison((uint32_t)(uintptr_t)kasan_arena, kasan_arena_size);
     header->magic = KASAN_HDR_MAGIC_FREE;
@@ -228,11 +167,9 @@ static void kasan_free_set_next(kasan_hdr_t *header, kasan_hdr_t *next) {
 
 void *kasan_malloc(uint32_t nbytes) {
     uint32_t user_size = (nbytes + 7u) & ~7u;
-    uint32_t caller_pc = 0;
     kasan_hdr_t *current = kasan_free_head;
     kasan_hdr_t *previous = 0;
 
-    caller_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
     if (user_size < 8u) {
         user_size = 8u;
     }
@@ -267,9 +204,6 @@ void *kasan_malloc(uint32_t nbytes) {
             current->size = user_size;
             kasan_unpoison((uint32_t)(uintptr_t)current + sizeof(kasan_hdr_t),
                            user_size);
-            kasan_leak_add((uint32_t)(uintptr_t)((uint8_t *)current +
-                                                 sizeof(kasan_hdr_t)),
-                           user_size, caller_pc);
             return (uint8_t *)current + sizeof(kasan_hdr_t);
         }
         if (usable_size >= user_size) {
@@ -282,9 +216,6 @@ void *kasan_malloc(uint32_t nbytes) {
             current->size = usable_size;
             kasan_unpoison((uint32_t)(uintptr_t)current + sizeof(kasan_hdr_t),
                            usable_size);
-            kasan_leak_add((uint32_t)(uintptr_t)((uint8_t *)current +
-                                                 sizeof(kasan_hdr_t)),
-                           usable_size, caller_pc);
             return (uint8_t *)current + sizeof(kasan_hdr_t);
         }
         previous = current;
@@ -308,58 +239,7 @@ void kasan_free(void *p) {
     }
     total_size = sizeof(kasan_hdr_t) + header->size;
     header->magic = KASAN_HDR_MAGIC_FREE;
-    kasan_leak_remove((uint32_t)(uintptr_t)p);
     kasan_free_set_next(header, kasan_free_head);
     kasan_free_head = header;
     kasan_poison((uint32_t)(uintptr_t)header, total_size);
-}
-
-void kasan_leak_dump(void) {
-    uint32_t index = 0;
-    uint32_t first = 0;
-
-    kasan_leak_count = 0;
-    kasan_leak_bytes = 0;
-    kasan_leak_ptr = 0;
-    kasan_leak_size = 0;
-    kasan_leak_pc = 0;
-    for (index = 0; index < KASAN_LEAK_MAX; index++) {
-        kasan_leak_t *record = &kasan_leak_recs[index];
-
-        if (record->ptr == 0) {
-            continue;
-        }
-        if (first == 0) {
-            kasan_leak_ptr = record->ptr;
-            kasan_leak_size = record->size;
-            kasan_leak_pc = record->callsite;
-            first = 1;
-        }
-        kasan_leak_count++;
-        kasan_leak_bytes += record->size;
-    }
-}
-
-uint32_t kasan_leak_live(uint32_t index, uint32_t *size, uint32_t *pc) {
-    uint32_t scan = 0;
-    uint32_t live = 0;
-
-    for (scan = 0; scan < KASAN_LEAK_MAX; scan++) {
-        kasan_leak_t *record = &kasan_leak_recs[scan];
-
-        if (record->ptr == 0) {
-            continue;
-        }
-        if (live == index) {
-            if (size) {
-                *size = record->size;
-            }
-            if (pc) {
-                *pc = record->callsite;
-            }
-            return record->ptr;
-        }
-        live++;
-    }
-    return 0;
 }
