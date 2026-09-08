@@ -166,10 +166,16 @@ static void kasan_free_set_next(kasan_hdr_t *header, kasan_hdr_t *next) {
 }
 
 void *kasan_malloc(uint32_t nbytes) {
-    uint32_t user_size = (nbytes + 7u) & ~7u;
+    uint32_t user_size = 0;
     kasan_hdr_t *current = kasan_free_head;
     kasan_hdr_t *previous = 0;
 
+    /* Refuse requests whose 8-byte rounding would wrap: returning a block far
+     * smaller than asked turns an app bug into a huge silent overflow. */
+    if (nbytes > 0xFFFFFFF7u) {
+        return 0;
+    }
+    user_size = (nbytes + 7u) & ~7u;
     if (user_size < 8u) {
         user_size = 8u;
     }
@@ -228,6 +234,12 @@ void kasan_free(void *p) {
     kasan_hdr_t *header = 0;
     uint32_t total_size = 0;
 
+    /* free(NULL) is a no-op, matching the C standard; without this the
+     * header lookup below would dereference 0 - 8 (wrapped) on a bare
+     * metal target and fault. */
+    if (p == 0) {
+        return;
+    }
     header = (kasan_hdr_t *)(void *)((uint8_t *)p - sizeof(kasan_hdr_t));
     if (header->magic == KASAN_HDR_MAGIC_FREE) {
         kasan_report(3, (uint32_t)(uintptr_t)p, 0);

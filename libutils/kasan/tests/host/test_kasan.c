@@ -126,6 +126,33 @@ static void test_bad_free_reports(void)
     assert(kasan_report_type == 4u);
 }
 
+static void test_edge_cases(void)
+{
+    uint8_t *p = 0;
+    uint32_t before = 0;
+
+    kasan_heap_init();
+    before = kasan_reports;
+    kasan_free(0);                      /* free(NULL) is a no-op */
+    assert(kasan_reports == before);
+
+    /* Oversized request whose 8-byte rounding would wrap is refused. */
+    p = (uint8_t *)kasan_malloc(0xFFFFFFF8u);
+    assert(p == 0);
+
+    /* Request larger than the arena is refused without corrupting the heap. */
+    p = (uint8_t *)kasan_malloc(1024u);
+    assert(p == 0);
+    p = (uint8_t *)kasan_malloc(32u);   /* heap still usable afterwards */
+    assert(p != 0);
+
+    /* malloc(0) still hands out the smallest usable block. */
+    kasan_free(p);
+    p = (uint8_t *)kasan_malloc(0u);
+    assert(p != 0);
+    kasan_free(p);
+}
+
 int main(void)
 {
     test_shadow_api();
@@ -134,6 +161,7 @@ int main(void)
     test_free_poisons();
     test_double_free_reports();
     test_bad_free_reports();
+    test_edge_cases();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

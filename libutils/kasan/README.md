@@ -70,9 +70,11 @@ tests/
 
 `test_kasan.c` 把 region / shadow / arena 重定向到 host RAM 数组（宏注入），
 `#include kasan.c` 直测：shadow API、heap first-fit 布局 / 切块 / free 后
-poison、double-free / bad-free 报告（`KASAN_TEST_RETURNS` 使报告返回而非
-trap）。库用 32 位地址（`uint32_t`），**host 测试需 32 位编译**
-（Linux `-m32`；Windows 可用 zig 32 位或 64 位 + 低 image-base）。
+poison、double-free / bad-free 报告、边界情形（`free(NULL)` no-op、溢出请求
+拒绝、超 arena 请求返回 NULL 且堆仍可用、`malloc(0)` 给最小块）。
+`KASAN_TEST_RETURNS` 使报告返回而非 trap。库用 32 位地址（`uint32_t`），
+**host 测试需 32 位编译**（Linux `-m32`；Windows 可用 zig 32 位或 64 位 +
+低 image-base）。
 
 ```bash
 cmake -B build-host -S libutils/kasan -DKASAN_BUILD_TESTS=ON
@@ -82,8 +84,8 @@ cmake --build build-host && ctest --test-dir build-host
 ### QEMU 固件（ARM，板绑定 mps2-an505）
 
 `tests/qemu` 编一个 `-fsanitize=kernel-address` 插桩裸机镜像，`KASAN_TEST_CASE`
-注入故障（1=堆越界 / 2=UAF / 3=double-free），报告落 `kasan_*` marker 供 gdb
-读取判 PASS。
+注入故障（1=堆越界 / 2=UAF / 3=double-free / 4=堆前越界 underflow），报告落
+`kasan_*` marker 供 gdb 读取判 PASS。
 
 ```bash
 cmake -B build -S . -DBOARD=mps2-an505 -DKASAN_BUILD_TESTS=ON \
