@@ -1,4 +1,8 @@
 add_subdirectory(tracer)
+# kasan -- minimal KASan (memory-safety checker).  A static library only
+# (shadow map + heap + the __asan_*_noabort hooks); instrumented consumer
+# code opts in per-target with -fsanitize=kernel-address.  No board deps.
+add_subdirectory(kasan)
 if(TARGET_PROJECT STREQUAL "FreeRTOS")
     set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/boards/${BOARD}/${PROJECT}/application/lv_conf.h CACHE FILEPATH "" FORCE)
     set(LVGL_ROOT_DIR ${CMAKE_SOURCE_DIR}/libutils/lvgl/ CACHE FILEPATH "" FORCE)
