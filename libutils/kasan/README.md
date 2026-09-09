@@ -87,6 +87,7 @@ inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（
 kasan.h             配置宏 + 后端接口 + API 声明
 kasan.c             库核心（shadow + 存活记录表 + noabort 钩子）
 kasan_alloc_tlsf.c  TLSF 分配器后端（对接 libmem/tlsf）
+TODO.md             与 Linux KASan 的功能差距 + 缺陷待办清单
 CMakeLists.txt      库构建（install/export + find_package）
 kasanConfig.cmake.in
 tests/
