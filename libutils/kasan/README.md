@@ -76,7 +76,7 @@ typedef struct kasan_alloc_backend {
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
 | `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
-| `KASAN_LIVE_MAX` | 64 | 存活分配记录表容量（同时存活的分配数上限；满则关闭 bad-free 探测） |
+| `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（同时存活的分配数上限，每条 12 字节→约 48 KB；满则关闭 bad-free 探测） |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
