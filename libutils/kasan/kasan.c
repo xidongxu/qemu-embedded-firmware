@@ -1,8 +1,10 @@
-/* kasan.c -- minimal KASan runtime and heap allocator for Cortex-M.
+/* kasan.c -- minimal KASan runtime for Cortex-M.
  *
  * Compiled WITHOUT -fsanitize=kernel-address: this file must touch shadow RAM
  * and the (mostly poisoned) heap arena directly.  Instrumented app code calls
- * the __asan_*_noabort hooks below on every memory access.
+ * the __asan_*_noabort hooks below on every memory access.  The allocator is
+ * delegated to a pluggable backend (see kasan_alloc_backend_t); this file only
+ * keeps the shadow map and the live-allocation record table.
  *
  * Shadow semantics (ASan): a shadow byte of 0 means the 8-byte granule is
  * accessible, non-zero means poisoned.  Only live-allocation user areas are
@@ -93,165 +95,303 @@ static void kasan_check(uint32_t type, uint32_t addr, uint32_t size) {
 
 /* The noabort hooks are the kernel-address entry points: instrumented code
  * calls them before every memory access. */
-#define KASAN_DEFINE_HOOK(name, type, size)                  \
-    void __asan_##name##size##_noabort(uint32_t addr) {      \
-        kasan_check(type, addr, size);                       \
-    }
+#define KASAN_DEFINE_HOOK(name, type, size)                 \
+void __asan_##name##size##_noabort(uint32_t addr) {         \
+    kasan_check(type, addr, size);                          \
+}
 
+/* Define the noabort hooks for load operations */
 KASAN_DEFINE_HOOK(load, 1, 1)
 KASAN_DEFINE_HOOK(load, 1, 2)
 KASAN_DEFINE_HOOK(load, 1, 4)
 KASAN_DEFINE_HOOK(load, 1, 8)
 KASAN_DEFINE_HOOK(load, 1, 16)
+
+/* Define the noabort hooks for store operations */
 KASAN_DEFINE_HOOK(store, 2, 1)
 KASAN_DEFINE_HOOK(store, 2, 2)
 KASAN_DEFINE_HOOK(store, 2, 4)
 KASAN_DEFINE_HOOK(store, 2, 8)
 KASAN_DEFINE_HOOK(store, 2, 16)
 
-#define KASAN_HDR_MAGIC_ALLOC 0xAB5A11C0u
-#define KASAN_HDR_MAGIC_FREE 0xF2EEA100u
-#define KASAN_MIN_BLOCK 16u
+/* 
+ * kasan does NOT implement an allocator.  It owns only the shadow map and a
+ * live-allocation record table (for double-free / bad-free detection).  The
+ * allocation policy is delegated to a pluggable backend so the same checking
+ * logic works over TLSF, newlib malloc, an RTOS heap, ...  Register one with
+ * kasan_set_alloc_backend() before kasan_heap_init().
+ *
+ * The whole arena is poisoned up front; only the user area of a live
+ * allocation is unpoisoned.  Backend bookkeeping (block headers, free lists,
+ * control blocks) stays poisoned, so instrumented code touching it traps --
+ * while the backend itself (compiled without -fsanitize) reads/writes it
+ * freely.
+ */
+
+volatile uint32_t kasan_live_overflow = 0;
+
+#define KASAN_LIVE_STATE_EMPTY 0u
+#define KASAN_LIVE_STATE_LIVE  1u
+#define KASAN_LIVE_STATE_FREED 2u
 
 typedef struct {
-    uint32_t magic;
+    uint32_t ptr;
     uint32_t size;
-} kasan_hdr_t;
+    uint32_t state;
+} kasan_live_entry_t;
 
-/* Arena backing store.  Default is a static array inside the instrumented
- * region; host tests point KASAN_ARENA_EXT at their own RAM.  It is prepared
- * at kasan_heap_init() time (the external base is not a C constant
- * expression).  Only ever touched by this (non-instrumented) file, so the
- * poisoned-header trick is safe: instrumented code hitting a header, free or
- * unused byte traps. */
-#ifdef KASAN_ARENA_EXT
-#define KASAN_ARENA_PREP()                                      \
-    do {                                                        \
-        kasan_arena = (uint8_t *)(uintptr_t)KASAN_ARENA_EXT;    \
-        kasan_arena_size = KASAN_ARENA_SIZE;                    \
-    } while (0)
-#else
-static uint8_t kasan_arena_storage[KASAN_HEAP_SIZE] __attribute__((aligned(8)));
-#define KASAN_ARENA_PREP()                                      \
-    do {                                                        \
-        kasan_arena = kasan_arena_storage;                      \
-        kasan_arena_size = sizeof(kasan_arena_storage);         \
-    } while (0)
-#endif
+static kasan_live_entry_t kasan_live_table[KASAN_LIVE_MAX];
+static const kasan_alloc_backend_t *kasan_backend = 0;
 
-static uint8_t *kasan_arena = 0;
-static uint32_t kasan_arena_size = 0;
-static kasan_hdr_t *kasan_free_head = 0;
-
-void kasan_heap_init(void) {
-    kasan_hdr_t *header = 0;
-
-    KASAN_ARENA_PREP();
-    header = (kasan_hdr_t *)(void *)kasan_arena;
-    kasan_poison((uint32_t)(uintptr_t)kasan_arena, kasan_arena_size);
-    header->magic = KASAN_HDR_MAGIC_FREE;
-    header->size = kasan_arena_size - sizeof(kasan_hdr_t);
-    *(uint32_t *)(void *)((uint8_t *)header + sizeof(kasan_hdr_t)) = 0;
-    kasan_free_head = header;
-}
-
-static kasan_hdr_t *kasan_free_next(kasan_hdr_t *header) {
-    return (kasan_hdr_t *)(uintptr_t)
-        *(uint32_t *)(void *)((uint8_t *)header + sizeof(kasan_hdr_t));
-}
-
-static void kasan_free_set_next(kasan_hdr_t *header, kasan_hdr_t *next) {
-    *(uint32_t *)(void *)((uint8_t *)header + sizeof(kasan_hdr_t)) =
-        (uint32_t)(uintptr_t)next;
-}
-
-void *kasan_malloc(uint32_t nbytes) {
-    uint32_t user_size = 0;
-    kasan_hdr_t *current = kasan_free_head;
-    kasan_hdr_t *previous = 0;
-
-    /* Refuse requests whose 8-byte rounding would wrap: returning a block far
-     * smaller than asked turns an app bug into a huge silent overflow. */
-    if (nbytes > 0xFFFFFFF7u) {
-        return 0;
+static void kasan_live_reset(void) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        kasan_live_table[i].ptr = 0;
+        kasan_live_table[i].size = 0;
+        kasan_live_table[i].state = KASAN_LIVE_STATE_EMPTY;
     }
-    user_size = (nbytes + 7u) & ~7u;
-    if (user_size < 8u) {
-        user_size = 8u;
+    kasan_live_overflow = 0;
+}
+
+static void kasan_live_add(uint32_t ptr, uint32_t size) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].state != KASAN_LIVE_STATE_LIVE) {
+            kasan_live_table[i].ptr = ptr;
+            kasan_live_table[i].size = size;
+            kasan_live_table[i].state = KASAN_LIVE_STATE_LIVE;
+            return;
+        }
     }
-    while (current) {
-        kasan_hdr_t *next = kasan_free_next(current);
-        uint32_t usable_size = current->size;
+    kasan_live_overflow = 1;
+}
 
-        if (usable_size >= sizeof(kasan_hdr_t) + user_size) {
-            kasan_hdr_t *remainder = (kasan_hdr_t *)(void *)((uint8_t *)current +
-                                                             sizeof(kasan_hdr_t) +
-                                                             user_size);
-            uint32_t remainder_size = usable_size - sizeof(kasan_hdr_t) - user_size;
-
-            if (remainder_size >= KASAN_MIN_BLOCK) {
-                remainder->magic = KASAN_HDR_MAGIC_FREE;
-                remainder->size = remainder_size;
-                kasan_free_set_next(remainder, next);
-                if (previous) {
-                    kasan_free_set_next(previous, remainder);
-                } else {
-                    kasan_free_head = remainder;
-                }
-            } else {
-                user_size = usable_size - sizeof(kasan_hdr_t);
-                if (previous) {
-                    kasan_free_set_next(previous, next);
-                } else {
-                    kasan_free_head = next;
-                }
-            }
-            current->magic = KASAN_HDR_MAGIC_ALLOC;
-            current->size = user_size;
-            kasan_unpoison((uint32_t)(uintptr_t)current + sizeof(kasan_hdr_t),
-                           user_size);
-            return (uint8_t *)current + sizeof(kasan_hdr_t);
+static int kasan_live_find(uint32_t ptr, uint32_t *size, uint32_t *state) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].ptr == ptr &&
+            kasan_live_table[i].state != KASAN_LIVE_STATE_EMPTY) {
+            *size = kasan_live_table[i].size;
+            *state = kasan_live_table[i].state;
+            return 1;
         }
-        if (usable_size >= user_size) {
-            if (previous) {
-                kasan_free_set_next(previous, next);
-            } else {
-                kasan_free_head = next;
-            }
-            current->magic = KASAN_HDR_MAGIC_ALLOC;
-            current->size = usable_size;
-            kasan_unpoison((uint32_t)(uintptr_t)current + sizeof(kasan_hdr_t),
-                           usable_size);
-            return (uint8_t *)current + sizeof(kasan_hdr_t);
-        }
-        previous = current;
-        current = next;
     }
     return 0;
 }
 
-void kasan_free(void *p) {
-    kasan_hdr_t *header = 0;
-    uint32_t total_size = 0;
+static void kasan_live_mark_freed(uint32_t ptr) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].ptr == ptr &&
+            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
+            kasan_live_table[i].state = KASAN_LIVE_STATE_FREED;
+            return;
+        }
+    }
+}
 
-    /* free(NULL) is a no-op, matching the C standard; without this the
-     * header lookup below would dereference 0 - 8 (wrapped) on a bare
-     * metal target and fault. */
+static void kasan_live_update_size(uint32_t ptr, uint32_t size) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].ptr == ptr &&
+            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
+            kasan_live_table[i].size = size;
+            return;
+        }
+    }
+}
+
+void kasan_set_alloc_backend(const kasan_alloc_backend_t *backend) {
+    kasan_backend = backend;
+}
+
+void kasan_heap_init(void) {
+    uint32_t base = 0;
+    uint32_t size = 0;
+
+    kasan_live_reset();
+    if (!kasan_backend || !kasan_backend->init) {
+        return;
+    }
+    kasan_backend->init(&base, &size);
+    if (base != 0 && size != 0) {
+        kasan_poison(base, size);
+    }
+}
+
+static uint32_t kasan_usable_of(void *p, uint32_t requested) {
+    uint32_t size = kasan_backend->usable ? kasan_backend->usable(p) : requested;
+
+    if (size == 0) {
+        size = requested;
+    }
+    return size;
+}
+
+void *kasan_malloc(uint32_t nbytes) {
+    void *p = 0;
+    uint32_t size = 0;
+
+    if (!kasan_backend || !kasan_backend->malloc) {
+        return 0;
+    }
+    p = kasan_backend->malloc(nbytes);
+    if (p == 0) {
+        return 0;
+    }
+    size = kasan_usable_of(p, nbytes);
+    kasan_live_add((uint32_t)(uintptr_t)p, size);
+    kasan_unpoison((uint32_t)(uintptr_t)p, size);
+    return p;
+}
+
+void kasan_free(void *p) {
+    uint32_t size = 0;
+    uint32_t state = 0;
+
     if (p == 0) {
         return;
     }
-    header = (kasan_hdr_t *)(void *)((uint8_t *)p - sizeof(kasan_hdr_t));
-    if (header->magic == KASAN_HDR_MAGIC_FREE) {
+    if (!kasan_backend || !kasan_backend->free) {
+        return;
+    }
+    if (!kasan_live_find((uint32_t)(uintptr_t)p, &size, &state)) {
+        /* Not tracked: normally an invalid pointer (bad-free).  If the
+         * record table overflowed earlier, detection is off; free
+         * best-effort to avoid leaking. */
+        if (kasan_live_overflow) {
+            size = kasan_backend->usable ? kasan_backend->usable(p) : 0;
+            if (size != 0) {
+                kasan_poison((uint32_t)(uintptr_t)p, size);
+            }
+            kasan_backend->free(p);
+        } else {
+            kasan_report(4, (uint32_t)(uintptr_t)p, 0);
+        }
+        return;
+    }
+    if (state == KASAN_LIVE_STATE_FREED) {
         kasan_report(3, (uint32_t)(uintptr_t)p, 0);
         return;
     }
-    if (header->magic != KASAN_HDR_MAGIC_ALLOC) {
-        kasan_report(4, (uint32_t)(uintptr_t)p, 0);
-        return;
+    kasan_live_mark_freed((uint32_t)(uintptr_t)p);
+    kasan_poison((uint32_t)(uintptr_t)p, size);
+    kasan_backend->free(p);
+}
+
+static void kasan_memcpy(uint8_t *dst, const uint8_t *src, uint32_t n) {
+    uint32_t i = 0;
+    for (i = 0; i < n; i++) {
+        dst[i] = src[i];
     }
-    total_size = sizeof(kasan_hdr_t) + header->size;
-    header->magic = KASAN_HDR_MAGIC_FREE;
-    kasan_free_set_next(header, kasan_free_head);
-    kasan_free_head = header;
-    kasan_poison((uint32_t)(uintptr_t)header, total_size);
+}
+
+static void kasan_zero(uint8_t *dst, uint32_t n) {
+    uint32_t i = 0;
+    for (i = 0; i < n; i++) {
+        dst[i] = 0;
+    }
+}
+
+void *kasan_calloc(uint32_t nmemb, uint32_t size) {
+    uint32_t total = 0;
+    void *p = 0;
+
+    if (nmemb != 0 && size > 0xFFFFFFFFu / nmemb) {
+        return 0;
+    }
+    total = nmemb * size;
+    p = kasan_malloc(total);
+    if (p != 0) {
+        kasan_zero((uint8_t *)p, total);
+    }
+    return p;
+}
+
+void *kasan_memalign(uint32_t align, uint32_t bytes) {
+    void *p = 0;
+    uint32_t size = 0;
+
+    if (!kasan_backend || !kasan_backend->memalign) {
+        return 0;
+    }
+    p = kasan_backend->memalign(align, bytes);
+    if (p == 0) {
+        return 0;
+    }
+    size = kasan_usable_of(p, bytes);
+    kasan_live_add((uint32_t)(uintptr_t)p, size);
+    kasan_unpoison((uint32_t)(uintptr_t)p, size);
+    return p;
+}
+
+void *kasan_realloc(void *p, uint32_t size) {
+    uint32_t old_size = 0;
+    uint32_t state = 0;
+    uint32_t new_usable = 0;
+    void *newp = 0;
+
+    if (p == 0) {
+        return kasan_malloc(size);
+    }
+    if (size == 0) {
+        kasan_free(p);
+        return 0;
+    }
+    if (!kasan_backend || !kasan_backend->malloc || !kasan_backend->free) {
+        return 0;
+    }
+    if (!kasan_live_find((uint32_t)(uintptr_t)p, &old_size, &state)) {
+        /* Record table overflowed: forward best-effort without the old size
+         * (the old area cannot be re-poisoned, so UAF via it may slip). */
+        if (kasan_live_overflow && kasan_backend->realloc) {
+            newp = kasan_backend->realloc(p, size);
+            if (newp != 0) {
+                new_usable = kasan_usable_of(newp, size);
+                kasan_live_add((uint32_t)(uintptr_t)newp, new_usable);
+                kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
+            }
+            return newp;
+        }
+        kasan_report(4, (uint32_t)(uintptr_t)p, 0);
+        return 0;
+    }
+    if (state == KASAN_LIVE_STATE_FREED) {
+        kasan_report(3, (uint32_t)(uintptr_t)p, 0);
+        return 0;
+    }
+    /* state == LIVE: old_size is the current user area size. */
+    if (!kasan_backend->realloc) {
+        /* Emulate: allocate a new block, copy the live bytes, free the old. */
+        uint32_t copy = (old_size < size) ? old_size : size;
+
+        newp = kasan_malloc(size);
+        if (newp != 0) {
+            kasan_memcpy((uint8_t *)newp, (const uint8_t *)p, copy);
+            kasan_free(p);
+        }
+        return newp;
+    }
+    newp = kasan_backend->realloc(p, size);
+    if (newp == 0) {
+        return 0;
+    }
+    new_usable = kasan_usable_of(newp, size);
+    if (newp == p) {
+        /* In place: re-poison a shrunk tail, then unpoison the new area. */
+        if (new_usable < old_size) {
+            kasan_poison((uint32_t)(uintptr_t)p + new_usable,
+                         old_size - new_usable);
+        }
+        kasan_unpoison((uint32_t)(uintptr_t)p, new_usable);
+        kasan_live_update_size((uint32_t)(uintptr_t)p, new_usable);
+    } else {
+        /* Moved: re-poison the old block (UAF via the old pointer is caught)
+         * and register the new one. */
+        kasan_poison((uint32_t)(uintptr_t)p, old_size);
+        kasan_live_mark_freed((uint32_t)(uintptr_t)p);
+        kasan_live_add((uint32_t)(uintptr_t)newp, new_usable);
+        kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
+    }
+    return newp;
 }

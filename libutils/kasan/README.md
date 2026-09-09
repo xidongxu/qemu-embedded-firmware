@@ -3,8 +3,9 @@
 **Cortex-M 最小 KASan（内存安全检测）库** —— 堆越界 / 下溢 / use-after-free /
 double-free 即时捕获。配合 GCC `-fsanitize=kernel-address` 使用：被测代码的每次
 内存访问都被编译器转成对 `__asan_{load,store}{1,2,4,8,16}_noabort(addr)` 的调用，
-本库拥有影子内存 + 堆分配器，实现**真 KASan 语义**。自包含、零依赖（无 CMSIS /
-RTOS / printf），GCC/armclang 皆可。
+本库拥有影子内存 + **可插拔的分配器后端**（默认对接项目里已在用的 TLSF），实现
+**真 KASan 语义**。核心 `kasan.c` 零依赖（无 CMSIS / RTOS / printf）；TLSF 后端
+另接 `libmem/tlsf`。GCC/armclang 皆可。
 
 ## 原理（为什么比 canary 强）
 
@@ -27,19 +28,45 @@ target_compile_options(<app> PRIVATE -fsanitize=kernel-address)
 target_link_libraries(<app> PRIVATE kasan)
 ```
 
-2. 启动时初始化：
+2. 启动时初始化（先注册分配器后端，默认用 TLSF）：
 
 ```c
-kasan_init();        /* 清影子 */
-kasan_heap_init();   /* 建堆 arena */
+kasan_set_alloc_backend(kasan_tlsf_backend());  /* 选择分配器后端 */
+kasan_init();                                    /* 清影子 */
+kasan_heap_init();                               /* 建堆 arena */
 ```
 
-3. 之后用 `kasan_malloc` / `kasan_free` 分配（块头 / 邻居由库管理），越界 /
-   UAF / double-free 自动触发报告（写 `kasan_report_*` marker 后 trap；QEMU
-   下用 gdb 读，可换成 UART/tracer sink）。
+3. 之后用 `kasan_malloc` / `kasan_free` / `kasan_calloc` / `kasan_realloc` /
+   `kasan_memalign` 分配（块头 / 空闲区由库维持 poison），越界 / UAF /
+   double-free 自动触发报告（写 `kasan_report_*` marker 后 trap；QEMU 下用
+   gdb 读，可换成 UART/tracer sink）。`realloc` 迁移后旧指针会被重新 poison，
+   经旧指针的 UAF 同样被拦。
 
 > 本库**必须无 sanitize 编译**（`kasan.c` 需直碰 shadow / poison 区）；
 > 只有"被测代码"插桩。
+
+## 分配器后端
+
+kasan **不实现内存分配算法**：它只维护影子内存 + 一张"存活分配记录表"（用于
+double-free / bad-free 探测），真正的分配策略委托给一个后端（
+`kasan_alloc_backend_t`）。这样内存管理沿用项目里久经验证的算法，并且可以在
+不同系统上插不同后端（TLSF / newlib `malloc` / RTOS 堆 / ...）：
+
+```c
+typedef struct kasan_alloc_backend {
+    const char *name;
+    void (*init)(uint32_t *base, uint32_t *size);   /* 建 arena，回报范围 */
+    void *(*malloc)(uint32_t bytes);
+    uint32_t (*usable)(void *p);                    /* 用户区大小，可为 NULL */
+    void (*free)(void *p);
+    void *(*realloc)(void *p, uint32_t bytes);      /* 可为 NULL（回退 malloc+copy+free） */
+    void *(*memalign)(uint32_t align, uint32_t bytes); /* 可为 NULL（kasan_memalign 返 NULL） */
+} kasan_alloc_backend_t;
+```
+
+- 内置 TLSF 后端：`kasan_tlsf_backend()`（`kasan_alloc_tlsf.c`，链接 `libmem/tlsf`）。
+- 自定义后端：实现上述 4 个函数后 `kasan_set_alloc_backend(&my_backend)`。
+- 后端须**无 sanitize 编译**（它直碰被 poison 的 arena 元数据，不看 shadow）。
 
 ## 内存布局（可 -D 覆盖，默认 = mps2-an505 QEMU 验证值）
 
@@ -48,7 +75,8 @@ kasan_heap_init();   /* 建堆 arena */
 | `KASAN_REGION_BASE` | `0x80000000` | 被测区基址（真实 RAM） |
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
-| `KASAN_HEAP_SIZE` | 64 KB | 堆 arena 大小（须落在除影子外的可用区内） |
+| `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
+| `KASAN_LIVE_MAX` | 64 | 存活分配记录表容量（同时存活的分配数上限；满则关闭 bad-free 探测） |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
@@ -56,11 +84,13 @@ inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（
 ## 目录
 
 ```
-kasan.h / kasan.c   库源码（shadow + 分配器 + noabort 钩子）
+kasan.h             配置宏 + 后端接口 + API 声明
+kasan.c             库核心（shadow + 存活记录表 + noabort 钩子）
+kasan_alloc_tlsf.c  TLSF 分配器后端（对接 libmem/tlsf）
 CMakeLists.txt      库构建（install/export + find_package）
 kasanConfig.cmake.in
 tests/
-  host/    host 单测（RAM 假 region，#include kasan.c）
+  host/    host 单测（RAM 假 region，#include kasan.c + 后端 + tlsf.c）
   qemu/    QEMU 固件测试（ARM + mps2-an505 板）
 ```
 
@@ -84,8 +114,9 @@ cmake --build build-host && ctest --test-dir build-host
 ### QEMU 固件（ARM，板绑定 mps2-an505）
 
 `tests/qemu` 编一个 `-fsanitize=kernel-address` 插桩裸机镜像，`KASAN_TEST_CASE`
-注入故障（1=堆越界 / 2=UAF / 3=double-free / 4=堆前越界 underflow），报告落
-`kasan_*` marker 供 gdb 读取判 PASS。
+注入故障（1=堆越界 / 2=UAF / 3=double-free / 4=堆前越界 underflow /
+5=realloc 迁移后旧指针 UAF / 6=realloc 缩容写入释放尾巴），报告落 `kasan_*`
+marker 供 gdb 读取判 PASS。
 
 ```bash
 cmake -B build -S . -DBOARD=mps2-an505 -DKASAN_BUILD_TESTS=ON \

@@ -13,5 +13,13 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 add_executable(test_kasan test_kasan.c)
-target_include_directories(test_kasan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+target_include_directories(test_kasan PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../..          # kasan.h (via kasan.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../libmem/tlsf  # tlsf.h (via backend)
+)
+# The library models 32-bit addresses (uint32_t); on 64-bit Windows pin the
+# image base below 4 GB so the pointer casts do not truncate (Linux: -m32).
+if(WIN32)
+    target_link_options(test_kasan PRIVATE "-Wl,--image-base=0x1000000")
+endif()
 add_test(NAME kasan_host COMMAND test_kasan)

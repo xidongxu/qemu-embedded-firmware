@@ -31,6 +31,19 @@ target_include_directories(kasan PUBLIC
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/kasan>"
 )
 
+# TLSF allocator backend: adapts libmem/tlsf to kasan_alloc_backend_t.  Built
+# only when the tlsf target exists (in-tree builds add libmem before libutils).
+# A host-only configure builds kasan.c alone; the host unit tests #include the
+# backend and tlsf.c directly.
+option(KASAN_TLSF_BACKEND "Build the TLSF allocator backend" ON)
+if(KASAN_TLSF_BACKEND AND TARGET tlsf)
+    set(KASAN_HAS_TLSF 1)
+    target_sources(kasan PRIVATE kasan_alloc_tlsf.c)
+    target_link_libraries(kasan PRIVATE tlsf)
+else()
+    message(STATUS "kasan: TLSF backend disabled (tlsf target unavailable)")
+endif()
+
 # kasan.c uses C99 constructs; enforce it (only for the C TU).
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|ARMClang")
     target_compile_options(kasan PRIVATE "$<$<COMPILE_LANGUAGE:C>:-std=c99>")
@@ -55,27 +68,31 @@ if(KASAN_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-# Install / export (find_package(kasan) consumers).
-include(CMakePackageConfigHelpers)
+# Install / export (find_package(kasan) consumers).  Only the self-contained
+# core (without the TLSF backend) is exportable: the TLSF adapter links the
+# in-tree tlsf target, which is not installed by this package.
+if(NOT KASAN_HAS_TLSF)
+    include(CMakePackageConfigHelpers)
 
-install(TARGETS kasan EXPORT kasanTargets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES kasan.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/kasan)
+    install(TARGETS kasan EXPORT kasanTargets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES kasan.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/kasan)
 
-install(EXPORT kasanTargets
-        FILE kasanTargets.cmake
-        NAMESPACE kasan::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
+    install(EXPORT kasanTargets
+            FILE kasanTargets.cmake
+            NAMESPACE kasan::
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
 
-write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/kasanConfigVersion.cmake"
-        VERSION 0.1.0
-        COMPATIBILITY SameMajorVersion)
-configure_package_config_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/kasanConfig.cmake.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/kasanConfig.cmake"
-        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
-install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/kasanConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/kasanConfigVersion.cmake"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
+    write_basic_package_version_file(
+            "${CMAKE_CURRENT_BINARY_DIR}/kasanConfigVersion.cmake"
+            VERSION 0.1.0
+            COMPATIBILITY SameMajorVersion)
+    configure_package_config_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/kasanConfig.cmake.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/kasanConfig.cmake"
+            INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
+    install(FILES
+            "${CMAKE_CURRENT_BINARY_DIR}/kasanConfig.cmake"
+            "${CMAKE_CURRENT_BINARY_DIR}/kasanConfigVersion.cmake"
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kasan)
+endif()

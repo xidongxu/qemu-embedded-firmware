@@ -63,5 +63,12 @@ SECTIONS
   } > RAM
 
   . = ALIGN(8);
+
+  /* libnosys _sbrk references `end`; it is only pulled in by tlsf's printf
+   * error paths and never called here.  Define it after .bss to satisfy the
+   * linker. */
+  end = .;
+  _end = .;
+
   _estack = ORIGIN(RAM) + LENGTH(RAM);
 }
