@@ -2,6 +2,9 @@
 
 > 记录日期：2026-09-09。来源：本库与 Linux KASan（generic）+ slab 的逐项对比。
 > 用法：按优先级逐项推进，每完成一项打勾并记录 commit。
+>
+> 进度（2026-09-11）：P0#1/#2、P1#3/#4/#5、P2#6 全部 ✅ 完成；剩余 P2#7 多区域覆盖、
+> P2#8 工程项。测试现状：host reports=14 全过；QEMU case1-12 全过。
 
 ## 一、正确性缺陷（P0，先修）
 
@@ -68,13 +71,17 @@
     QEMU case12（独立函数 `buf[16]` 栈越界 shadow=0xF3 cause=1），case1-11 全回归过。
 
 ### 7. 多区域覆盖
-- 现状只覆盖 `KASAN_REGION` 一个区，区外（栈/全局/外设）`shadow_of` 返 0 直接放行。
+- 现状只覆盖 `KASAN_REGION` 一个区（栈/全局已在区内，P2#6 已覆盖）；真正的区外
+  是外设寄存器、其他 RAM bank、flash 映射等，`shadow_of` 返 0 直接放行。
+- 若要做：`kasan_shadow_of` 支持多段 [region_base, size] 列表（可配 2-4 段），
+  每段各映射一段 shadow；外设访问仍应放行（MMIO 不该被 shadow 检查拦）。
 
 ### 8. 其他工程项
-- 记录表压 8 字节/条（state 塞进 ptr 低 3 位，4096 条 48KB→32KB）。
-- 报告 sink 接 UART/tracer（现在只有 gdb marker）。
+- 记录表压缩：现 20 字节/条（含 alloc/free pc）= 80KB；state 塞 ptr 低 3 位可 20B→16B，
+  若去掉 alloc/free pc 可再压（与 P1#5 调用点功能有张力，按需取舍）。
+- 报告 sink 接 UART/tracer（现在只有 gdb marker + 死循环）。
 - 无锁：记录表/shadow 更新在多任务/中断下有竞态（需要时再加临界区）。
-- tests 矩阵脚本化（一次跑 QEMU case 1–6 判 PASS）+ host ctest 常规化。
+- tests 矩阵脚本化（一次跑 QEMU case 1–12 判 PASS）+ host ctest 常规化（现在手动逐 case）。
 
 ## 已对齐（不需要做）
 - 编译器插桩模型（每次访存查 shadow）、shadow 映射（addr>>3 + base）、堆越界/UAF/double-free 即时捕获、可插拔分配器后端。
