@@ -54,10 +54,14 @@
   - 验证：host reports=13（test_global_redzone：构造描述符 → register 毒化 → store4 越界
     cause=1 shadow=0xF8 → unregister 反毒化）；QEMU case11（`g_arr[10]` 全局越界 store
     shadow=0xF8 cause=1），case1-10 全回归过。
-- **栈红区 ⛔ 仍不可行**：`--param asan-stack=1` 在 kernel-address 模式**不生效**（栈访问仍
-  完全不插桩，实测 `a[0]`/`a[4]`/`a[i]` 全是普通 `str`，零 `__asan` 符号）。栈红区需换普通
-  `-fsanitize=address` 路线（内联 shadow 硬编码 [0x20000000,0x40000000) + an505 TZ 板写
-  shadow 曾卡 BusFault），暂不做。
+- **栈红区 ⛔ 自动检测不可行（瓶颈是 redzone 毒化，不是检查）**：
+  - 栈越界访问**会插桩** `__asan_storeN_noabort`（前提：访问未被优化掉——volatile 或真实被使用
+    的变量会保留；纯死存储 `buf[16]=x` 后不再读、函数即返回，会被 dead-store elimination
+    消除，就看不到插桩）。之前误判"栈完全不插桩"正是用了非 volatile 死存储用例。
+  - 但 kernel-address **不毒化栈 redzone**：`--param asan-stack=1` 无效（不生成
+    `__asan_stack_malloc` / 栈 prologue 毒化），越界检查命中 shadow=0 → 放行。
+  - **手动栈红区可行**：手动 `kasan_poison` 栈帧 redzone 后，越界访问（被插桩的）即可捕获；
+    自动栈红区需换普通 `-fsanitize=address` 路线（内联 shadow 硬编码 + TZ BusFault），暂不做。
 
 ### 7. 多区域覆盖
 - 现状只覆盖 `KASAN_REGION` 一个区，区外（栈/全局/外设）`shadow_of` 返 0 直接放行。
