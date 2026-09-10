@@ -11,10 +11,11 @@
 - 验证：host 加 `test_partial_granule`（合成 20 字节区间 + 直调 noabort 钩子）；QEMU 加 case7（`malloc(20)` 后写 `a[20]`）。
 - 完成：host reports=7 全过；QEMU case7 shadow=0x04 捕获、case1/case6 回归全过。顺带修复了 realloc 缩容头部 4 字节的误 poison（旧实现会把新 user 区尾部 4 字节误标 poison 造成假阳性）。
 
-### 2. kasan_report_pc 不准
+### 2. kasan_report_pc 不准 ✅ 已完成
 - 现象：`kasan_report` 里取 `__builtin_return_address(0)`，拿到的是 `kasan_check` 调用 report 之后的地址（比真实访问点深 2 层），且 `-O2` 下可能被内联。
 - 修法：在 noabort 钩子层取 `__builtin_return_address(0)`（即真实访问点）逐级传入 `kasan_check` → `kasan_report`。
 - 验证：QEMU 读 `kasan_report_pc`，应落在 main 里触发访问的那条插桩指令处（而非 `kasan_check` 内部）。
+- 完成：`kasan_report`/`kasan_check` 加 `pc` 参数，钩子宏捕获调用点；double-free/bad-free 报告的 pc 取 `kasan_free`/`kasan_realloc` 的调用者。QEMU case1 实测 `kasan_report_pc=0x100000b9`，gdb `info symbol` 解析为 `main + 73`；host 加 `kasan_report_pc != 0` 断言。
 
 ## 二、能力差距（P1，高价值）
 

@@ -82,6 +82,7 @@ static void test_partial_granule(void) {
     __asan_store1_noabort(base + 20u);
     assert(kasan_reports == before + 1u);
     assert(kasan_report_type == 2u);
+    assert(kasan_report_pc != 0);   /* faulting PC captured at the hook level */
 
     /* A 4-byte load straddling the boundary also faults. */
     before = kasan_reports;
