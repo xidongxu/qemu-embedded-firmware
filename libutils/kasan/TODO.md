@@ -24,9 +24,12 @@
 - 目标：引入语义值（区分 freed / slab redzone / bad-free 等，参考 Linux 的 0xFA/0xFB/0xF8/0xFC 等），报告时翻译成人类可读描述，并 dump 故障地址周围的 shadow 状态。
 - 完成：`0xFA`=freed（UAF）、`0xFB`=redzone（header/free 块/未用 arena）；`kasan_poison` 拆出 `kasan_poison_as(addr,len,value)`，heap_init/free/realloc 分别用 redzone/freed。新增 `kasan_shadow_name()`、`kasan_shadow_dump(addr,out,count)`、marker `kasan_report_cause`（0 未知 1 redzone 2 freed 3 partial 4 通用 poison）+ `kasan_report_shadow_dump[16]`。验证：host reports=8；QEMU case1 shadow=0xFB cause=1、case2 shadow=0xFA cause=2。
 
-### 4. 仪器化 memcpy/memset
+### 4. 仪器化 memcpy/memset ✅ 已完成
 - 现状：bulk copy 不查 shadow，对 poison 区的大块拷贝/跨区拷贝漏报。
-- 修法：`-Wl,--wrap=memcpy` / `__wrap_memset`（或 hook），整段做 `kasan_check_range`。
+- 修法：`-Wl,--wrap=memcpy,--wrap=memset,--wrap=memmove` + 库内 `__wrap_*` 拦截器，整段做 `kasan_check`；TLSF 后端 realloc 改用裸循环拷贝（避免 `tlsf_realloc` 内部 libc memcpy 被 wrap 造成假阳性）。
+- 关键坑（必读）：`-O2` 会把拦截器里的填字节/拷贝循环优化回 `memcpy/memset` 调用，又被 `--wrap` 导回 `__wrap_*` 自身 → **无限递归 → 栈下溢 → BusFault**。修法：kasan 库目标加 `-fno-builtin -fno-tree-loop-distribute-patterns`（CMakeLists 已加并注释）。
+- 顺带修复 `kasan_report` 的 shadow/cause 取自"访问起始地址"而非"实际越界字节"的 bug（新增 `fault_addr` 参数，shadow/cause/dump 按越界字节计算；`kasan_report_addr` 仍保留访问地址语义）。
+- 完成：host reports=10 全过（新增 `test_wrap_copy` 断言 cause=1）；QEMU case8（memcpy 读越界 shadow=0xFB cause=1）、case9（memset 写越界 shadow=0xFB cause=1）捕获，case1–7 全回归过。
 
 ### 5. quarantine（或 alloc/free 调用栈）
 - 现状：UAF 只在"内存被复用前"可检测；TLSF 复用旧块后，经旧指针的访问不再报。

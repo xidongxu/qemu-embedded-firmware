@@ -56,7 +56,26 @@ static void kasan_tlsf_free(void *p) {
 }
 
 static void *kasan_tlsf_realloc(void *p, uint32_t bytes) {
-    return tlsf_realloc(kasan_tlsf_handle, p, (size_t)bytes);
+    uint32_t old = (uint32_t)tlsf_block_size(p);
+    uint32_t copy = (old < bytes) ? old : bytes;
+    void *np = tlsf_memalign(kasan_tlsf_handle, 8u, (size_t)bytes);
+    uint8_t *d = 0;
+    const uint8_t *s = (const uint8_t *)p;
+    uint32_t i = 0;
+
+    if (np == 0) {
+        return 0;
+    }
+    /* Raw copy instead of tlsf_realloc(): the freshly allocated block is
+     * still poisoned in the shadow map, and tlsf_realloc()'s internal libc
+     * memcpy would be routed through __wrap_memcpy (false positive).  This
+     * file is not instrumented, so the raw loop does no shadow checks. */
+    d = (uint8_t *)np;
+    for (i = 0; i < copy; i++) {
+        d[i] = s[i];
+    }
+    tlsf_free(kasan_tlsf_handle, p);
+    return np;
 }
 
 static void *kasan_tlsf_memalign(uint32_t align, uint32_t bytes) {

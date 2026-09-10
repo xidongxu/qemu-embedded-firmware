@@ -11,12 +11,15 @@
  *                         header -> caught on the spot
  *   5 = realloc move    : use-after-free via the old pointer after
  *                         kasan_realloc() relocated the block
- *   6 = realloc shrink  : write into the tail released by kasan_realloc()
+ *   6 = realloc shrink  : write past the shrunk block (backend moves it)
  *   7 = partial granule : 20-byte allocation; a[20] hits the poisoned rest
  *                         of the tail granule (4-byte aligned block size)
+ *   8 = memcpy overflow : memcpy() reads past a block into the header
+ *   9 = memset overflow : memset() writes past a block into the header
  */
 #include "kasan.h"
 #include <stdint.h>
+#include <string.h>
 
 volatile uint32_t g_sink;
 
@@ -77,8 +80,8 @@ int main(void) {
     {
         uint8_t *a = (uint8_t *)kasan_malloc(64);
         a[0] = 0x11;
-        a = (uint8_t *)kasan_realloc(a, 32);    /* shrink in place */
-        a[32] = 0x22;                       /* into released tail -> trap */
+        a = (uint8_t *)kasan_realloc(a, 32);    /* shrink (backend moves) */
+        a[32] = 0x22;                       /* past shrunk block -> trap */
         g_sink = a[0];
     }
 #elif KHEAP_CASE == 7
@@ -86,6 +89,26 @@ int main(void) {
         uint8_t *a = (uint8_t *)kasan_malloc(20);
         a[0] = 0x11;
         a[20] = 0xAA;                       /* tail partial granule -> trap */
+        g_sink = a[0];
+    }
+#elif KHEAP_CASE == 8
+    {
+        /* Variable size forces an out-of-line memcpy -> __wrap_memcpy; the
+         * source runs past a (16 bytes) into the neighbour's header. */
+        uint8_t *a = (uint8_t *)kasan_malloc(16);
+        uint8_t *b = (uint8_t *)kasan_malloc(64);
+        volatile uint32_t n = 32;
+        a[0] = 0x11;
+        b[0] = 0x22;
+        memcpy(b, a, n);                    /* reads a[16..31] -> trap */
+        g_sink = a[0] + b[0];
+    }
+#elif KHEAP_CASE == 9
+    {
+        uint8_t *a = (uint8_t *)kasan_malloc(16);
+        volatile uint32_t n = 32;
+        a[0] = 0x11;
+        memset(a, 0, n);                    /* writes a[16..31] -> trap */
         g_sink = a[0];
     }
 #endif

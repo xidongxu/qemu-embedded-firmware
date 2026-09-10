@@ -55,6 +55,27 @@ kasan_heap_init();                               /* 建堆 arena */
 > 本库**必须无 sanitize 编译**（`kasan.c` 需直碰 shadow / poison 区）；
 > 只有"被测代码"插桩。
 
+### 大块拷贝拦截（可选，推荐）
+
+`-fsanitize=kernel-address` 不插桩 `memcpy/memset/memmove` 本身，变量长度的大块
+拷贝会绕过 shadow 检查。链接时加 `--wrap`，让库内的 `__wrap_*` 拦截器先对整段
+做 `kasan_check` 再执行拷贝：
+
+```cmake
+target_link_options(<app> PRIVATE
+    -Wl,--wrap=memcpy -Wl,--wrap=memset -Wl,--wrap=memmove)
+```
+
+注意两点：
+
+- 拦截器靠**裸循环**做实际拷贝，kasan 库必须**禁掉 GCC 的"循环 → builtin"优化**
+  （库 `CMakeLists.txt` 已加 `-fno-builtin -fno-tree-loop-distribute-patterns`），
+  否则 `-O2` 会把循环改回 `memcpy/memset` 调用、又被 `--wrap` 导回 `__wrap_*`
+  自身造成无限递归（栈下溢 → BusFault）。
+- TLSF 后端 `realloc` 已改用裸循环拷贝（`tlsf_realloc` 内部的 libc memcpy 会被
+  `--wrap` 拦截并对"仍处于 poison 的新块"误报），并且**总是迁移到新块**（不原地
+  扩缩）；旧指针会被重新 poison，经旧指针的 UAF 仍被拦。
+
 ## 分配器后端
 
 kasan **不实现内存分配算法**：它只维护影子内存 + 一张"存活分配记录表"（用于
@@ -126,7 +147,8 @@ cmake --build build-host && ctest --test-dir build-host
 
 `tests/qemu` 编一个 `-fsanitize=kernel-address` 插桩裸机镜像，`KASAN_TEST_CASE`
 注入故障（1=堆越界 / 2=UAF / 3=double-free / 4=堆前越界 underflow /
-5=realloc 迁移后旧指针 UAF / 6=realloc 缩容写入释放尾巴），报告落 `kasan_*`
+5=realloc 迁移后旧指针 UAF / 6=realloc 缩容写入释放尾巴 / 7=partial 尾部
+越界 / 8=memcpy 读越界 / 9=memset 写越界），报告落 `kasan_*`
 marker 供 gdb 读取判 PASS。
 
 ```bash

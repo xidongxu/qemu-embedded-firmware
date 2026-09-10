@@ -340,6 +340,34 @@ static void test_report_semantics(void) {
     assert(kasan_report_shadow == KASAN_POISON_FREED);
 }
 
+static void test_wrap_copy(void) {
+    uint8_t *a = 0;
+    uint32_t before = 0;
+
+    kasan_heap_init();
+    a = (uint8_t *)kasan_malloc(16u);
+    assert(a != 0);
+
+    /* memcpy reading past the allocation (src overflow) -> redzone fault. */
+    before = kasan_reports;
+    __wrap_memcpy(a, a, 32u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 1u);
+
+    /* memset writing past the allocation -> redzone fault. */
+    before = kasan_reports;
+    __wrap_memset(a, 0, 32u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 1u);
+
+    /* In-bounds copies pass. */
+    before = kasan_reports;
+    __wrap_memcpy(a, a, 8u);
+    __wrap_memmove(a, a, 8u);
+    __wrap_memset(a, 0, 8u);
+    assert(kasan_reports == before);
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -355,6 +383,7 @@ int main(void) {
     test_memalign();
     test_realloc();
     test_report_semantics();
+    test_wrap_copy();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

@@ -54,8 +54,17 @@ endif()
 # kasan.c is deliberately compiled WITHOUT -fsanitize=kernel-address -- see
 # the header comment.  The hooks must be able to read shadow and walk the
 # poisoned arena without re-entering a check on their own accesses.
+#
+# -fno-builtin + -fno-tree-loop-distribute-patterns stop GCC -O2 from
+# rewriting the manual byte-fill / byte-copy loops (kasan_zero, kasan_memcpy,
+# kasan_live_reset, kasan_init, the __wrap_* interceptors, ...) into calls to
+# memcpy/memset.  With -Wl,--wrap=memcpy/memset those compiler-generated
+# calls would loop back into __wrap_memcpy/__wrap_memset and recurse forever
+# (stack underflow -> BusFault).
 target_compile_options(kasan PRIVATE
-    "$<$<COMPILE_LANGUAGE:C>:-fno-sanitize=all>")
+    "$<$<COMPILE_LANGUAGE:C>:-fno-sanitize=all>"
+    "$<$<COMPILE_LANGUAGE:C>:-fno-builtin>"
+    "$<$<COMPILE_LANGUAGE:C>:-fno-tree-loop-distribute-patterns>")
 
 # Export a modern alias target: consumers can link kasan::kasan.
 add_library(kasan::kasan ALIAS kasan)

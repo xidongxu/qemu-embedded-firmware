@@ -105,8 +105,8 @@ void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count) {
 }
 
 static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
-                         uint32_t pc) {
-    uint8_t *shadow = kasan_shadow_of(addr);
+                         uint32_t pc, uint32_t fault_addr) {
+    uint8_t *shadow = kasan_shadow_of(fault_addr);
 
     kasan_reports++;
     kasan_report_type = type;
@@ -115,7 +115,7 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
     kasan_report_shadow = shadow ? *shadow : 0;
     kasan_report_pc = pc;
     kasan_report_cause = kasan_cause_of(shadow ? *shadow : 0);
-    kasan_shadow_dump(addr, (uint8_t *)kasan_report_shadow_dump,
+    kasan_shadow_dump(fault_addr, (uint8_t *)kasan_report_shadow_dump,
                       KASAN_SHADOW_DUMP);
 #ifndef KASAN_TEST_RETURNS
     for (;;) {
@@ -196,8 +196,8 @@ void kasan_unpoison(uint32_t addr, uint32_t len) {
     }
 }
 
-static void kasan_check(uint32_t type, uint32_t addr, uint32_t size,
-                        uint32_t pc) {
+static int kasan_check(uint32_t type, uint32_t addr, uint32_t size,
+                       uint32_t pc) {
     uint32_t end_addr = addr + size;
     uint32_t scan = addr;
 
@@ -221,21 +221,24 @@ static void kasan_check(uint32_t type, uint32_t addr, uint32_t size,
         if (value < 8u) {
             /* 1..7: first `value` bytes addressable, rest poisoned. */
             if (acc_end - base > value) {
-                kasan_report(type, addr, size, pc);
-                return;
+                uint32_t fault = (acc_start > base + value) ? acc_start
+                                                            : (base + value);
+                kasan_report(type, addr, size, pc, fault);
+                return 1;
             }
         } else if (value >= 0xf1u && value <= 0xf7u) {
             /* 0xf1..0xf7: first (value & 7) bytes poisoned, rest addressable. */
             if (acc_start - base < (uint32_t)(value & 7u)) {
-                kasan_report(type, addr, size, pc);
-                return;
+                kasan_report(type, addr, size, pc, acc_start);
+                return 1;
             }
         } else {
             /* 0x80..0xf0 / 0xf8..0xff: fully poisoned. */
-            kasan_report(type, addr, size, pc);
-            return;
+            kasan_report(type, addr, size, pc, acc_start);
+            return 1;
         }
     }
+    return 0;
 }
 
 /* The noabort hooks are the kernel-address entry points: instrumented code
@@ -414,13 +417,15 @@ void kasan_free(void *p) {
             kasan_backend->free(p);
         } else {
             kasan_report(4, (uint32_t)(uintptr_t)p, 0,
-                         (uint32_t)(uintptr_t)__builtin_return_address(0));
+                         (uint32_t)(uintptr_t)__builtin_return_address(0),
+                         (uint32_t)(uintptr_t)p);
         }
         return;
     }
     if (state == KASAN_LIVE_STATE_FREED) {
         kasan_report(3, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0));
+                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+                     (uint32_t)(uintptr_t)p);
         return;
     }
     kasan_live_mark_freed((uint32_t)(uintptr_t)p);
@@ -440,6 +445,63 @@ static void kasan_zero(uint8_t *dst, uint32_t n) {
     for (i = 0; i < n; i++) {
         dst[i] = 0;
     }
+}
+
+/* ---- memcpy / memmove / memset interceptors ----------------------------
+ * Link with -Wl,--wrap=memcpy,--wrap=memset,--wrap=memmove so out-of-line
+ * (variable-size) memcpy/memset/memmove calls from instrumented code are
+ * range-checked against the shadow map before the copy.  The copy itself is
+ * a raw loop here (this file is not instrumented).  Sizes are uint32_t
+ * (Cortex-M: size_t == uint32_t). */
+void *__wrap_memcpy(void *dst, const void *src, uint32_t n) {
+    uint32_t pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
+
+    if (kasan_check(1, (uint32_t)(uintptr_t)src, n, pc)) {
+        return dst;
+    }
+    if (kasan_check(2, (uint32_t)(uintptr_t)dst, n, pc)) {
+        return dst;
+    }
+    kasan_memcpy((uint8_t *)dst, (const uint8_t *)src, n);
+    return dst;
+}
+
+void *__wrap_memmove(void *dst, const void *src, uint32_t n) {
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    uint32_t pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    uint32_t i = 0;
+
+    if (kasan_check(1, (uint32_t)(uintptr_t)src, n, pc)) {
+        return dst;
+    }
+    if (kasan_check(2, (uint32_t)(uintptr_t)dst, n, pc)) {
+        return dst;
+    }
+    if (d < s) {
+        for (i = 0; i < n; i++) {
+            d[i] = s[i];
+        }
+    } else {
+        for (i = n; i > 0; i--) {
+            d[i - 1u] = s[i - 1u];
+        }
+    }
+    return dst;
+}
+
+void *__wrap_memset(void *ptr, int value, uint32_t n) {
+    uint8_t *d = (uint8_t *)ptr;
+    uint32_t pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    uint32_t i = 0;
+
+    if (kasan_check(2, (uint32_t)(uintptr_t)ptr, n, pc)) {
+        return ptr;
+    }
+    for (i = 0; i < n; i++) {
+        d[i] = (uint8_t)value;
+    }
+    return ptr;
 }
 
 void *kasan_calloc(uint32_t nmemb, uint32_t size) {
@@ -503,12 +565,14 @@ void *kasan_realloc(void *p, uint32_t size) {
             return newp;
         }
         kasan_report(4, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0));
+                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+                     (uint32_t)(uintptr_t)p);
         return 0;
     }
     if (state == KASAN_LIVE_STATE_FREED) {
         kasan_report(3, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0));
+                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+                     (uint32_t)(uintptr_t)p);
         return 0;
     }
     /* state == LIVE: old_size is the current user area size. */
