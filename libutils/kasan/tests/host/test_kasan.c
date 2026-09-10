@@ -99,8 +99,8 @@ static void test_heap_layout(void) {
     uint32_t up = 0;
 
     kasan_heap_init();
-    /* The TLSF control block at the arena start stays poisoned. */
-    assert(sh_at(KASAN_ARENA_EXT) != 0);
+    /* The TLSF control block at the arena start is redzone. */
+    assert(sh_at(KASAN_ARENA_EXT) == 0xFB);
 
     p = (uint8_t *)kasan_malloc(32u);
     assert(p != 0);
@@ -108,9 +108,10 @@ static void test_heap_layout(void) {
     assert((up & 7u) == 0u);            /* 8-aligned, matches shadow granule */
 
     assert(up >= KASAN_REGION_BASE);
-    assert(sh_at(up) == 0);             /* user area unpoisoned  */
+    assert(sh_at(up - 8u) == 0xFB);     /* header redzone          */
+    assert(sh_at(up) == 0);             /* user area unpoisoned    */
     assert(sh_at(up + 24u) == 0);
-    assert(sh_at(up + 32u) != 0);       /* next header poisoned  */
+    assert(sh_at(up + 32u) == 0xFB);    /* next header redzone     */
 }
 
 static void test_heap_split_and_reuse(void) {
@@ -141,8 +142,8 @@ static void test_free_poisons(void) {
     up = (uint32_t)(uintptr_t)a;
 
     kasan_free(a);
-    assert(sh_at(up) != 0);             /* use-after-free would trap */
-    assert(sh_at(up + 24u) != 0);
+    assert(sh_at(up) == 0xFA);          /* freed -> use-after-free would trap */
+    assert(sh_at(up + 24u) == 0xFA);
 }
 
 static void test_double_free_reports(void) {
@@ -308,6 +309,37 @@ static void test_realloc(void) {
     assert(kasan_report_type == 4u);
 }
 
+static void test_report_semantics(void) {
+    uint8_t dump[KASAN_SHADOW_DUMP];
+    uint8_t *p = 0;
+    uint32_t up = 0;
+    uint32_t before = 0;
+
+    /* Shadow byte -> human-readable name. */
+    assert(strcmp(kasan_shadow_name(0x00), "addressable") == 0);
+    assert(strcmp(kasan_shadow_name(KASAN_POISON_FREED), "freed") == 0);
+    assert(strcmp(kasan_shadow_name(KASAN_POISON_REDZONE), "redzone") == 0);
+
+    kasan_heap_init();
+    p = (uint8_t *)kasan_malloc(32u);
+    assert(p != 0);
+    up = (uint32_t)(uintptr_t)p;
+
+    /* Shadow dump centred on the user pointer: header left, user right. */
+    kasan_shadow_dump(up, dump, KASAN_SHADOW_DUMP);
+    assert(dump[KASAN_SHADOW_DUMP / 2u - 1u] == KASAN_POISON_REDZONE);
+    assert(dump[KASAN_SHADOW_DUMP / 2u] == 0x00);
+
+    /* After free, the user area is 0xFA and a store is classified UAF. */
+    kasan_free(p);
+    assert(sh_at(up) == KASAN_POISON_FREED);
+    before = kasan_reports;
+    __asan_store1_noabort(up);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 2u);
+    assert(kasan_report_shadow == KASAN_POISON_FREED);
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -322,6 +354,7 @@ int main(void) {
     test_calloc();
     test_memalign();
     test_realloc();
+    test_report_semantics();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

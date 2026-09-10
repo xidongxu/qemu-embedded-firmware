@@ -8,9 +8,10 @@
  *
  * Shadow semantics (ASan): one shadow byte per 8-byte granule.  0x00 = fully
  * addressable, 0x01-0x07 = first N bytes addressable, 0xf1-0xf7 = first N
- * bytes poisoned, 0xff = fully poisoned.  Only live-allocation user areas are
- * unpoisoned, so any access to a header, free block or unused byte is caught
- * on the spot.
+ * bytes poisoned, 0xFA = freed (use-after-free), 0xFB = redzone (header /
+ * free block / unused arena), 0xff = generic poisoned.  Only live-allocation
+ * user areas are unpoisoned, so any access to a header, free block or unused
+ * byte is caught on the spot.
  */
 #include "kasan.h"
 
@@ -20,6 +21,31 @@ volatile uint32_t kasan_report_addr = 0;
 volatile uint32_t kasan_report_size = 0;
 volatile uint32_t kasan_report_shadow = 0;
 volatile uint32_t kasan_report_pc = 0;
+volatile uint32_t kasan_report_cause = 0;
+volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
+
+/* Semantic poison values (cf. Linux ASan 0xFA freed / 0xFB redzone). */
+#define KASAN_POISON_FREED     0xFAu
+#define KASAN_POISON_REDZONE   0xFBu
+#define KASAN_SHADOW_NO_SHADOW 0xEEu
+
+/* Classify a shadow byte for the report: 0=addressable, 1=redzone,
+ * 2=freed (UAF), 3=partial boundary, 4=generic poisoned. */
+static uint32_t kasan_cause_of(uint8_t value) {
+    if (value == 0) {
+        return 0;
+    }
+    if (value < 8u || (value >= 0xf1u && value <= 0xf7u)) {
+        return 3;
+    }
+    if (value == KASAN_POISON_FREED) {
+        return 2;
+    }
+    if (value == KASAN_POISON_REDZONE) {
+        return 1;
+    }
+    return 4;
+}
 
 static uint8_t *kasan_shadow_of(uint32_t addr) {
     uint8_t *shadow = 0;
@@ -42,6 +68,42 @@ void kasan_init(void) {
     }
 }
 
+const char *kasan_shadow_name(uint8_t value) {
+    if (value == 0) {
+        return "addressable";
+    }
+    if (value < 8u) {
+        return "partial-addressable";
+    }
+    if (value >= 0xf1u && value <= 0xf7u) {
+        return "partial-poisoned";
+    }
+    if (value == KASAN_POISON_FREED) {
+        return "freed";
+    }
+    if (value == KASAN_POISON_REDZONE) {
+        return "redzone";
+    }
+    if (value == KASAN_SHADOW_NO_SHADOW) {
+        return "no-shadow";
+    }
+    if (value == 0xffu) {
+        return "poisoned";
+    }
+    return "unknown";
+}
+
+void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count) {
+    uint32_t base = 0;
+    uint32_t i = 0;
+
+    base = (addr & ~7u) - (count / 2u) * 8u;
+    for (i = 0; i < count; i++) {
+        uint8_t *shadow = kasan_shadow_of(base + i * 8u);
+        out[i] = shadow ? *shadow : KASAN_SHADOW_NO_SHADOW;
+    }
+}
+
 static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
                          uint32_t pc) {
     uint8_t *shadow = kasan_shadow_of(addr);
@@ -52,6 +114,9 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
     kasan_report_size = size;
     kasan_report_shadow = shadow ? *shadow : 0;
     kasan_report_pc = pc;
+    kasan_report_cause = kasan_cause_of(shadow ? *shadow : 0);
+    kasan_shadow_dump(addr, (uint8_t *)kasan_report_shadow_dump,
+                      KASAN_SHADOW_DUMP);
 #ifndef KASAN_TEST_RETURNS
     for (;;) {
     }
@@ -60,7 +125,7 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
 #endif
 }
 
-void kasan_poison(uint32_t addr, uint32_t len) {
+static void kasan_poison_as(uint32_t addr, uint32_t len, uint8_t value) {
     uint32_t end = addr + len;
     uint32_t cur = 0;
 
@@ -77,21 +142,25 @@ void kasan_poison(uint32_t addr, uint32_t len) {
         }
         cur += 8u;
     }
-    /* Middle granules: fully poisoned. */
+    /* Middle granules: fully poisoned with the semantic value. */
     for (; cur + 8u <= end; cur += 8u) {
         uint8_t *shadow = kasan_shadow_of(cur);
         if (shadow) {
-            *shadow = 0xff;
+            *shadow = value;
         }
     }
     /* Tail granule: trailing bytes are the next header (already poisoned), so
-     * mark the whole granule poisoned. */
+     * mark the whole granule with the semantic value. */
     if (cur < end) {
         uint8_t *shadow = kasan_shadow_of(cur);
         if (shadow) {
-            *shadow = 0xff;
+            *shadow = value;
         }
     }
+}
+
+void kasan_poison(uint32_t addr, uint32_t len) {
+    kasan_poison_as(addr, len, 0xff);
 }
 
 void kasan_unpoison(uint32_t addr, uint32_t len) {
@@ -292,7 +361,7 @@ void kasan_heap_init(void) {
     }
     kasan_backend->init(&base, &size);
     if (base != 0 && size != 0) {
-        kasan_poison(base, size);
+        kasan_poison_as(base, size, KASAN_POISON_REDZONE);
     }
 }
 
@@ -339,7 +408,8 @@ void kasan_free(void *p) {
         if (kasan_live_overflow) {
             size = kasan_backend->usable ? kasan_backend->usable(p) : 0;
             if (size != 0) {
-                kasan_poison((uint32_t)(uintptr_t)p, size);
+                kasan_poison_as((uint32_t)(uintptr_t)p, size,
+                                KASAN_POISON_FREED);
             }
             kasan_backend->free(p);
         } else {
@@ -354,7 +424,7 @@ void kasan_free(void *p) {
         return;
     }
     kasan_live_mark_freed((uint32_t)(uintptr_t)p);
-    kasan_poison((uint32_t)(uintptr_t)p, size);
+    kasan_poison_as((uint32_t)(uintptr_t)p, size, KASAN_POISON_FREED);
     kasan_backend->free(p);
 }
 
@@ -461,15 +531,15 @@ void *kasan_realloc(void *p, uint32_t size) {
     if (newp == p) {
         /* In place: re-poison a shrunk tail, then unpoison the new area. */
         if (new_usable < old_size) {
-            kasan_poison((uint32_t)(uintptr_t)p + new_usable,
-                         old_size - new_usable);
+            kasan_poison_as((uint32_t)(uintptr_t)p + new_usable,
+                            old_size - new_usable, KASAN_POISON_REDZONE);
         }
         kasan_unpoison((uint32_t)(uintptr_t)p, new_usable);
         kasan_live_update_size((uint32_t)(uintptr_t)p, new_usable);
     } else {
         /* Moved: re-poison the old block (UAF via the old pointer is caught)
          * and register the new one. */
-        kasan_poison((uint32_t)(uintptr_t)p, old_size);
+        kasan_poison_as((uint32_t)(uintptr_t)p, old_size, KASAN_POISON_FREED);
         kasan_live_mark_freed((uint32_t)(uintptr_t)p);
         kasan_live_add((uint32_t)(uintptr_t)newp, new_usable);
         kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);

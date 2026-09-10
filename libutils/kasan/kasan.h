@@ -73,6 +73,10 @@ extern "C" {
 #ifndef KASAN_LIVE_MAX
 #define KASAN_LIVE_MAX 4096u
 #endif
+/* Number of shadow bytes dumped around a faulting address in the report. */
+#ifndef KASAN_SHADOW_DUMP
+#define KASAN_SHADOW_DUMP 16u
+#endif
 
 /* Zero the shadow for the whole region. */
 void kasan_init(void);
@@ -129,6 +133,12 @@ void *kasan_realloc(void *p, uint32_t size);
 /* Allocate bytes aligned to align (a power of two); NULL if unsupported by
  * the backend. */
 void *kasan_memalign(uint32_t align, uint32_t bytes);
+/* Human-readable name for a shadow byte value ("addressable", "freed",
+ * "redzone", ...); for reports / a UART-tracer sink. */
+const char *kasan_shadow_name(uint8_t value);
+/* Copy `count` shadow bytes centred on addr into out; a granule outside the
+ * instrumented region reads KASAN_SHADOW_NO_SHADOW (0xEE). */
+void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count);
 
 /* Fault report side-channel: kasan_report() parks the fault info in the
  * markers below then traps (the QEMU test reads them via gdb; a real port
@@ -141,6 +151,12 @@ extern volatile uint32_t kasan_report_addr;
 extern volatile uint32_t kasan_report_size;
 extern volatile uint32_t kasan_report_shadow;
 extern volatile uint32_t kasan_report_pc;
+/* Fault classification derived from the shadow byte at the fault address:
+ * 0=unknown 1=redzone(overflow/underflow) 2=freed(use-after-free)
+ * 3=partial-granule boundary 4=generic poisoned. */
+extern volatile uint32_t kasan_report_cause;
+/* Shadow bytes around the fault address (see kasan_shadow_dump). */
+extern volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
 /* Set when the record table overflowed (more than KASAN_LIVE_MAX live
  * allocations at once); bad-free detection is then disabled to avoid false
  * positives. */

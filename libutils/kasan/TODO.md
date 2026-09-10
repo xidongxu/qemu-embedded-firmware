@@ -19,9 +19,10 @@
 
 ## 二、能力差距（P1，高价值）
 
-### 3. 语义化 poison 值 + 报告可读化
+### 3. 语义化 poison 值 + 报告可读化 ✅ 已完成
 - 现状：shadow 只有 `0x00` / `0xff`，报告只给 type(load/store/double/bad)，无法说明"这是 UAF 还是越界、红区在哪"。
 - 目标：引入语义值（区分 freed / slab redzone / bad-free 等，参考 Linux 的 0xFA/0xFB/0xF8/0xFC 等），报告时翻译成人类可读描述，并 dump 故障地址周围的 shadow 状态。
+- 完成：`0xFA`=freed（UAF）、`0xFB`=redzone（header/free 块/未用 arena）；`kasan_poison` 拆出 `kasan_poison_as(addr,len,value)`，heap_init/free/realloc 分别用 redzone/freed。新增 `kasan_shadow_name()`、`kasan_shadow_dump(addr,out,count)`、marker `kasan_report_cause`（0 未知 1 redzone 2 freed 3 partial 4 通用 poison）+ `kasan_report_shadow_dump[16]`。验证：host reports=8；QEMU case1 shadow=0xFB cause=1、case2 shadow=0xFA cause=2。
 
 ### 4. 仪器化 memcpy/memset
 - 现状：bulk copy 不查 shadow，对 poison 区的大块拷贝/跨区拷贝漏报。

@@ -20,8 +20,14 @@ double-free 即时捕获。配合 GCC `-fsanitize=kernel-address` 使用：被�
 MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区皆可测）。
 
 影子字节按 8 字节粒度编码：`0x00` 全可访问、`0x01–0x07` 前 N 字节可访问、
-`0xf1–0xf7` 前 N 字节 poison、`0xff` 全 poison。块尺寸非 8 倍数时，尾部用
-partial 编码精确标记，尾部 4 字节的越界也能被捕获。
+`0xf1–0xf7` 前 N 字节 poison、`0xfa` freed（UAF）、`0xfb` redzone（块头 /
+空闲区）、`0xff` 通用 poison。块尺寸非 8 倍数时，尾部用 partial 编码精确
+标记，尾部 4 字节的越界也能被捕获。
+
+报告除 `kasan_report_{type,addr,size,shadow,pc}` 外，还提供 `kasan_report_cause`
+（1=redzone 越界 2=freed UAF 3=partial 边界 4=通用 poison）与
+`kasan_report_shadow_dump[16]`（故障地址周围影子状态）；`kasan_shadow_name()`
+可把影子值翻译成可读字符串（`"freed"`、`"redzone"` 等）。
 
 ## 使用
 
