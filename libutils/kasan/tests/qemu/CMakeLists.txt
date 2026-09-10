@@ -6,6 +6,7 @@
 #   1 = heap overflow   2 = use-after-free   3 = double-free
 #   4 = heap underflow  5 = realloc-move-uaf 6 = realloc-shrink
 #   7 = partial-granule-tail  8 = memcpy-read-overflow  9 = memset-write-overflow
+#  10 = quarantine-uaf
 # Run under QEMU, then read kasan_* markers with gdb:
 #   qemu-system-arm -machine mps2-an505 -cpu cortex-m33 -m 16M \
 #       -kernel <elf> -display none -serial null -monitor none -no-reboot \
@@ -14,7 +15,7 @@
 #       -ex 'p kasan_reports' -ex 'p kasan_report_type' -ex 'p kasan_report_addr'
 
 set(KASAN_TEST_CASE 1 CACHE STRING
-    "kasan QEMU test case (1=overflow 2=uaf 3=doublefree 4=underflow 5=realloc-move 6=realloc-shrink 7=partial-granule 8=memcpy-read 9=memset-write)")
+    "kasan QEMU test case (1=overflow 2=uaf 3=doublefree 4=underflow 5=realloc-move 6=realloc-shrink 7=partial-granule 8=memcpy-read 9=memset-write 10=quarantine-uaf)")
 
 add_executable(kasan_qemu_test
     kasan_test.c

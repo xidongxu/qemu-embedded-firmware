@@ -31,10 +31,15 @@
 - 顺带修复 `kasan_report` 的 shadow/cause 取自"访问起始地址"而非"实际越界字节"的 bug（新增 `fault_addr` 参数，shadow/cause/dump 按越界字节计算；`kasan_report_addr` 仍保留访问地址语义）。
 - 完成：host reports=10 全过（新增 `test_wrap_copy` 断言 cause=1）；QEMU case8（memcpy 读越界 shadow=0xFB cause=1）、case9（memset 写越界 shadow=0xFB cause=1）捕获，case1–7 全回归过。
 
-### 5. quarantine（或 alloc/free 调用栈）
+### 5. quarantine（或 alloc/free 调用栈）✅ 已完成
 - 现状：UAF 只在"内存被复用前"可检测；TLSF 复用旧块后，经旧指针的访问不再报。
 - 方案 A：quarantine——freed 对象延迟归还分配器，保持 poison 一段时间，延长 UAF 检测窗口。
 - 方案 B：alloc/free 调用栈记录——报 UAF/double-free 时同时给出分配点与释放点栈（类似 Linux `CONFIG_KASAN_STACK`）。
+- 完成（方案 A 为主 + B 的一级调用点子集）：
+  - **quarantine**：`kasan_free` 不再立即归还分配器，而是入 FIFO（`KASAN_QUARANTINE_BYTES` 按总字节限流，默认 8KB；`KASAN_QUARANTINE_MAX` 按条数，默认 64），freed 块保持 0xFA；超限时释放最旧块。`kasan_quarantine_drain()` 可强制清空；`kasan_heap_init` 重置。注意 realloc 迁移的旧块仍由后端立即归还（不进 quarantine）。
+  - **alloc/free 调用点**：记录表每条加 `alloc_pc`/`free_pc`（20 字节/条），报告新增 `kasan_report_alloc_pc`/`kasan_report_free_pc`，UAF/double-free 时按 freed 记录反查填充。
+  - **已知限制**：记录表复用已 freed 槽位后，旧指针的调用点信息会丢失（UAF 仍靠 shadow 0xFA 捕获，但 alloc/free pc 读 0）；完整多层调用栈回溯（stack depot）成本高，暂不做。
+  - 验证：host reports=12（test_quarantine：隔离不重用 + 超限释放后复用 + UAF/double-free 调用点断言）；QEMU case10（free 后同尺寸 malloc 不复用，旧指针写仍 trap，shadow=0xFA cause=2）、case2/3 读 alloc_pc/free_pc 非 0，case1-9 全回归过。
 
 ## 三、覆盖范围与工程项（P2，按场景）
 

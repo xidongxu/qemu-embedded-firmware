@@ -9,7 +9,10 @@
  *   - everything else (block headers, free blocks, unused arena, ...) is
  *     poisoned, so heap overflow / underflow and use-after-free are caught
  *     immediately by the compiler-inserted check (not delayed until free);
- *   - a live-allocation record table catches double-free and bad free.
+ *   - a live-allocation record table catches double-free and bad free;
+ *   - a freed block is quarantined (kept poisoned) for a while, extending the
+ *     use-after-free detection window past block reuse;
+ *   - UAF / double-free reports carry the alloc and free call sites.
  *
  * The library itself is compiled WITHOUT -fsanitize (it must be able to touch
  * shadow and arena directly); only the code under test is instrumented.
@@ -66,16 +69,29 @@ extern "C" {
 #endif
 /* Live-allocation record table capacity: the maximum number of SIMULTANEOUS
  * live allocations tracked for double-free / bad-free detection.  Each entry
- * is 12 bytes (ptr + size + state) on 32-bit, so 4096 entries cost 48 KB of
- * .bss.  When the table fills up, bad-free detection degrades gracefully
- * (kasan_live_overflow is set); double-free detection for tracked pointers
- * keeps working. */
+ * is 20 bytes (ptr + size + state + alloc_pc + free_pc) on 32-bit, so 4096
+ * entries cost 80 KB of .bss; alloc_pc / free_pc record the call sites of the
+ * allocation and the free for UAF / double-free reports.  When the table
+ * fills up, bad-free detection degrades gracefully (kasan_live_overflow is
+ * set); double-free detection for tracked pointers keeps working. */
 #ifndef KASAN_LIVE_MAX
 #define KASAN_LIVE_MAX 4096u
 #endif
 /* Number of shadow bytes dumped around a faulting address in the report. */
 #ifndef KASAN_SHADOW_DUMP
 #define KASAN_SHADOW_DUMP 16u
+#endif
+/* Quarantine: freed blocks are not handed back to the allocator immediately
+ * but kept poisoned (0xFA) for a while, so use-after-free via a stale pointer
+ * is still caught after the block would otherwise have been reused.
+ * KASAN_QUARANTINE_BYTES caps the TOTAL held bytes (0 disables the
+ * quarantine: freed blocks return to the allocator at once);
+ * KASAN_QUARANTINE_MAX caps the number of held blocks (must be >= 1). */
+#ifndef KASAN_QUARANTINE_BYTES
+#define KASAN_QUARANTINE_BYTES (8u * 1024u)
+#endif
+#ifndef KASAN_QUARANTINE_MAX
+#define KASAN_QUARANTINE_MAX 64u
 #endif
 
 /* Zero the shadow for the whole region. */
@@ -139,6 +155,9 @@ const char *kasan_shadow_name(uint8_t value);
 /* Copy `count` shadow bytes centred on addr into out; a granule outside the
  * instrumented region reads KASAN_SHADOW_NO_SHADOW (0xEE). */
 void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count);
+/* Release every quarantined block back to the allocator immediately (useful
+ * before a memory-critical section, or in tests). */
+void kasan_quarantine_drain(void);
 
 /* Fault report side-channel: kasan_report() parks the fault info in the
  * markers below then traps (the QEMU test reads them via gdb; a real port
@@ -155,6 +174,11 @@ extern volatile uint32_t kasan_report_pc;
  * 0=unknown 1=redzone(overflow/underflow) 2=freed(use-after-free)
  * 3=partial-granule boundary 4=generic poisoned. */
 extern volatile uint32_t kasan_report_cause;
+/* For freed-block faults (use-after-free / double-free): the call sites of
+ * the allocation and of the free, looked up from the live record table.
+ * 0 when unknown (bad-free, non-freed fault, or record-table overflow). */
+extern volatile uint32_t kasan_report_alloc_pc;
+extern volatile uint32_t kasan_report_free_pc;
 /* Shadow bytes around the fault address (see kasan_shadow_dump). */
 extern volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
 /* Set when the record table overflowed (more than KASAN_LIVE_MAX live

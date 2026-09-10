@@ -22,6 +22,8 @@ volatile uint32_t kasan_report_size = 0;
 volatile uint32_t kasan_report_shadow = 0;
 volatile uint32_t kasan_report_pc = 0;
 volatile uint32_t kasan_report_cause = 0;
+volatile uint32_t kasan_report_alloc_pc = 0;
+volatile uint32_t kasan_report_free_pc = 0;
 volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
 
 /* Semantic poison values (cf. Linux ASan 0xFA freed / 0xFB redzone). */
@@ -104,10 +106,18 @@ void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count) {
     }
 }
 
+static int kasan_live_find_freed(uint32_t addr, uint32_t *alloc_pc,
+                                 uint32_t *free_pc);
+
 static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
                          uint32_t pc, uint32_t fault_addr) {
     uint8_t *shadow = kasan_shadow_of(fault_addr);
+    uint32_t alloc_pc = 0;
+    uint32_t free_pc = 0;
 
+    if (shadow && *shadow == KASAN_POISON_FREED) {
+        kasan_live_find_freed(fault_addr, &alloc_pc, &free_pc);
+    }
     kasan_reports++;
     kasan_report_type = type;
     kasan_report_addr = addr;
@@ -115,6 +125,8 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
     kasan_report_shadow = shadow ? *shadow : 0;
     kasan_report_pc = pc;
     kasan_report_cause = kasan_cause_of(shadow ? *shadow : 0);
+    kasan_report_alloc_pc = alloc_pc;
+    kasan_report_free_pc = free_pc;
     kasan_shadow_dump(fault_addr, (uint8_t *)kasan_report_shadow_dump,
                       KASAN_SHADOW_DUMP);
 #ifndef KASAN_TEST_RETURNS
@@ -287,10 +299,25 @@ typedef struct {
     uint32_t ptr;
     uint32_t size;
     uint32_t state;
+    uint32_t alloc_pc;
+    uint32_t free_pc;
 } kasan_live_entry_t;
 
 static kasan_live_entry_t kasan_live_table[KASAN_LIVE_MAX];
 static const kasan_alloc_backend_t *kasan_backend = 0;
+
+/* Quarantine: freed blocks are held (still 0xFA-poisoned) instead of being
+ * returned to the allocator, extending the UAF detection window.  A FIFO of
+ * {ptr,size}; KASAN_QUARANTINE_BYTES caps the total held bytes. */
+typedef struct {
+    uint32_t ptr;
+    uint32_t size;
+} kasan_quarantine_entry_t;
+
+static kasan_quarantine_entry_t kasan_quarantine[KASAN_QUARANTINE_MAX];
+static uint32_t kasan_quarantine_head = 0;
+static uint32_t kasan_quarantine_count = 0;
+static uint32_t kasan_quarantine_bytes = 0;
 
 static void kasan_live_reset(void) {
     uint32_t i = 0;
@@ -298,17 +325,21 @@ static void kasan_live_reset(void) {
         kasan_live_table[i].ptr = 0;
         kasan_live_table[i].size = 0;
         kasan_live_table[i].state = KASAN_LIVE_STATE_EMPTY;
+        kasan_live_table[i].alloc_pc = 0;
+        kasan_live_table[i].free_pc = 0;
     }
     kasan_live_overflow = 0;
 }
 
-static void kasan_live_add(uint32_t ptr, uint32_t size) {
+static void kasan_live_add(uint32_t ptr, uint32_t size, uint32_t alloc_pc) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
         if (kasan_live_table[i].state != KASAN_LIVE_STATE_LIVE) {
             kasan_live_table[i].ptr = ptr;
             kasan_live_table[i].size = size;
             kasan_live_table[i].state = KASAN_LIVE_STATE_LIVE;
+            kasan_live_table[i].alloc_pc = alloc_pc;
+            kasan_live_table[i].free_pc = 0;
             return;
         }
     }
@@ -328,12 +359,13 @@ static int kasan_live_find(uint32_t ptr, uint32_t *size, uint32_t *state) {
     return 0;
 }
 
-static void kasan_live_mark_freed(uint32_t ptr) {
+static void kasan_live_mark_freed(uint32_t ptr, uint32_t free_pc) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
         if (kasan_live_table[i].ptr == ptr &&
             kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
             kasan_live_table[i].state = KASAN_LIVE_STATE_FREED;
+            kasan_live_table[i].free_pc = free_pc;
             return;
         }
     }
@@ -350,8 +382,90 @@ static void kasan_live_update_size(uint32_t ptr, uint32_t size) {
     }
 }
 
+/* Overwrite the allocation call site of a freshly added record (used when a
+ * public wrapper such as kasan_calloc routes through kasan_malloc and wants
+ * the wrapper's caller, not kasan_malloc's caller). */
+static void kasan_live_set_alloc_pc(uint32_t ptr, uint32_t alloc_pc) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].ptr == ptr &&
+            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
+            kasan_live_table[i].alloc_pc = alloc_pc;
+            return;
+        }
+    }
+}
+
+/* Look up the freed record whose [ptr, ptr+size) contains addr; return the
+ * alloc / free call sites for the UAF / double-free report. */
+static int kasan_live_find_freed(uint32_t addr, uint32_t *alloc_pc,
+                                 uint32_t *free_pc) {
+    uint32_t i = 0;
+    for (i = 0; i < KASAN_LIVE_MAX; i++) {
+        if (kasan_live_table[i].state == KASAN_LIVE_STATE_FREED &&
+            addr >= kasan_live_table[i].ptr &&
+            addr < kasan_live_table[i].ptr + kasan_live_table[i].size) {
+            *alloc_pc = kasan_live_table[i].alloc_pc;
+            *free_pc = kasan_live_table[i].free_pc;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void kasan_set_alloc_backend(const kasan_alloc_backend_t *backend) {
     kasan_backend = backend;
+}
+
+static void kasan_quarantine_reset(void) {
+    kasan_quarantine_head = 0;
+    kasan_quarantine_count = 0;
+    kasan_quarantine_bytes = 0;
+}
+
+static void kasan_quarantine_pop_oldest(void) {
+    uint32_t idx = kasan_quarantine_head;
+    uint32_t ptr = kasan_quarantine[idx].ptr;
+
+    kasan_quarantine_bytes -= kasan_quarantine[idx].size;
+    kasan_quarantine_head =
+        (kasan_quarantine_head + 1u) % KASAN_QUARANTINE_MAX;
+    kasan_quarantine_count--;
+    kasan_backend->free((void *)(uintptr_t)ptr);
+}
+
+/* Hand a freed block to the quarantine, releasing the oldest held blocks if
+ * needed to stay under the byte / entry caps. */
+static void kasan_quarantine_push(uint32_t ptr, uint32_t size) {
+    uint32_t idx = 0;
+
+    if (KASAN_QUARANTINE_BYTES == 0u) {
+        kasan_backend->free((void *)(uintptr_t)ptr);
+        return;
+    }
+    if (size >= KASAN_QUARANTINE_BYTES) {
+        kasan_backend->free((void *)(uintptr_t)ptr);
+        return;
+    }
+    while (kasan_quarantine_count > 0u &&
+           kasan_quarantine_bytes + size > KASAN_QUARANTINE_BYTES) {
+        kasan_quarantine_pop_oldest();
+    }
+    if (kasan_quarantine_count >= KASAN_QUARANTINE_MAX) {
+        kasan_quarantine_pop_oldest();
+    }
+    idx = (kasan_quarantine_head + kasan_quarantine_count) %
+          KASAN_QUARANTINE_MAX;
+    kasan_quarantine[idx].ptr = ptr;
+    kasan_quarantine[idx].size = size;
+    kasan_quarantine_count++;
+    kasan_quarantine_bytes += size;
+}
+
+void kasan_quarantine_drain(void) {
+    while (kasan_quarantine_count > 0u) {
+        kasan_quarantine_pop_oldest();
+    }
 }
 
 void kasan_heap_init(void) {
@@ -359,6 +473,7 @@ void kasan_heap_init(void) {
     uint32_t size = 0;
 
     kasan_live_reset();
+    kasan_quarantine_reset();
     if (!kasan_backend || !kasan_backend->init) {
         return;
     }
@@ -380,6 +495,7 @@ static uint32_t kasan_usable_of(void *p, uint32_t requested) {
 void *kasan_malloc(uint32_t nbytes) {
     void *p = 0;
     uint32_t size = 0;
+    uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
     if (!kasan_backend || !kasan_backend->malloc) {
         return 0;
@@ -389,7 +505,7 @@ void *kasan_malloc(uint32_t nbytes) {
         return 0;
     }
     size = kasan_usable_of(p, nbytes);
-    kasan_live_add((uint32_t)(uintptr_t)p, size);
+    kasan_live_add((uint32_t)(uintptr_t)p, size, alloc_pc);
     kasan_unpoison((uint32_t)(uintptr_t)p, size);
     return p;
 }
@@ -397,6 +513,7 @@ void *kasan_malloc(uint32_t nbytes) {
 void kasan_free(void *p) {
     uint32_t size = 0;
     uint32_t state = 0;
+    uint32_t free_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
     if (p == 0) {
         return;
@@ -416,21 +533,19 @@ void kasan_free(void *p) {
             }
             kasan_backend->free(p);
         } else {
-            kasan_report(4, (uint32_t)(uintptr_t)p, 0,
-                         (uint32_t)(uintptr_t)__builtin_return_address(0),
+            kasan_report(4, (uint32_t)(uintptr_t)p, 0, free_pc,
                          (uint32_t)(uintptr_t)p);
         }
         return;
     }
     if (state == KASAN_LIVE_STATE_FREED) {
-        kasan_report(3, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+        kasan_report(3, (uint32_t)(uintptr_t)p, 0, free_pc,
                      (uint32_t)(uintptr_t)p);
         return;
     }
-    kasan_live_mark_freed((uint32_t)(uintptr_t)p);
+    kasan_live_mark_freed((uint32_t)(uintptr_t)p, free_pc);
     kasan_poison_as((uint32_t)(uintptr_t)p, size, KASAN_POISON_FREED);
-    kasan_backend->free(p);
+    kasan_quarantine_push((uint32_t)(uintptr_t)p, size);
 }
 
 static void kasan_memcpy(uint8_t *dst, const uint8_t *src, uint32_t n) {
@@ -507,6 +622,7 @@ void *__wrap_memset(void *ptr, int value, uint32_t n) {
 void *kasan_calloc(uint32_t nmemb, uint32_t size) {
     uint32_t total = 0;
     void *p = 0;
+    uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
     if (nmemb != 0 && size > 0xFFFFFFFFu / nmemb) {
         return 0;
@@ -515,6 +631,9 @@ void *kasan_calloc(uint32_t nmemb, uint32_t size) {
     p = kasan_malloc(total);
     if (p != 0) {
         kasan_zero((uint8_t *)p, total);
+        /* kasan_malloc recorded its own (internal) call site; point the
+         * record at this wrapper's caller instead. */
+        kasan_live_set_alloc_pc((uint32_t)(uintptr_t)p, alloc_pc);
     }
     return p;
 }
@@ -522,6 +641,7 @@ void *kasan_calloc(uint32_t nmemb, uint32_t size) {
 void *kasan_memalign(uint32_t align, uint32_t bytes) {
     void *p = 0;
     uint32_t size = 0;
+    uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
     if (!kasan_backend || !kasan_backend->memalign) {
         return 0;
@@ -531,7 +651,7 @@ void *kasan_memalign(uint32_t align, uint32_t bytes) {
         return 0;
     }
     size = kasan_usable_of(p, bytes);
-    kasan_live_add((uint32_t)(uintptr_t)p, size);
+    kasan_live_add((uint32_t)(uintptr_t)p, size, alloc_pc);
     kasan_unpoison((uint32_t)(uintptr_t)p, size);
     return p;
 }
@@ -540,6 +660,7 @@ void *kasan_realloc(void *p, uint32_t size) {
     uint32_t old_size = 0;
     uint32_t state = 0;
     uint32_t new_usable = 0;
+    uint32_t pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
     void *newp = 0;
 
     if (p == 0) {
@@ -559,19 +680,17 @@ void *kasan_realloc(void *p, uint32_t size) {
             newp = kasan_backend->realloc(p, size);
             if (newp != 0) {
                 new_usable = kasan_usable_of(newp, size);
-                kasan_live_add((uint32_t)(uintptr_t)newp, new_usable);
+                kasan_live_add((uint32_t)(uintptr_t)newp, new_usable, pc);
                 kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
             }
             return newp;
         }
-        kasan_report(4, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+        kasan_report(4, (uint32_t)(uintptr_t)p, 0, pc,
                      (uint32_t)(uintptr_t)p);
         return 0;
     }
     if (state == KASAN_LIVE_STATE_FREED) {
-        kasan_report(3, (uint32_t)(uintptr_t)p, 0,
-                     (uint32_t)(uintptr_t)__builtin_return_address(0),
+        kasan_report(3, (uint32_t)(uintptr_t)p, 0, pc,
                      (uint32_t)(uintptr_t)p);
         return 0;
     }
@@ -584,6 +703,9 @@ void *kasan_realloc(void *p, uint32_t size) {
         if (newp != 0) {
             kasan_memcpy((uint8_t *)newp, (const uint8_t *)p, copy);
             kasan_free(p);
+            /* kasan_malloc recorded its own call site; point the record at
+             * this wrapper's caller instead. */
+            kasan_live_set_alloc_pc((uint32_t)(uintptr_t)newp, pc);
         }
         return newp;
     }
@@ -604,8 +726,8 @@ void *kasan_realloc(void *p, uint32_t size) {
         /* Moved: re-poison the old block (UAF via the old pointer is caught)
          * and register the new one. */
         kasan_poison_as((uint32_t)(uintptr_t)p, old_size, KASAN_POISON_FREED);
-        kasan_live_mark_freed((uint32_t)(uintptr_t)p);
-        kasan_live_add((uint32_t)(uintptr_t)newp, new_usable);
+        kasan_live_mark_freed((uint32_t)(uintptr_t)p, pc);
+        kasan_live_add((uint32_t)(uintptr_t)newp, new_usable, pc);
         kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
     }
     return newp;

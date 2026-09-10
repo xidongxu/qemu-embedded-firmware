@@ -14,7 +14,11 @@ double-free 即时捕获。配合 GCC `-fsanitize=kernel-address` 使用：被�
 - 越界写 `p[size] = x`：编译器插入的 shadow 检查在**写入瞬间**命中相邻
   poison → 当场捕获（不是等到 free 才查 canary）。
 - `free` 后整块重新 poison → 之后任何访问即 UAF 捕获。
-- 存活分配记录表校验 → double-free / bad-free 捕获。
+- `free` 后的块进入 **quarantine**：延迟归还分配器并保持 poison，块被复用后
+  经旧指针的访问依然能被捕获（检测窗口更长）。
+- 存活分配记录表校验 → double-free / bad-free 捕获；UAF / double-free 报告
+  附带分配点与释放点 PC（`kasan_report_alloc_pc` / `kasan_report_free_pc`，
+  记录表被复用后可能为 0）。
 
 影子默认从**被测区自身尾部**划出（尾部 1/8），无需专门影子 RAM，符合固定
 MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区皆可测）。
@@ -25,9 +29,10 @@ MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区�
 标记，尾部 4 字节的越界也能被捕获。
 
 报告除 `kasan_report_{type,addr,size,shadow,pc}` 外，还提供 `kasan_report_cause`
-（1=redzone 越界 2=freed UAF 3=partial 边界 4=通用 poison）与
-`kasan_report_shadow_dump[16]`（故障地址周围影子状态）；`kasan_shadow_name()`
-可把影子值翻译成可读字符串（`"freed"`、`"redzone"` 等）。
+（1=redzone 越界 2=freed UAF 3=partial 边界 4=通用 poison）、
+`kasan_report_alloc_pc` / `kasan_report_free_pc`（UAF / double-free 的分配点与
+释放点 PC）与 `kasan_report_shadow_dump[16]`（故障地址周围影子状态）；
+`kasan_shadow_name()` 可把影子值翻译成可读字符串（`"freed"`、`"redzone"` 等）。
 
 ## 使用
 
@@ -51,6 +56,10 @@ kasan_heap_init();                               /* 建堆 arena */
    double-free 自动触发报告（写 `kasan_report_*` marker 后 trap；QEMU 下用
    gdb 读，可换成 UART/tracer sink）。`realloc` 迁移后旧指针会被重新 poison，
    经旧指针的 UAF 同样被拦。
+
+   `free` 后的块进入 quarantine（默认 8 KB，可 `-D` 关闭或调整），延迟归还
+   分配器，延长 UAF 检测窗口；`kasan_quarantine_drain()` 可立即释放全部
+   隔离块。
 
 > 本库**必须无 sanitize 编译**（`kasan.c` 需直碰 shadow / poison 区）；
 > 只有"被测代码"插桩。
@@ -107,7 +116,9 @@ typedef struct kasan_alloc_backend {
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
 | `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
-| `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（同时存活的分配数上限，每条 12 字节→约 48 KB；满则关闭 bad-free 探测） |
+| `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 20 字节→约 80 KB；含 alloc/free 调用点；满则关闭 bad-free 探测） |
+| `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
+| `KASAN_QUARANTINE_MAX` | 64 | 隔离区条数上限 |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。

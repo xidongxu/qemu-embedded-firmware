@@ -19,6 +19,9 @@
 #define KASAN_TEST_RETURNS
 #define KASAN_ARENA_SIZE 16384u
 #define KASAN_LIVE_MAX 4u
+/* Small quarantine so the drain path is exercised with tiny allocations. */
+#define KASAN_QUARANTINE_BYTES 128u
+#define KASAN_QUARANTINE_MAX 8u
 
 static unsigned char s_region[32768] __attribute__((aligned(8)));
 
@@ -368,6 +371,68 @@ static void test_wrap_copy(void) {
     assert(kasan_reports == before);
 }
 
+static void test_quarantine(void) {
+    uint8_t *a = 0;
+    uint8_t *b = 0;
+    uint8_t *c = 0;
+    uint8_t *d = 0;
+    uint8_t *e = 0;
+    uint8_t *f = 0;
+    uint32_t up = 0;
+    uint32_t before = 0;
+
+    kasan_heap_init();
+
+    /* Freed block stays 0xFA while quarantined; a stale write is a UAF and
+     * carries the alloc + free call sites. */
+    a = (uint8_t *)kasan_malloc(32u);
+    assert(a != 0);
+    up = (uint32_t)(uintptr_t)a;
+    kasan_free(a);
+    assert(sh_at(up) == KASAN_POISON_FREED);
+    before = kasan_reports;
+    __asan_store1_noabort(up);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 2u);
+    assert(kasan_report_alloc_pc != 0);
+    assert(kasan_report_free_pc != 0);
+
+    /* Double-free is still caught while the record lingers. */
+    before = kasan_reports;
+    kasan_free(a);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_type == 3u);
+
+    /* Same-size allocations must NOT reuse the quarantined block. */
+    a = (uint8_t *)kasan_malloc(32u);
+    assert(a != 0);
+    up = (uint32_t)(uintptr_t)a;
+    kasan_free(a);
+    b = (uint8_t *)kasan_malloc(32u);
+    assert(b != 0);
+    assert(b != a);
+    kasan_free(b);
+    c = (uint8_t *)kasan_malloc(32u);
+    assert(c != 0);
+    assert(c != a);
+    kasan_free(c);
+    d = (uint8_t *)kasan_malloc(32u);
+    assert(d != 0);
+    assert(d != a);
+    kasan_free(d);
+    /* Quarantine now holds a+b+c+d = 128 bytes (the cap). */
+    e = (uint8_t *)kasan_malloc(32u);
+    assert(e != 0);
+    assert(e != a);
+    kasan_free(e);   /* over the cap -> drains the oldest block (a) */
+
+    /* a is back in the allocator: the next same-size malloc reuses it. */
+    f = (uint8_t *)kasan_malloc(32u);
+    assert(f == a);
+
+    kasan_quarantine_drain();
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -384,6 +449,7 @@ int main(void) {
     test_realloc();
     test_report_semantics();
     test_wrap_copy();
+    test_quarantine();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

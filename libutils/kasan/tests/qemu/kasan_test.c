@@ -16,6 +16,8 @@
  *                         of the tail granule (4-byte aligned block size)
  *   8 = memcpy overflow : memcpy() reads past a block into the header
  *   9 = memset overflow : memset() writes past a block into the header
+ *  10 = quarantine      : a freed block is held (not reused by the next
+ *                         same-size malloc), so a stale write still traps
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -110,6 +112,18 @@ int main(void) {
         a[0] = 0x11;
         memset(a, 0, n);                    /* writes a[16..31] -> trap */
         g_sink = a[0];
+    }
+#elif KHEAP_CASE == 10
+    {
+        uint8_t *a = (uint8_t *)kasan_malloc(32);
+        uint8_t *b = 0;
+        a[0] = 0x11;
+        kasan_free(a);                    /* quarantined -> stays 0xFA */
+        b = (uint8_t *)kasan_malloc(32);  /* must NOT reuse a's block   */
+        if (b != a) {
+            a[0] = 0x33;                  /* UAF via old pointer -> trap */
+        }
+        g_sink = b[0];
     }
 #endif
 
