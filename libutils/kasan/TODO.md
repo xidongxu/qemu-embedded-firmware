@@ -43,9 +43,23 @@
 
 ## 三、覆盖范围与工程项（P2，按场景）
 
-### 6. 栈红区 / 全局红区
+### 6. 栈红区 / 全局红区 ⛔ 已验证不可行（kernel-address 路线）
 - 现状：栈与全局变量完全不查（`-fsanitize=kernel-address` 路线固有限制 + 库只维护堆）。
-- 需编译器侧 + startup 配合；an505 上 TZ 板 CPU 写 shadow 曾卡 BusFault，先验证可行性。
+- **2026-09-10 可行性验证结论（arm-none-eabi-gcc 15.3.1 + `-fsanitize=kernel-address` 实测）**：
+  - **栈访问完全不插桩**：`uint32_t a[4]` 的 `a[0]`（边界内）、`a[4]`（常量越界）、
+    `a[i]`（动态下标）编译后全是普通 `str`，`nm -u` 零 `__asan` 符号。编译器层面堵死，
+    栈红区**无解**。
+  - **全局访问只插桩「越界/无法静态证明安全」的**：`g_arr[10]`（常量越界）会生成
+    `__asan_store4_noabort`；`g_arr[0]`（边界内常量）被跳过（静态证明在对象范围内）。
+  - 但 kernel-address **不生成全局 redzone padding，也不生成 `__asan_register_globals`**：
+    全局变量在 `.bss` 里紧挨着（`g_array` 后直接 `g_scalar`，无间隙）。没有 redzone 可毒，
+    越界检查命中下一个变量的合法地址（shadow=0）→ 放行。
+  - 对照：普通 `-fsanitize=address` 生成 `__asan_init`/`__asan_register_globals`/
+    `__asan_stack_malloc_1`（有全局 + 栈 redzone），但该路线 shadow 基址硬编码
+    [0x20000000,0x40000000)、且 an505 TZ 板写 shadow 曾卡 BusFault（见仓库历史）。
+- 结论：**维持 kernel-address + 堆红区为定论**；栈/全局红区需换普通 address 路线才可能，
+  代价与历史坑不划算。全局越界的「手动 padding + 手动毒化」可以做，但属用户手工配合，
+  库不自动支持。
 
 ### 7. 多区域覆盖
 - 现状只覆盖 `KASAN_REGION` 一个区，区外（栈/全局/外设）`shadow_of` 返 0 直接放行。
