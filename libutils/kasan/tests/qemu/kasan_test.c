@@ -12,6 +12,8 @@
  *   5 = realloc move    : use-after-free via the old pointer after
  *                         kasan_realloc() relocated the block
  *   6 = realloc shrink  : write into the tail released by kasan_realloc()
+ *   7 = partial granule : 20-byte allocation; a[20] hits the poisoned rest
+ *                         of the tail granule (4-byte aligned block size)
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -77,6 +79,13 @@ int main(void) {
         a[0] = 0x11;
         a = (uint8_t *)kasan_realloc(a, 32);    /* shrink in place */
         a[32] = 0x22;                       /* into released tail -> trap */
+        g_sink = a[0];
+    }
+#elif KHEAP_CASE == 7
+    {
+        uint8_t *a = (uint8_t *)kasan_malloc(20);
+        a[0] = 0x11;
+        a[20] = 0xAA;                       /* tail partial granule -> trap */
         g_sink = a[0];
     }
 #endif

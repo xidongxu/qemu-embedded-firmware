@@ -5,10 +5,11 @@
 
 ## 一、正确性缺陷（P0，先修）
 
-### 1. partial-granule 尾部 4 字节漏报
+### 1. partial-granule 尾部 4 字节漏报 ✅ 已完成
 - 现象：shadow 按 8 字节粒度，而 TLSF 块尺寸是 4 字节对齐。块尺寸非 8 倍数时，最后 4 字节（含下一块 header）被整 granule unpoison，**尾部 ≤4 字节的越界写漏报**。8 对齐的块不受影响。
-- 修法：引入 partial 编码 `0x01–0x07`（前 N 字节可访问）/ `0xF1–0xF7`（前 N 字节 poison），`kasan_poison` / `kasan_unpoison` / `kasan_check` 三处同步改。
-- 验证：host 加非 8 倍数尺寸用例（如 `malloc(20)` 后写 `p[20]` 应 trap）；QEMU 加对应 case。
+- 修法：引入 partial 编码 `0x01–0x07`（前 N 字节可访问）/ `0xf1–0xf7`（前 N 字节 poison），`kasan_poison` / `kasan_unpoison` / `kasan_check` 三处同步改。
+- 验证：host 加 `test_partial_granule`（合成 20 字节区间 + 直调 noabort 钩子）；QEMU 加 case7（`malloc(20)` 后写 `a[20]`）。
+- 完成：host reports=7 全过；QEMU case7 shadow=0x04 捕获、case1/case6 回归全过。顺带修复了 realloc 缩容头部 4 字节的误 poison（旧实现会把新 user 区尾部 4 字节误标 poison 造成假阳性）。
 
 ### 2. kasan_report_pc 不准
 - 现象：`kasan_report` 里取 `__builtin_return_address(0)`，拿到的是 `kasan_check` 调用 report 之后的地址（比真实访问点深 2 层），且 `-O2` 下可能被内联。

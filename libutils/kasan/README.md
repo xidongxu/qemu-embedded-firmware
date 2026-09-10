@@ -14,10 +14,14 @@ double-free 即时捕获。配合 GCC `-fsanitize=kernel-address` 使用：被�
 - 越界写 `p[size] = x`：编译器插入的 shadow 检查在**写入瞬间**命中相邻
   poison → 当场捕获（不是等到 free 才查 canary）。
 - `free` 后整块重新 poison → 之后任何访问即 UAF 捕获。
-- 块头 magic 校验 → double-free / bad-free 捕获。
+- 存活分配记录表校验 → double-free / bad-free 捕获。
 
 影子默认从**被测区自身尾部**划出（尾部 1/8），无需专门影子 RAM，符合固定
 MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区皆可测）。
+
+影子字节按 8 字节粒度编码：`0x00` 全可访问、`0x01–0x07` 前 N 字节可访问、
+`0xf1–0xf7` 前 N 字节 poison、`0xff` 全 poison。块尺寸非 8 倍数时，尾部用
+partial 编码精确标记，尾部 4 字节的越界也能被捕获。
 
 ## 使用
 

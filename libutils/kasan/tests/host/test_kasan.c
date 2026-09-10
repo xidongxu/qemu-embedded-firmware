@@ -60,6 +60,39 @@ static void test_shadow_api(void) {
     assert(sh_at(KASAN_REGION_BASE + KASAN_USABLE_SIZE + 16u) == -1);
 }
 
+static void test_partial_granule(void) {
+    uint32_t base = KASAN_REGION_BASE + 256u;
+    uint32_t before = 0;
+
+    kasan_init();
+    /* Unpoison a 20-byte range (8-aligned base): the tail granule must be
+     * partial (0x04 = first 4 bytes addressable). */
+    kasan_unpoison(base, 20u);
+    assert(sh_at(base) == 0);
+    assert(sh_at(base + 8u) == 0);
+    assert(sh_at(base + 16u) == 0x04);
+    assert(sh_at(base + 24u) == 0);
+
+    /* In-bounds access (last byte of the partial tail) passes. */
+    before = kasan_reports;
+    __asan_load1_noabort(base + 19u);
+    assert(kasan_reports == before);
+
+    /* A 1-byte store at offset 20 hits the poisoned rest of the granule. */
+    __asan_store1_noabort(base + 20u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_type == 2u);
+
+    /* A 4-byte load straddling the boundary also faults. */
+    before = kasan_reports;
+    __asan_load4_noabort(base + 17u);
+    assert(kasan_reports == before + 1u);
+
+    /* Re-poison the range: the tail granule is fully poisoned again. */
+    kasan_poison(base, 20u);
+    assert(sh_at(base + 16u) == 0xff);
+}
+
 static void test_heap_layout(void) {
     uint8_t *p = 0;
     uint32_t up = 0;
@@ -277,6 +310,7 @@ static void test_realloc(void) {
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
+    test_partial_granule();
     test_heap_layout();
     test_heap_split_and_reuse();
     test_free_poisons();

@@ -6,8 +6,9 @@
  * delegated to a pluggable backend (see kasan_alloc_backend_t); this file only
  * keeps the shadow map and the live-allocation record table.
  *
- * Shadow semantics (ASan): a shadow byte of 0 means the 8-byte granule is
- * accessible, non-zero means poisoned.  Only live-allocation user areas are
+ * Shadow semantics (ASan): one shadow byte per 8-byte granule.  0x00 = fully
+ * addressable, 0x01-0x07 = first N bytes addressable, 0xf1-0xf7 = first N
+ * bytes poisoned, 0xff = fully poisoned.  Only live-allocation user areas are
  * unpoisoned, so any access to a header, free block or unused byte is caught
  * on the spot.
  */
@@ -59,10 +60,33 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size) {
 }
 
 void kasan_poison(uint32_t addr, uint32_t len) {
-    uint32_t scan = addr;
+    uint32_t end = addr + len;
+    uint32_t cur = 0;
 
-    for (scan = addr; scan < addr + len; scan += 8) {
-        uint8_t *shadow = kasan_shadow_of(scan);
+    if (len == 0) {
+        return;
+    }
+    /* Head granule: leading bytes (of the previous object) stay addressable,
+     * so mark it 0x0N (first N addressable, rest poisoned). */
+    cur = addr & ~7u;
+    if ((addr & 7u) != 0) {
+        uint8_t *shadow = kasan_shadow_of(cur);
+        if (shadow) {
+            *shadow = (uint8_t)(addr & 7u);
+        }
+        cur += 8u;
+    }
+    /* Middle granules: fully poisoned. */
+    for (; cur + 8u <= end; cur += 8u) {
+        uint8_t *shadow = kasan_shadow_of(cur);
+        if (shadow) {
+            *shadow = 0xff;
+        }
+    }
+    /* Tail granule: trailing bytes are the next header (already poisoned), so
+     * mark the whole granule poisoned. */
+    if (cur < end) {
+        uint8_t *shadow = kasan_shadow_of(cur);
         if (shadow) {
             *shadow = 0xff;
         }
@@ -70,12 +94,34 @@ void kasan_poison(uint32_t addr, uint32_t len) {
 }
 
 void kasan_unpoison(uint32_t addr, uint32_t len) {
-    uint32_t scan = addr;
+    uint32_t end = addr + len;
+    uint32_t cur = 0;
 
-    for (scan = addr; scan < addr + len; scan += 8) {
-        uint8_t *shadow = kasan_shadow_of(scan);
+    if (len == 0) {
+        return;
+    }
+    /* Head granule: leading bytes (previous header) stay poisoned, so mark it
+     * 0xfN (first N poisoned, rest addressable). */
+    cur = addr & ~7u;
+    if ((addr & 7u) != 0) {
+        uint8_t *shadow = kasan_shadow_of(cur);
+        if (shadow) {
+            *shadow = (uint8_t)(0xf0u | (addr & 7u));
+        }
+        cur += 8u;
+    }
+    /* Middle granules: fully addressable. */
+    for (; cur + 8u <= end; cur += 8u) {
+        uint8_t *shadow = kasan_shadow_of(cur);
         if (shadow) {
             *shadow = 0;
+        }
+    }
+    /* Tail granule: first (end & 7) bytes addressable, rest poisoned. */
+    if ((end & 7u) != 0) {
+        uint8_t *shadow = kasan_shadow_of(cur);
+        if (shadow) {
+            *shadow = (uint8_t)(end & 7u);
         }
     }
 }
@@ -86,7 +132,35 @@ static void kasan_check(uint32_t type, uint32_t addr, uint32_t size) {
 
     for (scan = addr; scan < end_addr; scan = (scan & ~7u) + 8u) {
         uint8_t *shadow = kasan_shadow_of(scan);
-        if (shadow && *shadow != 0) {
+        uint32_t base = 0;
+        uint32_t acc_start = 0;
+        uint32_t acc_end = 0;
+        uint8_t value = 0;
+
+        if (!shadow) {
+            continue;
+        }
+        value = *shadow;
+        if (value == 0) {
+            continue;
+        }
+        base = scan & ~7u;
+        acc_start = (addr > base) ? addr : base;
+        acc_end = ((base + 8u) < end_addr) ? (base + 8u) : end_addr;
+        if (value < 8u) {
+            /* 1..7: first `value` bytes addressable, rest poisoned. */
+            if (acc_end - base > value) {
+                kasan_report(type, addr, size);
+                return;
+            }
+        } else if (value >= 0xf1u && value <= 0xf7u) {
+            /* 0xf1..0xf7: first (value & 7) bytes poisoned, rest addressable. */
+            if (acc_start - base < (uint32_t)(value & 7u)) {
+                kasan_report(type, addr, size);
+                return;
+            }
+        } else {
+            /* 0x80..0xf0 / 0xf8..0xff: fully poisoned. */
             kasan_report(type, addr, size);
             return;
         }
