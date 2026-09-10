@@ -18,12 +18,15 @@
  *   9 = memset overflow : memset() writes past a block into the header
  *  10 = quarantine      : a freed block is held (not reused by the next
  *                         same-size malloc), so a stale write still traps
+ *  11 = global overflow : a write past a global array hits its compiler-
+ *                         generated redzone (--param asan-globals=1)
  */
 #include "kasan.h"
 #include <stdint.h>
 #include <string.h>
 
 volatile uint32_t g_sink;
+uint32_t g_arr[10];   /* global; non-volatile so the OOB store is instrumented */
 
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
@@ -124,6 +127,11 @@ int main(void) {
             a[0] = 0x33;                  /* UAF via old pointer -> trap */
         }
         g_sink = b[0];
+    }
+#elif KHEAP_CASE == 11
+    {
+        g_arr[10] = 0xAA;                 /* global OOB -> trap */
+        g_sink = g_arr[0];
     }
 #endif
 

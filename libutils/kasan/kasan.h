@@ -159,6 +159,14 @@ void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count);
  * before a memory-critical section, or in tests). */
 void kasan_quarantine_drain(void);
 
+/* Global-variable redzone registration: called by the compiler-generated
+ * .init_array when the app is built with -fsanitize=kernel-address
+ * --param asan-globals=1.  The struct layout is fixed by the compiler (one
+ * 32-byte record per instrumented global on a 32-bit target). */
+struct __asan_global;
+void __asan_register_globals(struct __asan_global *globals, uint32_t n);
+void __asan_unregister_globals(struct __asan_global *globals, uint32_t n);
+
 /* Fault report side-channel: kasan_report() parks the fault info in the
  * markers below then traps (the QEMU test reads them via gdb; a real port
  * can hook an UART/tracer sink instead).  Define KASAN_TEST_RETURNS to make

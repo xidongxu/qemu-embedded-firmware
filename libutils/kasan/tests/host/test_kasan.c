@@ -433,6 +433,37 @@ static void test_quarantine(void) {
     kasan_quarantine_drain();
 }
 
+static void test_global_redzone(void) {
+    struct __asan_global globals[1];
+    uint32_t beg = KASAN_REGION_BASE + 256u;
+    uint32_t before = 0;
+
+    kasan_init();
+    globals[0].beg = (const volatile void *)(uintptr_t)beg;
+    globals[0].size = 8u;
+    globals[0].size_with_redzone = 32u;
+    globals[0].name = "g";
+    globals[0].module_name = "t";
+    globals[0].has_dynamic_init = 0;
+    globals[0].location = 0;
+    globals[0].odr_indicator = 0;
+
+    __asan_register_globals(globals, 1u);
+    assert(sh_at(beg) == 0);                 /* object body addressable */
+    assert(sh_at(beg + 8u) == KASAN_POISON_GLOBAL);
+    assert(sh_at(beg + 24u) == KASAN_POISON_GLOBAL);
+    assert(sh_at(beg + 32u) == 0);           /* past the redzone */
+
+    before = kasan_reports;
+    __asan_store4_noabort(beg + 8u);         /* OOB write into the redzone */
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 1u);
+    assert(kasan_report_shadow == KASAN_POISON_GLOBAL);
+
+    __asan_unregister_globals(globals, 1u);
+    assert(sh_at(beg + 8u) == 0);            /* unregister unpoisons */
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -450,6 +481,7 @@ int main(void) {
     test_report_semantics();
     test_wrap_copy();
     test_quarantine();
+    test_global_redzone();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

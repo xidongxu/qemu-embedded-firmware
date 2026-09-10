@@ -16,6 +16,8 @@ double-free 即时捕获。配合 GCC `-fsanitize=kernel-address` 使用：被�
 - `free` 后整块重新 poison → 之后任何访问即 UAF 捕获。
 - `free` 后的块进入 **quarantine**：延迟归还分配器并保持 poison，块被复用后
   经旧指针的访问依然能被捕获（检测窗口更长）。
+- 配合 `--param asan-globals=1`，全局变量的编译器生成 redzone 也被毒化，全局
+  数组越界写同样当场捕获（shadow `0xf8`）。
 - 存活分配记录表校验 → double-free / bad-free 捕获；UAF / double-free 报告
   附带分配点与释放点 PC（`kasan_report_alloc_pc` / `kasan_report_free_pc`，
   记录表被复用后可能为 0）。
@@ -25,8 +27,8 @@ MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区�
 
 影子字节按 8 字节粒度编码：`0x00` 全可访问、`0x01–0x07` 前 N 字节可访问、
 `0xf1–0xf7` 前 N 字节 poison、`0xfa` freed（UAF）、`0xfb` redzone（块头 /
-空闲区）、`0xff` 通用 poison。块尺寸非 8 倍数时，尾部用 partial 编码精确
-标记，尾部 4 字节的越界也能被捕获。
+空闲区）、`0xf8` 全局变量 redzone、`0xff` 通用 poison。块尺寸非 8 倍数时，
+尾部用 partial 编码精确标记，尾部 4 字节的越界也能被捕获。
 
 报告除 `kasan_report_{type,addr,size,shadow,pc}` 外，还提供 `kasan_report_cause`
 （1=redzone 越界 2=freed UAF 3=partial 边界 4=通用 poison）、
@@ -39,9 +41,14 @@ MCU 内存布局；定义 `KASAN_SHADOW_BASE` 可改用独立 RAM 段（整区�
 1. 被测目标加编译选项 + 链接本库：
 
 ```cmake
-target_compile_options(<app> PRIVATE -fsanitize=kernel-address)
+target_compile_options(<app> PRIVATE
+    -fsanitize=kernel-address --param asan-globals=1)
 target_link_libraries(<app> PRIVATE kasan)
 ```
+
+> `--param asan-globals=1` 让编译器为每个全局变量生成 redzone 并在 `.init_array`
+> 里调用 `__asan_register_globals`（本库已实现），从而捕获全局数组越界；
+> 不加它就只有堆/指针检查。栈红区在 kernel-address 路线下不支持。
 
 2. 启动时初始化（先注册分配器后端，默认用 TLSF）：
 

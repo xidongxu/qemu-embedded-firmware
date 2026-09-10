@@ -9,9 +9,10 @@
  * Shadow semantics (ASan): one shadow byte per 8-byte granule.  0x00 = fully
  * addressable, 0x01-0x07 = first N bytes addressable, 0xf1-0xf7 = first N
  * bytes poisoned, 0xFA = freed (use-after-free), 0xFB = redzone (header /
- * free block / unused arena), 0xff = generic poisoned.  Only live-allocation
- * user areas are unpoisoned, so any access to a header, free block or unused
- * byte is caught on the spot.
+ * free block / unused arena), 0xF8 = global-variable redzone,
+ * 0xff = generic poisoned.  Only live-allocation user areas are unpoisoned,
+ * so any access to a header, free block or unused byte is caught on the
+ * spot.
  */
 #include "kasan.h"
 
@@ -26,9 +27,11 @@ volatile uint32_t kasan_report_alloc_pc = 0;
 volatile uint32_t kasan_report_free_pc = 0;
 volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
 
-/* Semantic poison values (cf. Linux ASan 0xFA freed / 0xFB redzone). */
+/* Semantic poison values (cf. Linux ASan 0xFA freed / 0xFB redzone /
+ * 0xF8 global redzone). */
 #define KASAN_POISON_FREED     0xFAu
 #define KASAN_POISON_REDZONE   0xFBu
+#define KASAN_POISON_GLOBAL    0xF8u
 #define KASAN_SHADOW_NO_SHADOW 0xEEu
 
 /* Classify a shadow byte for the report: 0=addressable, 1=redzone,
@@ -43,7 +46,7 @@ static uint32_t kasan_cause_of(uint8_t value) {
     if (value == KASAN_POISON_FREED) {
         return 2;
     }
-    if (value == KASAN_POISON_REDZONE) {
+    if (value == KASAN_POISON_REDZONE || value == KASAN_POISON_GLOBAL) {
         return 1;
     }
     return 4;
@@ -61,6 +64,8 @@ static uint8_t *kasan_shadow_of(uint32_t addr) {
     return shadow;
 }
 
+static void kasan_poison_globals(void);
+
 void kasan_init(void) {
     volatile uint8_t *shadow = (volatile uint8_t *)(uintptr_t)KASAN_SHADOW_BASE;
     uint32_t index = 0;
@@ -68,6 +73,7 @@ void kasan_init(void) {
     for (index = 0; index < KASAN_SHADOW_SIZE; index++) {
         shadow[index] = 0;
     }
+    kasan_poison_globals();
 }
 
 const char *kasan_shadow_name(uint8_t value) {
@@ -85,6 +91,9 @@ const char *kasan_shadow_name(uint8_t value) {
     }
     if (value == KASAN_POISON_REDZONE) {
         return "redzone";
+    }
+    if (value == KASAN_POISON_GLOBAL) {
+        return "global-redzone";
     }
     if (value == KASAN_SHADOW_NO_SHADOW) {
         return "no-shadow";
@@ -205,6 +214,66 @@ void kasan_unpoison(uint32_t addr, uint32_t len) {
         if (shadow) {
             *shadow = (uint8_t)(end & 7u);
         }
+    }
+}
+
+/* ---- global-variable redzone registration --------------------------------
+ * The compiler (app built with -fsanitize=kernel-address
+ * --param asan-globals=1) emits one struct __asan_global per instrumented
+ * global -- layout fixed, eight 4-byte words on a 32-bit target -- plus a
+ * .init_array call to __asan_register_globals and a .fini_array call to
+ * __asan_unregister_globals.  We remember the table and (re)poison each
+ * global's redzone [beg+size, beg+size_with_redzone).  The .init_array call
+ * runs before kasan_init(), so it only records; kasan_init() zeroes the
+ * shadow and then re-poisons via kasan_poison_globals(). */
+struct __asan_global {
+    const volatile void *beg;
+    uint32_t size;
+    uint32_t size_with_redzone;
+    const char *name;
+    const char *module_name;
+    uint32_t has_dynamic_init;
+    void *location;
+    void *odr_indicator;
+};
+
+static const struct __asan_global *kasan_globals = 0;
+static uint32_t kasan_globals_n = 0;
+
+static void kasan_poison_globals(void) {
+    uint32_t i = 0;
+
+    for (i = 0; i < kasan_globals_n; i++) {
+        const struct __asan_global *g = &kasan_globals[i];
+        uint32_t beg = (uint32_t)(uintptr_t)g->beg;
+
+        if (g->size_with_redzone > g->size) {
+            kasan_poison_as(beg + g->size, g->size_with_redzone - g->size,
+                            KASAN_POISON_GLOBAL);
+        }
+    }
+}
+
+void __asan_register_globals(struct __asan_global *globals, uint32_t n) {
+    kasan_globals = globals;
+    kasan_globals_n = n;
+    kasan_poison_globals();
+}
+
+void __asan_unregister_globals(struct __asan_global *globals, uint32_t n) {
+    uint32_t i = 0;
+
+    for (i = 0; i < n; i++) {
+        uint32_t beg = (uint32_t)(uintptr_t)globals[i].beg;
+
+        if (globals[i].size_with_redzone > globals[i].size) {
+            kasan_unpoison(beg + globals[i].size,
+                           globals[i].size_with_redzone - globals[i].size);
+        }
+    }
+    if (globals == kasan_globals) {
+        kasan_globals = 0;
+        kasan_globals_n = 0;
     }
 }
 
