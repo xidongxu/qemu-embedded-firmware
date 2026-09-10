@@ -7,12 +7,13 @@
  * keeps the shadow map and the live-allocation record table.
  *
  * Shadow semantics (ASan): one shadow byte per 8-byte granule.  0x00 = fully
- * addressable, 0x01-0x07 = first N bytes addressable, 0xf1-0xf7 = first N
- * bytes poisoned, 0xFA = freed (use-after-free), 0xFB = redzone (header /
- * free block / unused arena), 0xF8 = global-variable redzone,
- * 0xff = generic poisoned.  Only live-allocation user areas are unpoisoned,
- * so any access to a header, free block or unused byte is caught on the
- * spot.
+ * addressable, 0x01-0x07 = first N bytes addressable, 0xe1-0xe7 = first N
+ * bytes poisoned (partial granule), 0xf1-0xf3 = stack redzone (left/mid/
+ * right, fully poisoned), 0xF8 = global-variable redzone, 0xFA = freed
+ * (use-after-free), 0xFB = heap redzone (header / free block / unused
+ * arena), 0xff = generic poisoned.  Only live-allocation user areas are
+ * unpoisoned, so any access to a header, free block or unused byte is
+ * caught on the spot.
  */
 #include "kasan.h"
 
@@ -27,11 +28,15 @@ volatile uint32_t kasan_report_alloc_pc = 0;
 volatile uint32_t kasan_report_free_pc = 0;
 volatile uint8_t kasan_report_shadow_dump[KASAN_SHADOW_DUMP];
 
-/* Semantic poison values (cf. Linux ASan 0xFA freed / 0xFB redzone /
- * 0xF8 global redzone). */
+/* Semantic poison values (cf. Linux KASan 0xFA freed / 0xFB heap redzone /
+ * 0xF8 global redzone / 0xF1-0xF3 stack redzone).  The stack redzones are
+ * written inline by the compiler (--param asan-stack=1); this file only
+ * classifies them. */
 #define KASAN_POISON_FREED     0xFAu
 #define KASAN_POISON_REDZONE   0xFBu
 #define KASAN_POISON_GLOBAL    0xF8u
+#define KASAN_POISON_STACK_LEFT  0xF1u
+#define KASAN_POISON_STACK_RIGHT 0xF3u
 #define KASAN_SHADOW_NO_SHADOW 0xEEu
 
 /* Classify a shadow byte for the report: 0=addressable, 1=redzone,
@@ -40,13 +45,14 @@ static uint32_t kasan_cause_of(uint8_t value) {
     if (value == 0) {
         return 0;
     }
-    if (value < 8u || (value >= 0xf1u && value <= 0xf7u)) {
+    if (value < 8u || (value >= 0xe1u && value <= 0xe7u)) {
         return 3;
     }
     if (value == KASAN_POISON_FREED) {
         return 2;
     }
-    if (value == KASAN_POISON_REDZONE || value == KASAN_POISON_GLOBAL) {
+    if (value == KASAN_POISON_REDZONE || value == KASAN_POISON_GLOBAL ||
+        (value >= 0xf1u && value <= 0xf7u)) {
         return 1;
     }
     return 4;
@@ -83,8 +89,11 @@ const char *kasan_shadow_name(uint8_t value) {
     if (value < 8u) {
         return "partial-addressable";
     }
-    if (value >= 0xf1u && value <= 0xf7u) {
+    if (value >= 0xe1u && value <= 0xe7u) {
         return "partial-poisoned";
+    }
+    if (value >= 0xf1u && value <= 0xf7u) {
+        return "stack-redzone";
     }
     if (value == KASAN_POISON_FREED) {
         return "freed";
@@ -192,12 +201,12 @@ void kasan_unpoison(uint32_t addr, uint32_t len) {
         return;
     }
     /* Head granule: leading bytes (previous header) stay poisoned, so mark it
-     * 0xfN (first N poisoned, rest addressable). */
+     * 0xeN (first N poisoned, rest addressable). */
     cur = addr & ~7u;
     if ((addr & 7u) != 0) {
         uint8_t *shadow = kasan_shadow_of(cur);
         if (shadow) {
-            *shadow = (uint8_t)(0xf0u | (addr & 7u));
+            *shadow = (uint8_t)(0xe0u | (addr & 7u));
         }
         cur += 8u;
     }
@@ -307,14 +316,15 @@ static int kasan_check(uint32_t type, uint32_t addr, uint32_t size,
                 kasan_report(type, addr, size, pc, fault);
                 return 1;
             }
-        } else if (value >= 0xf1u && value <= 0xf7u) {
-            /* 0xf1..0xf7: first (value & 7) bytes poisoned, rest addressable. */
+        } else if (value >= 0xe1u && value <= 0xe7u) {
+            /* 0xe1..0xe7: first (value & 7) bytes poisoned, rest addressable. */
             if (acc_start - base < (uint32_t)(value & 7u)) {
                 kasan_report(type, addr, size, pc, acc_start);
                 return 1;
             }
         } else {
-            /* 0x80..0xf0 / 0xf8..0xff: fully poisoned. */
+            /* 0x80..0xe0 / 0xe8..0xff: fully poisoned (incl. 0xf1-0xf3 stack
+             * redzone, written inline by the compiler). */
             kasan_report(type, addr, size, pc, acc_start);
             return 1;
         }

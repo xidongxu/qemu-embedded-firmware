@@ -20,6 +20,8 @@
  *                         same-size malloc), so a stale write still traps
  *  11 = global overflow : a write past a global array hits its compiler-
  *                         generated redzone (--param asan-globals=1)
+ *  12 = stack overflow  : a write past a local buffer hits the compiler-
+ *                         generated stack redzone (--param asan-stack=1)
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -27,6 +29,15 @@
 
 volatile uint32_t g_sink;
 uint32_t g_arr[10];   /* global; non-volatile so the OOB store is instrumented */
+
+/* Stack overflow must happen in a function called AFTER kasan_init(): the
+ * prologue inlines the stack-redzone poison, and kasan_init() zeroes the
+ * whole shadow, so a local in main() itself would be un-poisoned again. */
+__attribute__((noinline))
+static void kasan_stack_oob(void) {
+    volatile char buf[16];
+    buf[16] = 0x42;                       /* stack OOB -> trap */
+}
 
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
@@ -132,6 +143,11 @@ int main(void) {
     {
         g_arr[10] = 0xAA;                 /* global OOB -> trap */
         g_sink = g_arr[0];
+    }
+#elif KHEAP_CASE == 12
+    {
+        kasan_stack_oob();                /* stack OOB -> trap */
+        g_sink = 0;
     }
 #endif
 

@@ -464,6 +464,24 @@ static void test_global_redzone(void) {
     assert(sh_at(beg + 8u) == 0);            /* unregister unpoisons */
 }
 
+static void test_stack_redzone(void) {
+    uint32_t base = KASAN_REGION_BASE + 384u;
+    uint32_t before = 0;
+
+    kasan_init();
+    /* The compiler writes 0xF1 (stack-left redzone) for stack redzones; it
+     * must be treated as FULLY poisoned, so a mid-granule access (byte 4,
+     * not the "first byte") is also caught. */
+    kasan_poison_as(base, 8u, KASAN_POISON_STACK_LEFT);
+    assert(sh_at(base) == KASAN_POISON_STACK_LEFT);
+
+    before = kasan_reports;
+    __asan_store1_noabort(base + 4u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_cause == 1u);
+    assert(kasan_report_shadow == KASAN_POISON_STACK_LEFT);
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -482,6 +500,7 @@ int main(void) {
     test_wrap_copy();
     test_quarantine();
     test_global_redzone();
+    test_stack_redzone();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

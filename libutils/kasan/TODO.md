@@ -43,25 +43,29 @@
 
 ## 三、覆盖范围与工程项（P2，按场景）
 
-### 6. 栈红区 / 全局红区（全局 ✅ 已实现 / 栈 ⛔ 不可行）
-- **全局红区 ✅ 已实现（2026-09-10）**：
+### 6. 栈红区 / 全局红区 ✅ 均已实现
+- **全局红区 ✅（2026-09-10）**：
   - 关键：`-fsanitize=kernel-address` **必须配合 `--param asan-globals=1`** 才会让编译器
     生成全局 redzone padding + `struct __asan_global` 描述符 + `.init_array` 调用
     `__asan_register_globals`（裸 kernel-address 不生成这些，之前因此误判为不可行）。
   - 实现：kasan.c 提供 `__asan_register_globals` / `__asan_unregister_globals`（记录描述符表，
     `kasan_init` 清零 shadow 后重新毒化每个全局的 `[beg+size, beg+size_with_redzone)` 为 `0xF8`）。
     编译器插桩边界：仅「越界 / 无法静态证明在对象范围内」的全局访问插桩，边界内常量下标跳过。
-  - 验证：host reports=13（test_global_redzone：构造描述符 → register 毒化 → store4 越界
-    cause=1 shadow=0xF8 → unregister 反毒化）；QEMU case11（`g_arr[10]` 全局越界 store
+  - 验证：host reports=13（test_global_redzone）；QEMU case11（`g_arr[10]` 全局越界
     shadow=0xF8 cause=1），case1-10 全回归过。
-- **栈红区 ⛔ 自动检测不可行（瓶颈是 redzone 毒化，不是检查）**：
-  - 栈越界访问**会插桩** `__asan_storeN_noabort`（前提：访问未被优化掉——volatile 或真实被使用
-    的变量会保留；纯死存储 `buf[16]=x` 后不再读、函数即返回，会被 dead-store elimination
-    消除，就看不到插桩）。之前误判"栈完全不插桩"正是用了非 volatile 死存储用例。
-  - 但 kernel-address **不毒化栈 redzone**：`--param asan-stack=1` 无效（不生成
-    `__asan_stack_malloc` / 栈 prologue 毒化），越界检查命中 shadow=0 → 放行。
-  - **手动栈红区可行**：手动 `kasan_poison` 栈帧 redzone 后，越界访问（被插桩的）即可捕获；
-    自动栈红区需换普通 `-fsanitize=address` 路线（内联 shadow 硬编码 + TZ BusFault），暂不做。
+- **栈红区 ✅（2026-09-11）**：
+  - 关键：`--param asan-stack=1` **必须配合 `-fasan-shadow-offset=<offset>`** 才会让编译器
+    内联毒化每个函数的栈 redzone（0xF1 左 / 0xF3 右，整 granule 毒化）。offset 必须恒等于
+    `KASAN_SHADOW_BASE - KASAN_REGION_BASE/8`（默认 0x70038000），换板改宏要同步改。
+  - **编码冲突修复**：编译器栈 redzone 用 0xF1-F3，与库原来非标准的「0xF1-F7 = 前 N 毒化
+    partial」冲突 → partial-poisoned 移到 **0xE1-0xE7**，0xF1-F3 对齐标准栈 redzone
+    （cause=1，shadow_name="stack-redzone"）。堆路径从不产生 0xF1-F7（块 8 对齐），故零破坏。
+  - **顺序约束**：`kasan_init()` 清零 shadow，会覆盖调用它**之前**毒化的栈 redzone（如 main
+    自身 prologue）→ 栈检测只对 kasan_init **之后**调用的函数有效。真实场景天然满足；测试用例
+    的栈越界必须放独立函数（QEMU case12 用 noinline 辅助函数）。
+  - **栈膨胀**：每函数栈帧 +~64B（redzone + fake-stack 描述符），RTOS 小栈要配大。
+  - 验证：host reports=14（test_stack_redzone：0xF1 整 granule 毒化、mid-granule 访问被拦）；
+    QEMU case12（独立函数 `buf[16]` 栈越界 shadow=0xF3 cause=1），case1-11 全回归过。
 
 ### 7. 多区域覆盖
 - 现状只覆盖 `KASAN_REGION` 一个区，区外（栈/全局/外设）`shadow_of` 返 0 直接放行。
