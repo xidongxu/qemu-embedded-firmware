@@ -78,8 +78,8 @@
   每段各映射一段 shadow；外设访问仍应放行（MMIO 不该被 shadow 检查拦）。
 
 ### 8. 其他工程项
-- 记录表压缩：现 20 字节/条（含 alloc/free pc）= 80KB；state 塞 ptr 低 3 位可 20B→16B，
-  若去掉 alloc/free pc 可再压（与 P1#5 调用点功能有张力，按需取舍）。
+- 记录表压缩 ✅ 已完成：state（2 位）打包进 8 对齐 ptr 的低 3 位，20B→16B/条
+  （4096=64KB），保留 alloc_pc/free_pc（P1#5 调用点功能不受影响）。
 - 报告 sink ✅ 已完成：`kasan_set_report_sink(fn)` 注册回调（type/addr/size/shadow/cause/
   pc/alloc_pc/free_pc），kasan_report 在 trap 前调用；QEMU 测试带 mps2-an505 CMSDK UART
   sink 示例（`-serial stdio` 可见 "KASAN fault: ..."）。顺带修复 startup_asan.s 的 init_loop
@@ -107,7 +107,7 @@
      在 n≥1 不可靠。要么全局 `-fno-omit-frame-pointer`（代码膨胀、寄存器压力↑、
      混合编译选项会断链）；要么运行时栈展开器（解析 `.ARM.exidx`，几 KB 代码 +
      每函数一条展开数据，还要处理 PSP/MSP/EXC_RETURN）。
-  2. **存储链贵**：每层 4 字节，8 层 = +28B/条 → 记录表从 80KB 涨到 ~196KB；
+  2. **存储链贵**：每层 4 字节，8 层 = +28B/条 → 记录表从 64KB 涨到 ~176KB；
      用 stack depot 去重则引入哈希表 + 引用计数 + 锁 + 独立内存池（又回到「用谁的
      malloc 给 depot 分内存」）。
   3. addr2line 符号解析**不是**成本点——host 离线做，免费（现状已在这么做）。

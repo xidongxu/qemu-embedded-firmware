@@ -69,11 +69,12 @@ extern "C" {
 #endif
 /* Live-allocation record table capacity: the maximum number of SIMULTANEOUS
  * live allocations tracked for double-free / bad-free detection.  Each entry
- * is 20 bytes (ptr + size + state + alloc_pc + free_pc) on 32-bit, so 4096
- * entries cost 80 KB of .bss; alloc_pc / free_pc record the call sites of the
- * allocation and the free for UAF / double-free reports.  When the table
- * fills up, bad-free detection degrades gracefully (kasan_live_overflow is
- * set); double-free detection for tracked pointers keeps working. */
+ * is 16 bytes (ptr+state packed + size + alloc_pc + free_pc) on 32-bit, so
+ * 4096 entries cost 64 KB of .bss; the 2-bit state is packed into the low
+ * bits of the 8-aligned pointer.  alloc_pc / free_pc record the call sites
+ * of the allocation and the free for UAF / double-free reports.  When the
+ * table fills up, bad-free detection degrades gracefully (kasan_live_overflow
+ * is set); double-free detection for tracked pointers keeps working. */
 #ifndef KASAN_LIVE_MAX
 #define KASAN_LIVE_MAX 4096u
 #endif

@@ -142,7 +142,7 @@ typedef struct kasan_alloc_backend {
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
 | `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
-| `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 20 字节→约 80 KB；含 alloc/free 调用点；满则关闭 bad-free 探测） |
+| `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 16 字节→约 64 KB；state 打包进 ptr 低 3 位；含 alloc/free 调用点；满则关闭 bad-free 探测） |
 | `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
 | `KASAN_QUARANTINE_MAX` | 64 | 隔离区条数上限 |
 

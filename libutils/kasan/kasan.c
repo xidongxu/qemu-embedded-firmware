@@ -383,14 +383,29 @@ volatile uint32_t kasan_live_overflow = 0;
 #define KASAN_LIVE_STATE_EMPTY 0u
 #define KASAN_LIVE_STATE_LIVE  1u
 #define KASAN_LIVE_STATE_FREED 2u
+#define KASAN_LIVE_STATE_MASK  7u
 
+/* 16-byte record: state (2 bits) is packed into the low bits of ptr, which is
+ * always 8-aligned (tlsf_memalign(tlsf, 8, ...)), so the low 3 bits are free. */
 typedef struct {
-    uint32_t ptr;
+    uint32_t ptr_state;
     uint32_t size;
-    uint32_t state;
     uint32_t alloc_pc;
     uint32_t free_pc;
 } kasan_live_entry_t;
+
+static uint32_t kasan_live_ptr(const kasan_live_entry_t *e) {
+    return e->ptr_state & ~KASAN_LIVE_STATE_MASK;
+}
+
+static uint32_t kasan_live_state(const kasan_live_entry_t *e) {
+    return e->ptr_state & KASAN_LIVE_STATE_MASK;
+}
+
+static void kasan_live_set(kasan_live_entry_t *e, uint32_t ptr, uint32_t state) {
+    e->ptr_state = (ptr & ~KASAN_LIVE_STATE_MASK) |
+                   (state & KASAN_LIVE_STATE_MASK);
+}
 
 static kasan_live_entry_t kasan_live_table[KASAN_LIVE_MAX];
 static const kasan_alloc_backend_t *kasan_backend = 0;
@@ -411,9 +426,8 @@ static uint32_t kasan_quarantine_bytes = 0;
 static void kasan_live_reset(void) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        kasan_live_table[i].ptr = 0;
+        kasan_live_table[i].ptr_state = 0;
         kasan_live_table[i].size = 0;
-        kasan_live_table[i].state = KASAN_LIVE_STATE_EMPTY;
         kasan_live_table[i].alloc_pc = 0;
         kasan_live_table[i].free_pc = 0;
     }
@@ -423,10 +437,9 @@ static void kasan_live_reset(void) {
 static void kasan_live_add(uint32_t ptr, uint32_t size, uint32_t alloc_pc) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].state != KASAN_LIVE_STATE_LIVE) {
-            kasan_live_table[i].ptr = ptr;
+        if (kasan_live_state(&kasan_live_table[i]) != KASAN_LIVE_STATE_LIVE) {
+            kasan_live_set(&kasan_live_table[i], ptr, KASAN_LIVE_STATE_LIVE);
             kasan_live_table[i].size = size;
-            kasan_live_table[i].state = KASAN_LIVE_STATE_LIVE;
             kasan_live_table[i].alloc_pc = alloc_pc;
             kasan_live_table[i].free_pc = 0;
             return;
@@ -438,10 +451,10 @@ static void kasan_live_add(uint32_t ptr, uint32_t size, uint32_t alloc_pc) {
 static int kasan_live_find(uint32_t ptr, uint32_t *size, uint32_t *state) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].ptr == ptr &&
-            kasan_live_table[i].state != KASAN_LIVE_STATE_EMPTY) {
+        if (kasan_live_ptr(&kasan_live_table[i]) == ptr &&
+            kasan_live_state(&kasan_live_table[i]) != KASAN_LIVE_STATE_EMPTY) {
             *size = kasan_live_table[i].size;
-            *state = kasan_live_table[i].state;
+            *state = kasan_live_state(&kasan_live_table[i]);
             return 1;
         }
     }
@@ -451,9 +464,9 @@ static int kasan_live_find(uint32_t ptr, uint32_t *size, uint32_t *state) {
 static void kasan_live_mark_freed(uint32_t ptr, uint32_t free_pc) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].ptr == ptr &&
-            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
-            kasan_live_table[i].state = KASAN_LIVE_STATE_FREED;
+        if (kasan_live_ptr(&kasan_live_table[i]) == ptr &&
+            kasan_live_state(&kasan_live_table[i]) == KASAN_LIVE_STATE_LIVE) {
+            kasan_live_set(&kasan_live_table[i], ptr, KASAN_LIVE_STATE_FREED);
             kasan_live_table[i].free_pc = free_pc;
             return;
         }
@@ -463,8 +476,8 @@ static void kasan_live_mark_freed(uint32_t ptr, uint32_t free_pc) {
 static void kasan_live_update_size(uint32_t ptr, uint32_t size) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].ptr == ptr &&
-            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
+        if (kasan_live_ptr(&kasan_live_table[i]) == ptr &&
+            kasan_live_state(&kasan_live_table[i]) == KASAN_LIVE_STATE_LIVE) {
             kasan_live_table[i].size = size;
             return;
         }
@@ -477,8 +490,8 @@ static void kasan_live_update_size(uint32_t ptr, uint32_t size) {
 static void kasan_live_set_alloc_pc(uint32_t ptr, uint32_t alloc_pc) {
     uint32_t i = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].ptr == ptr &&
-            kasan_live_table[i].state == KASAN_LIVE_STATE_LIVE) {
+        if (kasan_live_ptr(&kasan_live_table[i]) == ptr &&
+            kasan_live_state(&kasan_live_table[i]) == KASAN_LIVE_STATE_LIVE) {
             kasan_live_table[i].alloc_pc = alloc_pc;
             return;
         }
@@ -490,10 +503,11 @@ static void kasan_live_set_alloc_pc(uint32_t ptr, uint32_t alloc_pc) {
 static int kasan_live_find_freed(uint32_t addr, uint32_t *alloc_pc,
                                  uint32_t *free_pc) {
     uint32_t i = 0;
+    uint32_t p = 0;
     for (i = 0; i < KASAN_LIVE_MAX; i++) {
-        if (kasan_live_table[i].state == KASAN_LIVE_STATE_FREED &&
-            addr >= kasan_live_table[i].ptr &&
-            addr < kasan_live_table[i].ptr + kasan_live_table[i].size) {
+        p = kasan_live_ptr(&kasan_live_table[i]);
+        if (kasan_live_state(&kasan_live_table[i]) == KASAN_LIVE_STATE_FREED &&
+            addr >= p && addr < p + kasan_live_table[i].size) {
             *alloc_pc = kasan_live_table[i].alloc_pc;
             *free_pc = kasan_live_table[i].free_pc;
             return 1;
