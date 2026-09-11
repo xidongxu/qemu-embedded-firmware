@@ -63,13 +63,16 @@ zero_loop:
     adds    r0, r0, #4
     b       zero_loop
 zero_done:
-    ldr     r0, =__init_array_start
-    ldr     r1, =__init_array_end
+    /* init_array walk uses r4/r5 (callee-saved): the constructors called via
+     * blx may clobber r0-r3 (AAPCS caller-saved), which would corrupt the
+     * table pointer if it were kept in r0/r1. */
+    ldr     r4, =__init_array_start
+    ldr     r5, =__init_array_end
 init_loop:
-    cmp     r0, r1
+    cmp     r4, r5
     bge     init_done
-    ldr     r2, [r0]
-    adds    r0, r0, #4
+    ldr     r2, [r4]
+    adds    r4, r4, #4
     blx     r2
     b       init_loop
 init_done:

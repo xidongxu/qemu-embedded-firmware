@@ -75,6 +75,18 @@ kasan_heap_init();                               /* 建堆 arena */
    分配器，延长 UAF 检测窗口；`kasan_quarantine_drain()` 可立即释放全部
    隔离块。
 
+4. （可选）注册报告 sink，把故障打印到 UART / tracer（默认只写 marker 后
+   trap）：
+
+```c
+static void my_sink(uint32_t type, uint32_t addr, uint32_t size,
+                    uint32_t shadow, uint32_t cause, uint32_t pc,
+                    uint32_t alloc_pc, uint32_t free_pc) {
+    /* 打印 / 记录故障详情，如 "KASAN: type=... addr=... shadow=..." */
+}
+kasan_set_report_sink(my_sink);
+```
+
 > 本库**必须无 sanitize 编译**（`kasan.c` 需直碰 shadow / poison 区）；
 > 只有"被测代码"插桩。
 

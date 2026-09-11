@@ -127,6 +127,12 @@ void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count) {
 static int kasan_live_find_freed(uint32_t addr, uint32_t *alloc_pc,
                                  uint32_t *free_pc);
 
+static kasan_report_sink_fn kasan_report_sink = 0;
+
+void kasan_set_report_sink(kasan_report_sink_fn sink) {
+    kasan_report_sink = sink;
+}
+
 static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
                          uint32_t pc, uint32_t fault_addr) {
     uint8_t *shadow = kasan_shadow_of(fault_addr);
@@ -147,6 +153,10 @@ static void kasan_report(uint32_t type, uint32_t addr, uint32_t size,
     kasan_report_free_pc = free_pc;
     kasan_shadow_dump(fault_addr, (uint8_t *)kasan_report_shadow_dump,
                       KASAN_SHADOW_DUMP);
+    if (kasan_report_sink) {
+        kasan_report_sink(type, addr, size, shadow ? *shadow : 0,
+                          kasan_report_cause, pc, alloc_pc, free_pc);
+    }
 #ifndef KASAN_TEST_RETURNS
     for (;;) {
     }

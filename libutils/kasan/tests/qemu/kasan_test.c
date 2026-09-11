@@ -39,8 +39,65 @@ static void kasan_stack_oob(void) {
     buf[16] = 0x42;                       /* stack OOB -> trap */
 }
 
+/* mps2-an505 CMSDK UART @0x40200000.  QEMU's cmsdk-uart needs BAUDDIV set
+ * (0x40200010 = 16) or TX is silent. */
+#define UART_BASE    0x40200000u
+#define UART_DATA    (*(volatile uint32_t *)(UART_BASE + 0x00u))
+#define UART_STATE   (*(volatile uint32_t *)(UART_BASE + 0x04u))
+#define UART_CTRL    (*(volatile uint32_t *)(UART_BASE + 0x08u))
+#define UART_BAUDDIV (*(volatile uint32_t *)(UART_BASE + 0x10u))
+
+static void uart_init(void) {
+    UART_BAUDDIV = 16u;
+    UART_CTRL = 1u;                       /* TX enable */
+}
+
+static void uart_putc(char c) {
+    while (UART_STATE & 2u) {             /* TX FIFO full */
+    }
+    UART_DATA = (uint32_t)c;
+}
+
+static void uart_puts(const char *s) {
+    while (*s != 0) {
+        uart_putc(*s);
+        s++;
+    }
+}
+
+static void uart_put_hex(uint32_t v) {
+    uint32_t i = 0;
+    uart_puts("0x");
+    for (i = 0; i < 8u; i++) {
+        uint32_t nib = (v >> (28u - i * 4u)) & 0xFu;
+        uart_putc((char)(nib < 10u ? (uint32_t)'0' + nib
+                                   : (uint32_t)'a' + nib - 10u));
+    }
+}
+
+/* Report sink: print a human-readable line over the UART before trapping. */
+static void kasan_uart_sink(uint32_t type, uint32_t addr, uint32_t size,
+                            uint32_t shadow, uint32_t cause, uint32_t pc,
+                            uint32_t alloc_pc, uint32_t free_pc) {
+    (void)size;
+    (void)pc;
+    (void)alloc_pc;
+    (void)free_pc;
+    uart_puts("\r\nKASAN fault: type=");
+    uart_put_hex(type);
+    uart_puts(" addr=");
+    uart_put_hex(addr);
+    uart_puts(" shadow=");
+    uart_put_hex(shadow);
+    uart_puts(" cause=");
+    uart_put_hex(cause);
+    uart_puts("\r\n");
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
+    uart_init();
+    kasan_set_report_sink(kasan_uart_sink);
     kasan_init();
     kasan_heap_init();
 

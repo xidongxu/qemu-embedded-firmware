@@ -159,6 +159,15 @@ void kasan_shadow_dump(uint32_t addr, uint8_t *out, uint32_t count);
  * before a memory-critical section, or in tests). */
 void kasan_quarantine_drain(void);
 
+/* Optional report sink: invoked by kasan_report() with the fault details
+ * before it traps.  Register a UART / tracer dump here; the default (no sink)
+ * only parks the kasan_* markers and traps. */
+typedef void (*kasan_report_sink_fn)(uint32_t type, uint32_t addr,
+                                     uint32_t size, uint32_t shadow,
+                                     uint32_t cause, uint32_t pc,
+                                     uint32_t alloc_pc, uint32_t free_pc);
+void kasan_set_report_sink(kasan_report_sink_fn sink);
+
 /* Global-variable redzone registration: called by the compiler-generated
  * .init_array when the app is built with -fsanitize=kernel-address
  * --param asan-globals=1.  The struct layout is fixed by the compiler (one

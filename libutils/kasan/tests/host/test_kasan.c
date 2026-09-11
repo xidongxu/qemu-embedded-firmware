@@ -482,6 +482,51 @@ static void test_stack_redzone(void) {
     assert(kasan_report_shadow == KASAN_POISON_STACK_LEFT);
 }
 
+static uint32_t s_sink_calls = 0;
+static uint32_t s_sink_type = 0;
+static uint32_t s_sink_addr = 0;
+static uint32_t s_sink_shadow = 0;
+static uint32_t s_sink_cause = 0;
+
+static void record_sink(uint32_t type, uint32_t addr, uint32_t size,
+                        uint32_t shadow, uint32_t cause, uint32_t pc,
+                        uint32_t alloc_pc, uint32_t free_pc) {
+    (void)size;
+    (void)pc;
+    (void)alloc_pc;
+    (void)free_pc;
+    s_sink_calls++;
+    s_sink_type = type;
+    s_sink_addr = addr;
+    s_sink_shadow = shadow;
+    s_sink_cause = cause;
+}
+
+static void test_report_sink(void) {
+    uint8_t *p = 0;
+    uint32_t up = 0;
+    uint32_t before = 0;
+
+    kasan_heap_init();
+    kasan_set_report_sink(record_sink);
+
+    p = (uint8_t *)kasan_malloc(16u);
+    assert(p != 0);
+    up = (uint32_t)(uintptr_t)p;
+    kasan_free(p);
+
+    before = kasan_reports;
+    __asan_store1_noabort(up);   /* UAF -> report invokes the sink */
+    assert(kasan_reports == before + 1u);
+    assert(s_sink_calls == 1u);
+    assert(s_sink_type == 2u);              /* store */
+    assert(s_sink_addr == up);
+    assert(s_sink_shadow == KASAN_POISON_FREED);
+    assert(s_sink_cause == 2u);             /* freed */
+
+    kasan_set_report_sink(0);               /* unregister */
+}
+
 int main(void) {
     kasan_set_alloc_backend(kasan_tlsf_backend());
     test_shadow_api();
@@ -501,6 +546,7 @@ int main(void) {
     test_quarantine();
     test_global_redzone();
     test_stack_redzone();
+    test_report_sink();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
     return 0;

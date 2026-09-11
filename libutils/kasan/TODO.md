@@ -80,7 +80,11 @@
 ### 8. 其他工程项
 - 记录表压缩：现 20 字节/条（含 alloc/free pc）= 80KB；state 塞 ptr 低 3 位可 20B→16B，
   若去掉 alloc/free pc 可再压（与 P1#5 调用点功能有张力，按需取舍）。
-- 报告 sink 接 UART/tracer（现在只有 gdb marker + 死循环）。
+- 报告 sink ✅ 已完成：`kasan_set_report_sink(fn)` 注册回调（type/addr/size/shadow/cause/
+  pc/alloc_pc/free_pc），kasan_report 在 trap 前调用；QEMU 测试带 mps2-an505 CMSDK UART
+  sink 示例（`-serial stdio` 可见 "KASAN fault: ..."）。顺带修复 startup_asan.s 的 init_loop
+  潜伏 bug：原用 r0/r1 存 init_array 指针，blx 构造函数会破坏 r0-r3（caller-saved），全局
+  数>2 时第二次迭代读垃圾地址跳 0x80038000（栈顶）INVSTATE；改用 r4/r5（callee-saved）。
 - 无锁：记录表/shadow 更新在多任务/中断下有竞态（需要时再加临界区）。
 - tests 矩阵脚本化 ✅ 已完成：`tests/qemu/run_matrix.py` 一次跑 case1-12 判 PASS（读 gdb
   marker 对照预期，全过退出码 0）；host ctest 已验证（`cmake -B build-host -S
