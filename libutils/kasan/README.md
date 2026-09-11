@@ -173,11 +173,25 @@ cmake --build build-host && ctest --test-dir build-host
 `tests/qemu` 编一个 `-fsanitize=kernel-address` 插桩裸机镜像，`KASAN_TEST_CASE`
 注入故障（1=堆越界 / 2=UAF / 3=double-free / 4=堆前越界 underflow /
 5=realloc 迁移后旧指针 UAF / 6=realloc 缩容写入释放尾巴 / 7=partial 尾部
-越界 / 8=memcpy 读越界 / 9=memset 写越界），报告落 `kasan_*`
-marker 供 gdb 读取判 PASS。
+越界 / 8=memcpy 读越界 / 9=memset 写越界 / 10=quarantine / 11=全局越界 /
+12=栈越界），报告落 `kasan_*` marker 供 gdb 读取判 PASS。
+
+单 case 构建（调试用）：
 
 ```bash
 cmake -B build -S . -DBOARD=mps2-an505 -DKASAN_BUILD_TESTS=ON \
       -DKASAN_TEST_CASE=1
 cmake --build build --target kasan_qemu_test
 ```
+
+全矩阵回归（`run_matrix.py` 一次跑 case 1–12，读 gdb marker 对照预期，全过
+退出码 0）：
+
+```bash
+python tests/qemu/run_matrix.py --build build-kasan \
+    --qemu <qemu-system-arm> --gdb <arm-none-eabi-gdb> --cmake <cmake>
+```
+
+注意：QEMU 用例的 `--param asan-globals=1 --param asan-stack=1
+-fasan-shadow-offset=0x70038000` 已由 `tests/qemu/CMakeLists.txt` 加上，
+offset 与 `kasan.h` 的 REGION 宏绑定（换板需同步）。

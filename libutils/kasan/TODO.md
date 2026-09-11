@@ -3,8 +3,9 @@
 > 记录日期：2026-09-09。来源：本库与 Linux KASan（generic）+ slab 的逐项对比。
 > 用法：按优先级逐项推进，每完成一项打勾并记录 commit。
 >
-> 进度（2026-09-11）：P0#1/#2、P1#3/#4/#5、P2#6 全部 ✅ 完成；剩余 P2#7 多区域覆盖、
-> P2#8 工程项。测试现状：host reports=14 全过；QEMU case1-12 全过。
+> 进度（2026-09-11）：P0#1/#2、P1#3/#4/#5、P2#6 全部 ✅；P2#8 的 tests 矩阵脚本化 ✅。
+> 剩余 P2#7 多区域覆盖、P2#8（记录表压缩 / UART sink / 锁）。
+> 测试现状：host reports=14 全过；QEMU case1-12 全过（run_matrix.py）。
 
 ## 一、正确性缺陷（P0，先修）
 
@@ -81,7 +82,9 @@
   若去掉 alloc/free pc 可再压（与 P1#5 调用点功能有张力，按需取舍）。
 - 报告 sink 接 UART/tracer（现在只有 gdb marker + 死循环）。
 - 无锁：记录表/shadow 更新在多任务/中断下有竞态（需要时再加临界区）。
-- tests 矩阵脚本化（一次跑 QEMU case 1–12 判 PASS）+ host ctest 常规化（现在手动逐 case）。
+- tests 矩阵脚本化 ✅ 已完成：`tests/qemu/run_matrix.py` 一次跑 case1-12 判 PASS（读 gdb
+  marker 对照预期，全过退出码 0）；host ctest 已验证（`cmake -B build-host -S
+  libutils/kasan -DKASAN_BUILD_TESTS=ON` + `ctest --test-dir build-host`）。
 
 ## 已对齐（不需要做）
 - 编译器插桩模型（每次访存查 shadow）、shadow 映射（addr>>3 + base）、堆越界/UAF/double-free 即时捕获、可插拔分配器后端。
