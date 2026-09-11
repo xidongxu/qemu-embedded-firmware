@@ -22,6 +22,8 @@
  *                         generated redzone (--param asan-globals=1)
  *  12 = stack overflow  : a write past a local buffer hits the compiler-
  *                         generated stack redzone (--param asan-stack=1)
+ *  13 = multi-region     : a write into a second instrumented segment
+ *                         (0x80100000) is caught by its own shadow map
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -205,6 +207,16 @@ int main(void) {
     {
         kasan_stack_oob();                /* stack OOB -> trap */
         g_sink = 0;
+    }
+#elif KHEAP_CASE == 13
+    {
+        /* A second instrumented segment (0x80100000, 128 KB; its shadow map
+         * is carved from its own tail).  Poison a granule there: the runtime
+         * kasan_shadow_of() maps the extra segment, so the write traps. */
+        volatile uint8_t *seg1 = (volatile uint8_t *)0x80100000u;
+        kasan_poison(0x80100000u, 16u);
+        seg1[8] = 0xAA;                   /* poisoned -> trap */
+        g_sink = seg1[0];
     }
 #endif
 

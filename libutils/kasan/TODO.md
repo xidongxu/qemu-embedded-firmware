@@ -71,11 +71,17 @@
   - 验证：host reports=14（test_stack_redzone：0xF1 整 granule 毒化、mid-granule 访问被拦）；
     QEMU case12（独立函数 `buf[16]` 栈越界 shadow=0xF3 cause=1），case1-11 全回归过。
 
-### 7. 多区域覆盖
-- 现状只覆盖 `KASAN_REGION` 一个区（栈/全局已在区内，P2#6 已覆盖）；真正的区外
-  是外设寄存器、其他 RAM bank、flash 映射等，`shadow_of` 返 0 直接放行。
-- 若要做：`kasan_shadow_of` 支持多段 [region_base, size] 列表（可配 2-4 段），
-  每段各映射一段 shadow；外设访问仍应放行（MMIO 不该被 shadow 检查拦）。
+### 7. 多区域覆盖 ✅ 已完成
+- `kasan_shadow_of` 现按编译期段表匹配（宏展开，无运行时数组开销）：主区域恒为
+  段 0，定义 `KASAN_REGION1_BASE/SIZE`（可选 `KASAN_REGION1_SHADOW_BASE`）加段 1，
+  同理 `KASAN_REGION2_*` 加段 2（最多三段）。每段从各自尾部划影子（inline）或显式
+  指定；`kasan_init` 清零所有段的影子；poison/unpoison/check 自动跨段。
+- 外设（MMIO）仍放行：不进任何段即 `shadow_of` 返 0。
+- **实现注意**：段表用宏展开的 if 链而非 `static const` 数组——host 测试的 region
+  基址是「地址转整数」（`(uint32_t)(uintptr_t)s_region`），不能做静态初始化器。
+- 验证：host `test_multi_region`（reports=16，额外段 poison/unpoison/越界捕获/区外
+  无影子/主区独立）；QEMU case13（额外段 0x80100000 越界 store type=2 shadow=0xFF
+  cause=4），case1-12 全回归过，13/13 PASS。
 
 ### 8. 其他工程项
 - 记录表压缩 ✅ 已完成：state（2 位）打包进 8 对齐 ptr 的低 3 位，20B→16B/条

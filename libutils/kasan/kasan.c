@@ -59,26 +59,44 @@ static uint32_t kasan_cause_of(uint8_t value) {
 }
 
 static uint8_t *kasan_shadow_of(uint32_t addr) {
-    uint8_t *shadow = 0;
-
-    if (addr < KASAN_REGION_BASE ||
-        addr >= KASAN_REGION_BASE + KASAN_USABLE_SIZE) {
-        return 0;
+    if (addr >= KASAN_SEG0_BASE && addr < KASAN_SEG0_BASE + KASAN_SEG0_USABLE) {
+        return (uint8_t *)(uintptr_t)(KASAN_SEG0_SHADOW +
+                                      ((addr - KASAN_SEG0_BASE) >> 3));
     }
-    shadow = (uint8_t *)(uintptr_t)(KASAN_SHADOW_BASE +
-                                    ((addr - KASAN_REGION_BASE) >> 3));
-    return shadow;
+#ifdef KASAN_REGION1_BASE
+    if (addr >= KASAN_SEG1_BASE && addr < KASAN_SEG1_BASE + KASAN_SEG1_USABLE) {
+        return (uint8_t *)(uintptr_t)(KASAN_SEG1_SHADOW +
+                                      ((addr - KASAN_SEG1_BASE) >> 3));
+    }
+#endif
+#ifdef KASAN_REGION2_BASE
+    if (addr >= KASAN_SEG2_BASE && addr < KASAN_SEG2_BASE + KASAN_SEG2_USABLE) {
+        return (uint8_t *)(uintptr_t)(KASAN_SEG2_SHADOW +
+                                      ((addr - KASAN_SEG2_BASE) >> 3));
+    }
+#endif
+    return 0;
 }
 
 static void kasan_poison_globals(void);
 
-void kasan_init(void) {
-    volatile uint8_t *shadow = (volatile uint8_t *)(uintptr_t)KASAN_SHADOW_BASE;
+static void kasan_shadow_clear_segment(uint32_t shadow_base, uint32_t size) {
+    volatile uint8_t *shadow = (volatile uint8_t *)(uintptr_t)shadow_base;
     uint32_t index = 0;
 
-    for (index = 0; index < KASAN_SHADOW_SIZE; index++) {
+    for (index = 0; index < size; index++) {
         shadow[index] = 0;
     }
+}
+
+void kasan_init(void) {
+    kasan_shadow_clear_segment(KASAN_SEG0_SHADOW, KASAN_SEG0_USABLE / 8u);
+#ifdef KASAN_REGION1_BASE
+    kasan_shadow_clear_segment(KASAN_SEG1_SHADOW, KASAN_SEG1_USABLE / 8u);
+#endif
+#ifdef KASAN_REGION2_BASE
+    kasan_shadow_clear_segment(KASAN_SEG2_SHADOW, KASAN_SEG2_USABLE / 8u);
+#endif
     kasan_poison_globals();
 }
 

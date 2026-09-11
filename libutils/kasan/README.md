@@ -141,6 +141,7 @@ typedef struct kasan_alloc_backend {
 | `KASAN_REGION_BASE` | `0x80000000` | 被测区基址（真实 RAM） |
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
+| `KASAN_REGION1_BASE/SIZE` | 未定义 | 额外覆盖段 1（可再加 REGION2）；可选 `KASAN_REGIONn_SHADOW_BASE` 指定影子 |
 | `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
 | `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 16 字节→约 64 KB；state 打包进 ptr 低 3 位；含 alloc/free 调用点；满则关闭 bad-free 探测） |
 | `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
@@ -148,6 +149,12 @@ typedef struct kasan_alloc_backend {
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
+
+**多区域覆盖（可选）**：定义 `KASAN_REGION1_BASE`/`KASAN_REGION1_SIZE`（以及
+`KASAN_REGION2_*`）可再覆盖最多两块 RAM bank，每段从**各自尾部**划出自己的影子
+（或用 `KASAN_REGIONn_SHADOW_BASE` 指定独立影子）。普通指针访问进这些段会经
+runtime 钩子检查；编译器内联的栈/全局红区检查只覆盖主区域。段不得重叠；外设
+（MMIO）不放入任何段即可照常放行。
 
 ## 目录
 

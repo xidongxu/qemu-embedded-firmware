@@ -29,7 +29,15 @@
  * instead (then the whole region stays usable).
  *
  * shadow_of(a) = shadow_base + (a - region_base) / 8, valid only inside the
- * usable part of the region; accesses elsewhere pass through unchecked.
+ * usable part of a covered segment; accesses elsewhere pass through
+ * unchecked.
+ *
+ * Extra memory banks can be covered too: define KASAN_REGION1_BASE / SIZE (and
+ * KASAN_REGION2_BASE / SIZE) to add up to two more instrumented segments,
+ * each with its own shadow map carved from its own tail (or placed by
+ * KASAN_REGIONn_SHADOW_BASE).  Ordinary pointer accesses into those segments
+ * are checked through the runtime hook; the compiler-inlined stack / global
+ * redzone checks only cover the primary region.
  */
 #ifndef KASAN_H
 #define KASAN_H
@@ -56,6 +64,43 @@ extern "C" {
 #define KASAN_USABLE_SIZE (KASAN_SHADOW_BASE - KASAN_REGION_BASE)
 #endif
 #define KASAN_SHADOW_SIZE (KASAN_USABLE_SIZE / 8u)
+
+/* Segment table for the runtime: segment 0 is always the primary region.
+ * Optional extra segments extend coverage to further RAM banks. */
+#define KASAN_SEG0_BASE   KASAN_REGION_BASE
+#define KASAN_SEG0_USABLE KASAN_USABLE_SIZE
+#define KASAN_SEG0_SHADOW KASAN_SHADOW_BASE
+
+#ifdef KASAN_REGION1_BASE
+#ifndef KASAN_REGION1_SIZE
+#error "KASAN_REGION1_BASE requires KASAN_REGION1_SIZE"
+#endif
+#ifdef KASAN_REGION1_SHADOW_BASE
+#define KASAN_SEG1_USABLE KASAN_REGION1_SIZE
+#define KASAN_SEG1_SHADOW KASAN_REGION1_SHADOW_BASE
+#else
+#define KASAN_SEG1_SHADOW (KASAN_REGION1_BASE + KASAN_REGION1_SIZE - \
+                           (KASAN_REGION1_SIZE / 8u))
+#define KASAN_SEG1_USABLE (KASAN_SEG1_SHADOW - KASAN_REGION1_BASE)
+#endif
+#define KASAN_SEG1_BASE KASAN_REGION1_BASE
+#endif
+
+#ifdef KASAN_REGION2_BASE
+#ifndef KASAN_REGION2_SIZE
+#error "KASAN_REGION2_BASE requires KASAN_REGION2_SIZE"
+#endif
+#ifdef KASAN_REGION2_SHADOW_BASE
+#define KASAN_SEG2_USABLE KASAN_REGION2_SIZE
+#define KASAN_SEG2_SHADOW KASAN_REGION2_SHADOW_BASE
+#else
+#define KASAN_SEG2_SHADOW (KASAN_REGION2_BASE + KASAN_REGION2_SIZE - \
+                           (KASAN_REGION2_SIZE / 8u))
+#define KASAN_SEG2_USABLE (KASAN_SEG2_SHADOW - KASAN_REGION2_BASE)
+#endif
+#define KASAN_SEG2_BASE KASAN_REGION2_BASE
+#endif
+
 #ifndef KASAN_HEAP_SIZE
 #define KASAN_HEAP_SIZE (64u * 1024u)
 #endif

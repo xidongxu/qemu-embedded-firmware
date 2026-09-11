@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """QEMU test matrix for the kasan library (mps2-an505).
 
-Builds and runs KASAN_TEST_CASE 1..12, boots each firmware under QEMU, reads
+Builds and runs KASAN_TEST_CASE 1..13, boots each firmware under QEMU, reads
 the kasan_* report markers via gdb and checks them against the expected
 report.  Exit code 0 = all cases pass.
 
 Usage:
   python run_matrix.py --build <dir> --qemu <qemu-system-arm> \\
-                       --gdb <arm-none-eabi-gdb> [--cases 1-12] [--no-build]
+                       --gdb <arm-none-eabi-gdb> [--cases 1-13] [--no-build]
 """
 import argparse
 import os
@@ -30,6 +30,7 @@ EXPECTED = {
     10: (2, 0xFA, 2),   # quarantine UAF
     11: (2, 0xF8, 1),   # global overflow
     12: (2, 0xF3, 1),   # stack overflow
+    13: (2, 0xFF, 4),   # multi-region (extra segment, generic poison)
 }
 
 MARKERS = ("kasan_reports", "kasan_report_type", "kasan_report_shadow",
@@ -118,8 +119,8 @@ def main():
     ap.add_argument("--qemu", required=True, help="path to qemu-system-arm")
     ap.add_argument("--gdb", required=True, help="path to arm-none-eabi-gdb")
     ap.add_argument("--cmake", default="cmake", help="path to cmake")
-    ap.add_argument("--cases", default="1-12",
-                    help="case list, e.g. '1-12' or '1,2,5'")
+    ap.add_argument("--cases", default="1-13",
+                    help="case list, e.g. '1-13' or '1,2,5'")
     ap.add_argument("--port", type=int, default=1237,
                     help="QEMU gdb stub TCP port")
     ap.add_argument("--sleep", type=float, default=2.0,

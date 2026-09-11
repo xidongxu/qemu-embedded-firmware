@@ -29,6 +29,13 @@ static unsigned char s_region[32768] __attribute__((aligned(8)));
 #define KASAN_REGION_SIZE (sizeof(s_region))
 #define KASAN_ARENA_EXT   ((uint32_t)(uintptr_t)s_region + 64u)
 
+/* A second instrumented segment (multi-region coverage): its own shadow is
+ * carved from its own tail, independent of the primary region. */
+static unsigned char s_region1[8192] __attribute__((aligned(8)));
+
+#define KASAN_REGION1_BASE ((uint32_t)(uintptr_t)s_region1)
+#define KASAN_REGION1_SIZE (sizeof(s_region1))
+
 #include "../../kasan.c"
 #include "../../kasan_alloc_tlsf.c"
 #include "../../../../libmem/tlsf/tlsf.c"
@@ -42,6 +49,16 @@ static int sh_at(uint32_t a) {
     }
     shadow_offset = (uint32_t)(KASAN_SHADOW_BASE - KASAN_REGION_BASE);
     return s_region[shadow_offset + ((a - KASAN_REGION_BASE) >> 3)];
+}
+
+static int sh_at1(uint32_t a) {
+    uint32_t shadow_offset = 0;
+
+    if (a < KASAN_SEG1_BASE || a >= KASAN_SEG1_BASE + KASAN_SEG1_USABLE) {
+        return -1;
+    }
+    shadow_offset = (uint32_t)(KASAN_SEG1_SHADOW - KASAN_SEG1_BASE);
+    return s_region1[shadow_offset + ((a - KASAN_SEG1_BASE) >> 3)];
 }
 
 static void test_shadow_api(void) {
@@ -482,6 +499,34 @@ static void test_stack_redzone(void) {
     assert(kasan_report_shadow == KASAN_POISON_STACK_LEFT);
 }
 
+static void test_multi_region(void) {
+    uint32_t base1 = KASAN_SEG1_BASE + 128u;
+    uint32_t before = 0;
+
+    kasan_init();
+    assert(sh_at1(base1) == 0);
+
+    kasan_poison(base1, 16u);
+    assert(sh_at1(base1) == 0xff);
+    assert(sh_at1(base1 + 8u) == 0xff);
+    assert(sh_at1(base1 + 16u) == 0);
+
+    before = kasan_reports;
+    __asan_store1_noabort(base1 + 8u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_shadow == 0xffu);
+
+    kasan_unpoison(base1, 8u);
+    assert(sh_at1(base1) == 0);
+    assert(sh_at1(base1 + 8u) == 0xff);
+
+    /* Beyond the usable tail of the extra segment: no shadow. */
+    assert(sh_at1(KASAN_SEG1_BASE + KASAN_SEG1_USABLE + 16u) == -1);
+
+    /* The primary region is shadowed independently. */
+    assert(sh_at(KASAN_REGION_BASE + 128u) == 0);
+}
+
 static uint32_t s_sink_calls = 0;
 static uint32_t s_sink_type = 0;
 static uint32_t s_sink_addr = 0;
@@ -546,6 +591,7 @@ int main(void) {
     test_quarantine();
     test_global_redzone();
     test_stack_redzone();
+    test_multi_region();
     test_report_sink();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);
