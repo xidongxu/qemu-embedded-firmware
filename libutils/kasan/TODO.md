@@ -3,9 +3,9 @@
 > 记录日期：2026-09-09。来源：本库与 Linux KASan（generic）+ slab 的逐项对比。
 > 用法：按优先级逐项推进，每完成一项打勾并记录 commit。
 >
-> 进度（2026-09-12）：P0#1/#2、P1#3/#4/#5、P2#6/#7、P2#9（多堆）全部 ✅；P2#8 的
-> 记录表压缩 / 报告 sink / tests 矩阵脚本化 ✅，仅剩「无锁」。
-> 测试现状：host reports=18 全过；QEMU case1-14 全过（run_matrix.py）。
+> 进度（2026-09-12）：P0#1/#2、P1#3/#4/#5、P2#6/#7/#9/#10 全部 ✅；P2#8 的记录表
+> 压缩 / 报告 sink / tests 矩阵脚本化 ✅，仅剩「无锁」。
+> 测试现状：host reports=19 全过；QEMU case1-14 全过（run_matrix.py）。
 
 ## 一、正确性缺陷（P0，先修）
 
@@ -116,6 +116,24 @@
   case1-13 全回归过，14/14 PASS。
 - 已知限制：堆不支持注销（unregister）；多堆下记录表/quarantine 全局共享（跨堆统一探测，
   不隔离）；`kasan_heap_init` 重置全局记录表/quarantine，须在注册其他堆之前调用。
+
+### 10. 统一 shadow 段表 + kasan_register_region ✅ 已完成（2026-09-12）
+- 动机：多堆 + 多区域之后，`kasan_shadow_of` 有两条匹配路径（编译期宏 if 链 + 动态堆段
+  数组），且"静态内存 bank"只能编译期宏覆盖（地址须编译期定死）。统一成单一段表概念。
+- **统一段表**：`kasan_segments[KASAN_MAX_SEGMENTS]` + `kasan_segment_count`，主区域 / 宏段
+  / 运行时注册段 / 堆的段都登记为一行。`kasan_shadow_of` 只剩一条遍历路径。
+- **`kasan_register_region(base, size, shadow_base)`**（新公共 API）：纯 shadow 段注册（不关联
+  分配器），返回 usable；`shadow_base==0` 从尾部划影子。用途：静态内存 bank（全局/DMA/外扩 RAM）
+  的运行时覆盖——宏段做不到的"运行时定地址"。
+- **宏 REGION1/2 变成编译期便捷封装**：不再展开成 if 链，而是 `kasan_init` 重置段表后
+  `kasan_segment_add` 登记主区域 + 宏段，再统一清零。`kasan_heap_register` 内部复用
+  `kasan_region_layout` + `kasan_segment_add`（先占段槽、init_pool 失败则 `count--` 回滚，
+  避免残留段）。
+- **时序约束**：`kasan_register_region` / `kasan_heap_register` 必须 `kasan_init()` 之后调用
+  （`kasan_init` 重置段表）。init_array 阶段 register_globals 在段表为空时调用无害（毒化本会被
+  清零重来）。
+- 验证：host reports=19（test_register_region：注册/越界 0xFF/反毒化）；QEMU case1-14 全回归过
+  （case13 宏段、case14 多堆走统一表均正常），14/14 PASS。
 
 ## 已对齐（不需要做）
 - 编译器插桩模型（每次访存查 shadow）、shadow 映射（addr>>3 + base）、堆越界/UAF/double-free 即时捕获、可插拔分配器后端。

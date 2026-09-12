@@ -33,11 +33,13 @@
  * unchecked.
  *
  * Extra memory banks can be covered too: define KASAN_REGION1_BASE / SIZE (and
- * KASAN_REGION2_BASE / SIZE) to add up to two more instrumented segments,
- * each with its own shadow map carved from its own tail (or placed by
- * KASAN_REGIONn_SHADOW_BASE).  Ordinary pointer accesses into those segments
- * are checked through the runtime hook; the compiler-inlined stack / global
- * redzone checks only cover the primary region.
+ * KASAN_REGION2_BASE / SIZE) to add up to two more compile-time segments, or
+ * call kasan_register_region() at runtime (e.g. for a RAM bank whose address
+ * is only known at boot).  Each segment gets its own shadow map carved from
+ * its own tail (or placed by KASAN_REGIONn_SHADOW_BASE / an explicit
+ * shadow_base).  Ordinary pointer accesses into those segments are checked
+ * through the runtime hook; the compiler-inlined stack / global redzone
+ * checks only cover the primary region.
  */
 #ifndef KASAN_H
 #define KASAN_H
@@ -145,6 +147,11 @@ extern "C" {
 #ifndef KASAN_MAX_HEAPS
 #define KASAN_MAX_HEAPS 8u
 #endif
+/* Total shadow segment table size: the primary region + up to two compile-
+ * time macro regions + one segment per heap. */
+#ifndef KASAN_MAX_SEGMENTS
+#define KASAN_MAX_SEGMENTS (1u + 2u + KASAN_MAX_HEAPS)
+#endif
 
 /* Zero the shadow for the whole region. */
 void kasan_init(void);
@@ -235,6 +242,14 @@ typedef struct kasan_heap kasan_heap_t;
 kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
                                   void *arena, uint32_t arena_size,
                                   uint32_t shadow_base);
+/* Register a plain shadow segment (no allocator attached): accesses into
+ * [base, base + size) are checked via the runtime hook.  shadow_base == 0
+ * carves the shadow from the region's own tail (1/8) and returns the usable
+ * size; otherwise the whole size stays usable.  base must be 8-byte aligned;
+ * call after kasan_init().  Returns 0 on a full segment table or bad
+ * arguments. */
+uint32_t kasan_register_region(uint32_t base, uint32_t size,
+                               uint32_t shadow_base);
 /* Per-heap allocation wrappers (mirror the default-heap API). */
 void *kasan_heap_malloc(kasan_heap_t *heap, uint32_t nbytes);
 void *kasan_heap_calloc(kasan_heap_t *heap, uint32_t nmemb, uint32_t size);

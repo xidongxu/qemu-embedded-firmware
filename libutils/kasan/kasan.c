@@ -58,43 +58,55 @@ static uint32_t kasan_cause_of(uint8_t value) {
     return 4;
 }
 
-/* Dynamic shadow segments registered via kasan_heap_register() (one per
- * extra heap).  The primary region + optional macro regions are matched
- * inline in kasan_shadow_of(). */
+/* Unified shadow segment table.  Every covered address range (the primary
+ * region, the optional compile-time macro regions, and each runtime-
+ * registered region / heap) is a row here; kasan_shadow_of() walks it.
+ * kasan_init() resets the table and registers the static segments; further
+ * rows are appended at runtime via kasan_register_region(). */
 typedef struct {
     uint32_t base;
     uint32_t usable;
     uint32_t shadow;
-} kasan_dyn_segment_t;
+} kasan_segment_t;
 
-static kasan_dyn_segment_t kasan_dyn_segments[KASAN_MAX_HEAPS];
-static uint32_t kasan_dyn_count = 0;
+static kasan_segment_t kasan_segments[KASAN_MAX_SEGMENTS];
+static uint32_t kasan_segment_count = 0;
+
+static int kasan_segment_add(uint32_t base, uint32_t usable, uint32_t shadow) {
+    if (kasan_segment_count >= KASAN_MAX_SEGMENTS) {
+        return 0;
+    }
+    kasan_segments[kasan_segment_count].base = base;
+    kasan_segments[kasan_segment_count].usable = usable;
+    kasan_segments[kasan_segment_count].shadow = shadow;
+    kasan_segment_count++;
+    return 1;
+}
+
+/* Compute the usable size and shadow base for a region: an explicit
+ * shadow_base wins; otherwise the shadow is carved from the region's own
+ * tail (1/8). */
+static void kasan_region_layout(uint32_t base, uint32_t size,
+                                uint32_t shadow_base, uint32_t *usable,
+                                uint32_t *shadow) {
+    if (shadow_base == 0) {
+        *usable = size - size / 8u;
+        *shadow = base + *usable;
+    } else {
+        *usable = size;
+        *shadow = shadow_base;
+    }
+}
 
 static uint8_t *kasan_shadow_of(uint32_t addr) {
     uint32_t i = 0;
 
-    if (addr >= KASAN_SEG0_BASE && addr < KASAN_SEG0_BASE + KASAN_SEG0_USABLE) {
-        return (uint8_t *)(uintptr_t)(KASAN_SEG0_SHADOW +
-                                      ((addr - KASAN_SEG0_BASE) >> 3));
-    }
-#ifdef KASAN_REGION1_BASE
-    if (addr >= KASAN_SEG1_BASE && addr < KASAN_SEG1_BASE + KASAN_SEG1_USABLE) {
-        return (uint8_t *)(uintptr_t)(KASAN_SEG1_SHADOW +
-                                      ((addr - KASAN_SEG1_BASE) >> 3));
-    }
-#endif
-#ifdef KASAN_REGION2_BASE
-    if (addr >= KASAN_SEG2_BASE && addr < KASAN_SEG2_BASE + KASAN_SEG2_USABLE) {
-        return (uint8_t *)(uintptr_t)(KASAN_SEG2_SHADOW +
-                                      ((addr - KASAN_SEG2_BASE) >> 3));
-    }
-#endif
-    for (i = 0; i < kasan_dyn_count; i++) {
-        if (addr >= kasan_dyn_segments[i].base &&
-            addr < kasan_dyn_segments[i].base + kasan_dyn_segments[i].usable) {
+    for (i = 0; i < kasan_segment_count; i++) {
+        if (addr >= kasan_segments[i].base &&
+            addr < kasan_segments[i].base + kasan_segments[i].usable) {
             return (uint8_t *)(uintptr_t)(
-                kasan_dyn_segments[i].shadow +
-                ((addr - kasan_dyn_segments[i].base) >> 3));
+                kasan_segments[i].shadow +
+                ((addr - kasan_segments[i].base) >> 3));
         }
     }
     return 0;
@@ -114,16 +126,21 @@ static void kasan_shadow_clear_segment(uint32_t shadow_base, uint32_t size) {
 void kasan_init(void) {
     uint32_t i = 0;
 
-    kasan_shadow_clear_segment(KASAN_SEG0_SHADOW, KASAN_SEG0_USABLE / 8u);
+    /* Reset the segment table and register the static segments (primary
+     * region + optional compile-time macro regions).  Runtime regions must
+     * be registered after kasan_init(). */
+    kasan_segment_count = 0;
+    kasan_segment_add(KASAN_SEG0_BASE, KASAN_SEG0_USABLE, KASAN_SEG0_SHADOW);
 #ifdef KASAN_REGION1_BASE
-    kasan_shadow_clear_segment(KASAN_SEG1_SHADOW, KASAN_SEG1_USABLE / 8u);
+    kasan_segment_add(KASAN_SEG1_BASE, KASAN_SEG1_USABLE, KASAN_SEG1_SHADOW);
 #endif
 #ifdef KASAN_REGION2_BASE
-    kasan_shadow_clear_segment(KASAN_SEG2_SHADOW, KASAN_SEG2_USABLE / 8u);
+    kasan_segment_add(KASAN_SEG2_BASE, KASAN_SEG2_USABLE, KASAN_SEG2_SHADOW);
 #endif
-    for (i = 0; i < kasan_dyn_count; i++) {
-        kasan_shadow_clear_segment(kasan_dyn_segments[i].shadow,
-                                   kasan_dyn_segments[i].usable / 8u);
+
+    for (i = 0; i < kasan_segment_count; i++) {
+        kasan_shadow_clear_segment(kasan_segments[i].shadow,
+                                   kasan_segments[i].usable / 8u);
     }
     kasan_poison_globals();
 }
@@ -666,12 +683,28 @@ void kasan_heap_init(void) {
     }
 }
 
+uint32_t kasan_register_region(uint32_t base, uint32_t size,
+                               uint32_t shadow_base) {
+    uint32_t usable = 0;
+    uint32_t shadow = 0;
+
+    if (base == 0 || size == 0) {
+        return 0;
+    }
+    kasan_region_layout(base, size, shadow_base, &usable, &shadow);
+    if (!kasan_segment_add(base, usable, shadow)) {
+        return 0;
+    }
+    kasan_shadow_clear_segment(shadow, usable / 8u);
+    return usable;
+}
+
 kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
                                   void *arena, uint32_t arena_size,
                                   uint32_t shadow_base) {
     uint32_t base = (uint32_t)(uintptr_t)arena;
-    uint32_t usable = arena_size;
-    uint32_t shadow = shadow_base;
+    uint32_t usable = 0;
+    uint32_t shadow = 0;
     uint32_t i = 0;
     kasan_heap_t *heap = 0;
 
@@ -682,13 +715,7 @@ kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
     if (base == 0 || arena_size == 0) {
         return 0;
     }
-    if (shadow == 0) {
-        usable = arena_size - arena_size / 8u;
-        shadow = base + usable;
-    }
-    if (kasan_dyn_count >= KASAN_MAX_HEAPS) {
-        return 0;
-    }
+    kasan_region_layout(base, arena_size, shadow_base, &usable, &shadow);
     for (i = 0; i < KASAN_MAX_HEAPS; i++) {
         if (!kasan_heaps[i].in_use) {
             heap = &kasan_heaps[i];
@@ -698,17 +725,19 @@ kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
     if (heap == 0) {
         return 0;
     }
+    /* Take a segment slot first; roll it back if the backend cannot use the
+     * pool, so a failed registration leaves no dangling segment. */
+    if (!kasan_segment_add(base, usable, shadow)) {
+        return 0;
+    }
     if (backend->init_pool(backend->ctx, arena, usable) != 0) {
+        kasan_segment_count--;
         return 0;
     }
     heap->backend = backend;
     heap->arena_base = base;
     heap->arena_size = usable;
     heap->in_use = 1;
-    kasan_dyn_segments[kasan_dyn_count].base = base;
-    kasan_dyn_segments[kasan_dyn_count].usable = usable;
-    kasan_dyn_segments[kasan_dyn_count].shadow = shadow;
-    kasan_dyn_count++;
     kasan_shadow_clear_segment(shadow, usable / 8u);
     kasan_poison_as(base, usable, KASAN_POISON_REDZONE);
     return heap;

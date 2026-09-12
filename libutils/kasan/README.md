@@ -172,14 +172,16 @@ kasan_free(p);                          /* free 不区分堆：内部按指针�
 | `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
 | `KASAN_QUARANTINE_MAX` | 64 | 隔离区条数上限 |
 | `KASAN_MAX_HEAPS` | 8 | 可同时注册的堆数（默认堆 + 多堆；每堆一个描述符 + 一个动态影子段） |
+| `KASAN_MAX_SEGMENTS` | `1+2+8` | 统一影子段表容量（主区域 + 2 个宏段 + 每堆一段） |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
 
 **多区域覆盖（可选）**：定义 `KASAN_REGION1_BASE`/`KASAN_REGION1_SIZE`（以及
-`KASAN_REGION2_*`）可再覆盖最多两块 RAM bank，每段从**各自尾部**划出自己的影子
-（或用 `KASAN_REGIONn_SHADOW_BASE` 指定独立影子）。普通指针访问进这些段会经
-runtime 钩子检查；编译器内联的栈/全局红区检查只覆盖主区域。段不得重叠；外设
+`KASAN_REGION2_*`）可再覆盖最多两块 RAM bank；地址**运行时才知道**的 bank 改用
+`kasan_register_region(base, size, shadow_base)`（`kasan_init` 之后调用，返回可用
+大小）。每段从**各自尾部**划出自己的影子（或指定独立影子）。普通指针访问进这些段
+会经 runtime 钩子检查；编译器内联的栈/全局红区检查只覆盖主区域。段不得重叠；外设
 （MMIO）不放入任何段即可照常放行。
 
 ## 目录
