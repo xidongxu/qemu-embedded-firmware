@@ -177,7 +177,7 @@ inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
 
 **多区域覆盖（可选）**：主区域之外的额外内存 bank（第二块 SRAM、外扩 RAM、DMA 缓冲
-池）用 `kasan_register_region(base, size, shadow_base)` 注册（`kasan_init` 之后调用，
+池）用 `kasan_region_register(base, size, shadow_base)` 注册（`kasan_init` 之后调用，
 返回可用大小）；有分配器的内存池用 `kasan_heap_register(...)`。每段从**各自尾部**划出
 自己的影子（或指定独立影子）。普通指针访问进这些段会经 runtime 钩子检查；编译器内联的
 栈/全局红区检查只覆盖主区域。段不得重叠；外设（MMIO）不放入任何段即可照常放行。

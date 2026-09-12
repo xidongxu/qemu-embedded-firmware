@@ -216,7 +216,7 @@ int main(void) {
          * map is carved from its own tail).  Poison a granule there: the
          * write traps via the segment table. */
         volatile uint8_t *seg1 = (volatile uint8_t *)0x80100000u;
-        kasan_register_region(0x80100000u, 0x20000u, 0);
+        kasan_region_register(0x80100000u, 0x20000u, 0);
         kasan_poison(0x80100000u, 16u);
         seg1[8] = 0xAA;                   /* poisoned -> trap */
         g_sink = seg1[0];

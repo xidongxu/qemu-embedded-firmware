@@ -32,7 +32,7 @@ static unsigned char s_region[32768] __attribute__((aligned(8)));
 /* A pool for a second heap registered at runtime (multi-heap support). */
 static unsigned char s_pool2[8192] __attribute__((aligned(8)));
 
-/* A plain region registered at runtime via kasan_register_region(). */
+/* A plain region registered at runtime via kasan_region_register(). */
 static unsigned char s_region_extra[4096] __attribute__((aligned(8)));
 
 #include "../../kasan.c"
@@ -535,7 +535,7 @@ static void test_register_region(void) {
     uint32_t before = 0;
 
     kasan_init();
-    usable = kasan_register_region(base, sizeof(s_region_extra), 0);
+    usable = kasan_region_register(base, sizeof(s_region_extra), 0);
     assert(usable == sizeof(s_region_extra) - sizeof(s_region_extra) / 8u);
 
     /* The runtime-registered region is shadowed like the macro regions. */

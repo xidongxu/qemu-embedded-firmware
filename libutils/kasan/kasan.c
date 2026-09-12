@@ -62,7 +62,7 @@ static uint32_t kasan_cause_of(uint8_t value) {
  * region and each runtime-registered region / heap) is a row here;
  * kasan_shadow_of() walks it.  kasan_init() resets the table and registers
  * the primary region; further rows are appended at runtime via
- * kasan_register_region(). */
+ * kasan_region_register(). */
 typedef struct {
     uint32_t base;
     uint32_t usable;
@@ -676,22 +676,6 @@ void kasan_heap_init(void) {
     }
 }
 
-uint32_t kasan_register_region(uint32_t base, uint32_t size,
-                               uint32_t shadow_base) {
-    uint32_t usable = 0;
-    uint32_t shadow = 0;
-
-    if (base == 0 || size == 0) {
-        return 0;
-    }
-    kasan_region_layout(base, size, shadow_base, &usable, &shadow);
-    if (!kasan_segment_add(base, usable, shadow)) {
-        return 0;
-    }
-    kasan_shadow_clear_segment(shadow, usable / 8u);
-    return usable;
-}
-
 kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
                                   void *arena, uint32_t arena_size,
                                   uint32_t shadow_base) {
@@ -825,6 +809,22 @@ void kasan_free(void *p) {
 
 void kasan_heap_free(kasan_heap_t *heap, void *p) {
     kasan_free_impl(heap, p);
+}
+
+uint32_t kasan_region_register(uint32_t base, uint32_t size,
+                               uint32_t shadow_base) {
+    uint32_t usable = 0;
+    uint32_t shadow = 0;
+
+    if (base == 0 || size == 0) {
+        return 0;
+    }
+    kasan_region_layout(base, size, shadow_base, &usable, &shadow);
+    if (!kasan_segment_add(base, usable, shadow)) {
+        return 0;
+    }
+    kasan_shadow_clear_segment(shadow, usable / 8u);
+    return usable;
 }
 
 static void kasan_memcpy(uint8_t *dst, const uint8_t *src, uint32_t n) {

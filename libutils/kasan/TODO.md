@@ -117,20 +117,20 @@
 - 已知限制：堆不支持注销（unregister）；多堆下记录表/quarantine 全局共享（跨堆统一探测，
   不隔离）；`kasan_heap_init` 重置全局记录表/quarantine，须在注册其他堆之前调用。
 
-### 10. 统一 shadow 段表 + kasan_register_region ✅ 已完成（2026-09-12）
+### 10. 统一 shadow 段表 + kasan_region_register ✅ 已完成（2026-09-12）
 - 动机：多堆 + 多区域之后，`kasan_shadow_of` 有两条匹配路径（编译期宏 if 链 + 动态堆段
   数组），且"静态内存 bank"只能编译期宏覆盖（地址须编译期定死）。统一成单一段表概念。
 - **统一段表**：`kasan_segments[KASAN_MAX_SEGMENTS]` + `kasan_segment_count`，主区域 / 宏段
   / 运行时注册段 / 堆的段都登记为一行。`kasan_shadow_of` 只剩一条遍历路径。
-- **`kasan_register_region(base, size, shadow_base)`**（新公共 API）：纯 shadow 段注册（不关联
+- **`kasan_region_register(base, size, shadow_base)`**（新公共 API）：纯 shadow 段注册（不关联
   分配器），返回 usable；`shadow_base==0` 从尾部划影子。用途：静态内存 bank（全局/DMA/外扩 RAM）
   的运行时覆盖——宏段做不到的"运行时定地址"。
 - **最终：删除 REGION1/2 编译期宏**（2026-09-12 续）：只保留主区域（段 0）+ 运行时注册
-  （`kasan_register_region` / `kasan_heap_register`），两种注册方式收敛为一种。`KASAN_MAX_SEGMENTS`
+  （`kasan_region_register` / `kasan_heap_register`），两种注册方式收敛为一种。`KASAN_MAX_SEGMENTS`
   默认 `1 + KASAN_MAX_HEAPS`；host 删 `test_multi_region`，QEMU case13 改用
-  `kasan_register_region`。`kasan_heap_register` 内部复用 `kasan_region_layout` +
+  `kasan_region_register`。`kasan_heap_register` 内部复用 `kasan_region_layout` +
   `kasan_segment_add`（先占段槽、init_pool 失败则 `count--` 回滚，避免残留段）。
-- **时序约束**：`kasan_register_region` / `kasan_heap_register` 必须 `kasan_init()` 之后调用
+- **时序约束**：`kasan_region_register` / `kasan_heap_register` 必须 `kasan_init()` 之后调用
   （`kasan_init` 重置段表）。init_array 阶段 register_globals 在段表为空时调用无害（毒化本会被
   清零重来）。
 - 验证：host reports=18（test_register_region：注册/越界 0xFF/反毒化）；QEMU case1-14 全回归过

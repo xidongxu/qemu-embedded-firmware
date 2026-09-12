@@ -32,7 +32,7 @@
  * usable part of a covered segment; accesses elsewhere pass through
  * unchecked.
  *
- * Extra memory banks can be covered at runtime: call kasan_register_region()
+ * Extra memory banks can be covered at runtime: call kasan_region_register()
  * for a RAM bank whose address is only known at boot (or a static buffer /
  * DMA pool with no allocator).  Each segment gets its own shadow map carved
  * from its own tail (or placed by an explicit shadow_base).  Ordinary pointer
@@ -196,14 +196,6 @@ typedef struct kasan_heap kasan_heap_t;
 kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
                                   void *arena, uint32_t arena_size,
                                   uint32_t shadow_base);
-/* Register a plain shadow segment (no allocator attached): accesses into
- * [base, base + size) are checked via the runtime hook.  shadow_base == 0
- * carves the shadow from the region's own tail (1/8) and returns the usable
- * size; otherwise the whole size stays usable.  base must be 8-byte aligned;
- * call after kasan_init().  Returns 0 on a full segment table or bad
- * arguments. */
-uint32_t kasan_register_region(uint32_t base, uint32_t size,
-                               uint32_t shadow_base);
 /* Per-heap allocation wrappers (mirror the default-heap API). */
 void *kasan_heap_malloc(kasan_heap_t *heap, uint32_t nbytes);
 void *kasan_heap_calloc(kasan_heap_t *heap, uint32_t nmemb, uint32_t size);
@@ -211,6 +203,14 @@ void *kasan_heap_realloc(kasan_heap_t *heap, void *p, uint32_t size);
 void *kasan_heap_memalign(kasan_heap_t *heap, uint32_t align, uint32_t bytes);
 /* Free a block owned by heap. */
 void kasan_heap_free(kasan_heap_t *heap, void *p);
+/* Register a plain shadow segment (no allocator attached): accesses into
+ * [base, base + size) are checked via the runtime hook.  shadow_base == 0
+ * carves the shadow from the region's own tail (1/8) and returns the usable
+ * size; otherwise the whole size stays usable.  base must be 8-byte aligned;
+ * call after kasan_init().  Returns 0 on a full segment table or bad
+ * arguments. */
+uint32_t kasan_region_register(uint32_t base, uint32_t size,
+                               uint32_t shadow_base);
 
 /* Human-readable name for a shadow byte value ("addressable", "freed",
  * "redzone", ...); for reports / a UART-tracer sink. */
