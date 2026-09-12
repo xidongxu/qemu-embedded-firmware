@@ -66,12 +66,6 @@ extern "C" {
 #endif
 #define KASAN_SHADOW_SIZE (KASAN_USABLE_SIZE / 8u)
 
-/* Segment 0 is always the primary region; further segments are registered at
- * runtime via kasan_register_region() / kasan_heap_register(). */
-#define KASAN_SEG0_BASE   KASAN_REGION_BASE
-#define KASAN_SEG0_USABLE KASAN_USABLE_SIZE
-#define KASAN_SEG0_SHADOW KASAN_SHADOW_BASE
-
 #ifndef KASAN_HEAP_SIZE
 #define KASAN_HEAP_SIZE (64u * 1024u)
 #endif

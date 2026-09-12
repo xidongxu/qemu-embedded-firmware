@@ -126,10 +126,10 @@ static void kasan_shadow_clear_segment(uint32_t shadow_base, uint32_t size) {
 void kasan_init(void) {
     uint32_t i = 0;
 
-    /* Reset the segment table and register the primary region.  Runtime
-     * regions must be registered after kasan_init(). */
+    /* Reset the segment table and register the primary region (segment 0).
+     * Runtime regions must be registered after kasan_init(). */
     kasan_segment_count = 0;
-    kasan_segment_add(KASAN_SEG0_BASE, KASAN_SEG0_USABLE, KASAN_SEG0_SHADOW);
+    kasan_segment_add(KASAN_REGION_BASE, KASAN_USABLE_SIZE, KASAN_SHADOW_BASE);
 
     for (i = 0; i < kasan_segment_count; i++) {
         kasan_shadow_clear_segment(kasan_segments[i].shadow,
