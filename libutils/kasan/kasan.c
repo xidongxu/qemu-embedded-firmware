@@ -552,7 +552,7 @@ static void kasan_quarantine_pop_oldest(void) {
     kasan_quarantine_head =
         (kasan_quarantine_head + 1u) % KASAN_QUARANTINE_MAX;
     kasan_quarantine_count--;
-    kasan_backend->free((void *)(uintptr_t)ptr);
+    kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
 }
 
 /* Hand a freed block to the quarantine, releasing the oldest held blocks if
@@ -561,11 +561,11 @@ static void kasan_quarantine_push(uint32_t ptr, uint32_t size) {
     uint32_t idx = 0;
 
     if (KASAN_QUARANTINE_BYTES == 0u) {
-        kasan_backend->free((void *)(uintptr_t)ptr);
+        kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
         return;
     }
     if (size >= KASAN_QUARANTINE_BYTES) {
-        kasan_backend->free((void *)(uintptr_t)ptr);
+        kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
         return;
     }
     while (kasan_quarantine_count > 0u &&
@@ -598,14 +598,14 @@ void kasan_heap_init(void) {
     if (!kasan_backend || !kasan_backend->init) {
         return;
     }
-    kasan_backend->init(&base, &size);
+    kasan_backend->init(kasan_backend->ctx, &base, &size);
     if (base != 0 && size != 0) {
         kasan_poison_as(base, size, KASAN_POISON_REDZONE);
     }
 }
 
 static uint32_t kasan_usable_of(void *p, uint32_t requested) {
-    uint32_t size = kasan_backend->usable ? kasan_backend->usable(p) : requested;
+    uint32_t size = kasan_backend->usable ? kasan_backend->usable(kasan_backend->ctx, p) : requested;
 
     if (size == 0) {
         size = requested;
@@ -621,7 +621,7 @@ void *kasan_malloc(uint32_t nbytes) {
     if (!kasan_backend || !kasan_backend->malloc) {
         return 0;
     }
-    p = kasan_backend->malloc(nbytes);
+    p = kasan_backend->malloc(kasan_backend->ctx, nbytes);
     if (p == 0) {
         return 0;
     }
@@ -647,12 +647,12 @@ void kasan_free(void *p) {
          * record table overflowed earlier, detection is off; free
          * best-effort to avoid leaking. */
         if (kasan_live_overflow) {
-            size = kasan_backend->usable ? kasan_backend->usable(p) : 0;
+            size = kasan_backend->usable ? kasan_backend->usable(kasan_backend->ctx, p) : 0;
             if (size != 0) {
                 kasan_poison_as((uint32_t)(uintptr_t)p, size,
                                 KASAN_POISON_FREED);
             }
-            kasan_backend->free(p);
+            kasan_backend->free(kasan_backend->ctx, p);
         } else {
             kasan_report(4, (uint32_t)(uintptr_t)p, 0, free_pc,
                          (uint32_t)(uintptr_t)p);
@@ -767,7 +767,7 @@ void *kasan_memalign(uint32_t align, uint32_t bytes) {
     if (!kasan_backend || !kasan_backend->memalign) {
         return 0;
     }
-    p = kasan_backend->memalign(align, bytes);
+    p = kasan_backend->memalign(kasan_backend->ctx, align, bytes);
     if (p == 0) {
         return 0;
     }
@@ -798,7 +798,7 @@ void *kasan_realloc(void *p, uint32_t size) {
         /* Record table overflowed: forward best-effort without the old size
          * (the old area cannot be re-poisoned, so UAF via it may slip). */
         if (kasan_live_overflow && kasan_backend->realloc) {
-            newp = kasan_backend->realloc(p, size);
+            newp = kasan_backend->realloc(kasan_backend->ctx, p, size);
             if (newp != 0) {
                 new_usable = kasan_usable_of(newp, size);
                 kasan_live_add((uint32_t)(uintptr_t)newp, new_usable, pc);
@@ -830,7 +830,7 @@ void *kasan_realloc(void *p, uint32_t size) {
         }
         return newp;
     }
-    newp = kasan_backend->realloc(p, size);
+    newp = kasan_backend->realloc(kasan_backend->ctx, p, size);
     if (newp == 0) {
         return 0;
     }

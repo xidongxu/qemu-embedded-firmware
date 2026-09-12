@@ -31,34 +31,49 @@ static uint8_t kasan_tlsf_arena_storage[KASAN_HEAP_SIZE]
     } while (0)
 #endif
 
-static tlsf_t kasan_tlsf_handle = 0;
+static tlsf_t kasan_tlsf_default_handle = 0;
 
-static void kasan_tlsf_init(uint32_t *base, uint32_t *size) {
+static void kasan_tlsf_init(void *ctx, uint32_t *base, uint32_t *size) {
+    tlsf_t *handle = (tlsf_t *)ctx;
+
     KASAN_TLSF_ARENA_PREP();
-    kasan_tlsf_handle = tlsf_create_with_pool(kasan_tlsf_arena,
-                                              kasan_tlsf_arena_size);
+    *handle = tlsf_create_with_pool(kasan_tlsf_arena,
+                                    kasan_tlsf_arena_size);
     *base = (uint32_t)(uintptr_t)kasan_tlsf_arena;
     *size = kasan_tlsf_arena_size;
 }
 
-static void *kasan_tlsf_malloc(uint32_t bytes) {
-    /* 8-byte alignment matches the 8-byte shadow granule, so the block
-     * header below a returned pointer stays poisoned (underflow caught). */
-    return tlsf_memalign(kasan_tlsf_handle, 8u, (size_t)bytes);
+static int kasan_tlsf_init_pool(void *ctx, void *pool, uint32_t pool_size) {
+    tlsf_t *handle = (tlsf_t *)ctx;
+
+    *handle = tlsf_create_with_pool(pool, (size_t)pool_size);
+    return (*handle == 0) ? -1 : 0;
 }
 
-static uint32_t kasan_tlsf_usable(void *p) {
+static void *kasan_tlsf_malloc(void *ctx, uint32_t bytes) {
+    tlsf_t tlsf = *(tlsf_t *)ctx;
+
+    /* 8-byte alignment matches the 8-byte shadow granule, so the block
+     * header below a returned pointer stays poisoned (underflow caught). */
+    return tlsf_memalign(tlsf, 8u, (size_t)bytes);
+}
+
+static uint32_t kasan_tlsf_usable(void *ctx, void *p) {
+    (void)ctx;
     return (uint32_t)tlsf_block_size(p);
 }
 
-static void kasan_tlsf_free(void *p) {
-    tlsf_free(kasan_tlsf_handle, p);
+static void kasan_tlsf_free(void *ctx, void *p) {
+    tlsf_t tlsf = *(tlsf_t *)ctx;
+
+    tlsf_free(tlsf, p);
 }
 
-static void *kasan_tlsf_realloc(void *p, uint32_t bytes) {
+static void *kasan_tlsf_realloc(void *ctx, void *p, uint32_t bytes) {
+    tlsf_t tlsf = *(tlsf_t *)ctx;
     uint32_t old = (uint32_t)tlsf_block_size(p);
     uint32_t copy = (old < bytes) ? old : bytes;
-    void *np = tlsf_memalign(kasan_tlsf_handle, 8u, (size_t)bytes);
+    void *np = tlsf_memalign(tlsf, 8u, (size_t)bytes);
     uint8_t *d = 0;
     const uint8_t *s = (const uint8_t *)p;
     uint32_t i = 0;
@@ -74,17 +89,21 @@ static void *kasan_tlsf_realloc(void *p, uint32_t bytes) {
     for (i = 0; i < copy; i++) {
         d[i] = s[i];
     }
-    tlsf_free(kasan_tlsf_handle, p);
+    tlsf_free(tlsf, p);
     return np;
 }
 
-static void *kasan_tlsf_memalign(uint32_t align, uint32_t bytes) {
-    return tlsf_memalign(kasan_tlsf_handle, (size_t)align, (size_t)bytes);
+static void *kasan_tlsf_memalign(void *ctx, uint32_t align, uint32_t bytes) {
+    tlsf_t tlsf = *(tlsf_t *)ctx;
+
+    return tlsf_memalign(tlsf, (size_t)align, (size_t)bytes);
 }
 
 static const kasan_alloc_backend_t kasan_tlsf_backend_desc = {
     "tlsf",
+    &kasan_tlsf_default_handle,
     kasan_tlsf_init,
+    kasan_tlsf_init_pool,
     kasan_tlsf_malloc,
     kasan_tlsf_usable,
     kasan_tlsf_free,
@@ -94,4 +113,32 @@ static const kasan_alloc_backend_t kasan_tlsf_backend_desc = {
 
 const kasan_alloc_backend_t *kasan_tlsf_backend(void) {
     return &kasan_tlsf_backend_desc;
+}
+
+/* Multi-heap factory: each call returns an independent TLSF instance whose
+ * ctx points at its own handle.  kasan_heap_register() drives the actual
+ * pool setup via init_pool().  The instance descriptors live in a static
+ * array (no allocation needed). */
+#define KASAN_TLSF_MAX_INSTANCES 8u
+
+typedef struct {
+    kasan_alloc_backend_t api;
+    tlsf_t handle;
+} kasan_tlsf_instance_t;
+
+static kasan_tlsf_instance_t kasan_tlsf_instances[KASAN_TLSF_MAX_INSTANCES];
+
+const kasan_alloc_backend_t *kasan_tlsf_create(void) {
+    uint32_t i = 0;
+
+    for (i = 0; i < KASAN_TLSF_MAX_INSTANCES; i++) {
+        if (kasan_tlsf_instances[i].api.ctx == 0) {
+            kasan_tlsf_instances[i].api = kasan_tlsf_backend_desc;
+            kasan_tlsf_instances[i].api.ctx =
+                &kasan_tlsf_instances[i].handle;
+            kasan_tlsf_instances[i].handle = 0;
+            return &kasan_tlsf_instances[i].api;
+        }
+    }
+    return 0;
 }

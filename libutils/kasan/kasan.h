@@ -152,22 +152,31 @@ void kasan_unpoison(uint32_t addr, uint32_t len);
  * the same checking logic works over TLSF, newlib malloc, an RTOS heap, ... */
 typedef struct kasan_alloc_backend {
     const char *name;
+    /* Opaque per-instance state (e.g. a TLSF handle), passed as the first
+     * argument to every callback.  This lets one backend implementation
+     * serve several independent heaps at once. */
+    void *ctx;
     /* (Re)create the allocator and report the arena it manages as
-     * [*base, *base + *size), so kasan can poison the whole arena. */
-    void (*init)(uint32_t *base, uint32_t *size);
+     * [*base, *base + *size), so kasan can poison the whole arena.  Used
+     * by the default single heap. */
+    void (*init)(void *ctx, uint32_t *base, uint32_t *size);
+    /* Optional: (re)create the allocator over an externally provided pool
+     * [pool, pool + pool_size); returns non-zero on failure.  Required for
+     * kasan_heap_register() (multi-heap support). */
+    int (*init_pool)(void *ctx, void *pool, uint32_t pool_size);
     /* Allocate bytes and return the user pointer (0 on failure). */
-    void *(*malloc)(uint32_t bytes);
+    void *(*malloc)(void *ctx, uint32_t bytes);
     /* Size in bytes of the user area at p; may be NULL (kasan then falls
      * back to the requested size).  Must be >= the requested size. */
-    uint32_t (*usable)(void *p);
+    uint32_t (*usable)(void *ctx, void *p);
     /* Release the user pointer p. */
-    void (*free)(void *p);
+    void (*free)(void *ctx, void *p);
     /* Resize p to bytes (may return p in place or a moved pointer).  NULL
      * means unsupported: kasan_realloc() falls back to malloc+copy+free. */
-    void *(*realloc)(void *p, uint32_t bytes);
+    void *(*realloc)(void *ctx, void *p, uint32_t bytes);
     /* Allocate bytes aligned to align (a power of two).  NULL means
      * unsupported: kasan_memalign() returns NULL. */
-    void *(*memalign)(uint32_t align, uint32_t bytes);
+    void *(*memalign)(void *ctx, uint32_t align, uint32_t bytes);
 } kasan_alloc_backend_t;
 
 /* Register the allocator backend; call before kasan_heap_init(). */
