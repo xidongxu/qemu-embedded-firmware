@@ -75,14 +75,6 @@ extern "C" {
 #ifndef KASAN_HEAP_SIZE
 #define KASAN_HEAP_SIZE (64u * 1024u)
 #endif
-/* Host tests may point the heap arena at their own RAM inside a fake region
- * via KASAN_ARENA_EXT (an integer expression giving the arena base); the
- * arena size defaults to KASAN_HEAP_SIZE unless KASAN_ARENA_SIZE is set. */
-#ifdef KASAN_ARENA_EXT
-#ifndef KASAN_ARENA_SIZE
-#define KASAN_ARENA_SIZE KASAN_HEAP_SIZE
-#endif
-#endif
 /* Live-allocation record table capacity: the maximum number of SIMULTANEOUS
  * live allocations tracked for double-free / bad-free detection.  Each entry
  * is 16 bytes (ptr+state packed + size + alloc_pc + free_pc) on 32-bit, so
@@ -164,8 +156,7 @@ typedef struct kasan_alloc_backend {
 /* Register the allocator backend; call before kasan_heap_init(). */
 void kasan_set_alloc_backend(const kasan_alloc_backend_t *backend);
 /* TLSF backend (libmem/tlsf): returns a static descriptor for the DEFAULT
- * single heap (arena = the KASAN_HEAP_SIZE static pool, or KASAN_ARENA_EXT
- * in host tests). */
+ * single heap (arena = the KASAN_HEAP_SIZE static pool). */
 const kasan_alloc_backend_t *kasan_tlsf_backend(void);
 /* Fresh, independent TLSF instance for use with kasan_heap_register();
  * returns NULL when the static instance table is exhausted. */
