@@ -166,23 +166,21 @@ kasan_free(p);                          /* free 不区分堆：内部按指针�
 | `KASAN_REGION_BASE` | `0x80000000` | 被测区基址（真实 RAM） |
 | `KASAN_REGION_SIZE` | `0x00040000` | 被测区总大小（256 KB） |
 | `KASAN_SHADOW_BASE` | 区尾推导 | 影子基址：默认=被测区尾部 1/8（inline）；定义则用独立 RAM |
-| `KASAN_REGION1_BASE/SIZE` | 未定义 | 额外覆盖段 1（可再加 REGION2）；可选 `KASAN_REGIONn_SHADOW_BASE` 指定影子 |
 | `KASAN_HEAP_SIZE` | 64 KB | TLSF arena 大小（须落在除影子外的可用区内，内含 TLSF 控制块） |
 | `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 16 字节→约 64 KB；state 打包进 ptr 低 3 位；含 alloc/free 调用点；满则关闭 bad-free 探测） |
 | `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
 | `KASAN_QUARANTINE_MAX` | 64 | 隔离区条数上限 |
 | `KASAN_MAX_HEAPS` | 8 | 可同时注册的堆数（默认堆 + 多堆；每堆一个描述符 + 一个动态影子段） |
-| `KASAN_MAX_SEGMENTS` | `1+2+8` | 统一影子段表容量（主区域 + 2 个宏段 + 每堆一段） |
+| `KASAN_MAX_SEGMENTS` | `1+8` | 统一影子段表容量（主区域 + 每堆/每运行时段一段） |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。
 
-**多区域覆盖（可选）**：定义 `KASAN_REGION1_BASE`/`KASAN_REGION1_SIZE`（以及
-`KASAN_REGION2_*`）可再覆盖最多两块 RAM bank；地址**运行时才知道**的 bank 改用
-`kasan_register_region(base, size, shadow_base)`（`kasan_init` 之后调用，返回可用
-大小）。每段从**各自尾部**划出自己的影子（或指定独立影子）。普通指针访问进这些段
-会经 runtime 钩子检查；编译器内联的栈/全局红区检查只覆盖主区域。段不得重叠；外设
-（MMIO）不放入任何段即可照常放行。
+**多区域覆盖（可选）**：主区域之外的额外内存 bank（第二块 SRAM、外扩 RAM、DMA 缓冲
+池）用 `kasan_register_region(base, size, shadow_base)` 注册（`kasan_init` 之后调用，
+返回可用大小）；有分配器的内存池用 `kasan_heap_register(...)`。每段从**各自尾部**划出
+自己的影子（或指定独立影子）。普通指针访问进这些段会经 runtime 钩子检查；编译器内联的
+栈/全局红区检查只覆盖主区域。段不得重叠；外设（MMIO）不放入任何段即可照常放行。
 
 ## 目录
 

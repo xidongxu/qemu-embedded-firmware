@@ -59,10 +59,10 @@ static uint32_t kasan_cause_of(uint8_t value) {
 }
 
 /* Unified shadow segment table.  Every covered address range (the primary
- * region, the optional compile-time macro regions, and each runtime-
- * registered region / heap) is a row here; kasan_shadow_of() walks it.
- * kasan_init() resets the table and registers the static segments; further
- * rows are appended at runtime via kasan_register_region(). */
+ * region and each runtime-registered region / heap) is a row here;
+ * kasan_shadow_of() walks it.  kasan_init() resets the table and registers
+ * the primary region; further rows are appended at runtime via
+ * kasan_register_region(). */
 typedef struct {
     uint32_t base;
     uint32_t usable;
@@ -126,17 +126,10 @@ static void kasan_shadow_clear_segment(uint32_t shadow_base, uint32_t size) {
 void kasan_init(void) {
     uint32_t i = 0;
 
-    /* Reset the segment table and register the static segments (primary
-     * region + optional compile-time macro regions).  Runtime regions must
-     * be registered after kasan_init(). */
+    /* Reset the segment table and register the primary region.  Runtime
+     * regions must be registered after kasan_init(). */
     kasan_segment_count = 0;
     kasan_segment_add(KASAN_SEG0_BASE, KASAN_SEG0_USABLE, KASAN_SEG0_SHADOW);
-#ifdef KASAN_REGION1_BASE
-    kasan_segment_add(KASAN_SEG1_BASE, KASAN_SEG1_USABLE, KASAN_SEG1_SHADOW);
-#endif
-#ifdef KASAN_REGION2_BASE
-    kasan_segment_add(KASAN_SEG2_BASE, KASAN_SEG2_USABLE, KASAN_SEG2_SHADOW);
-#endif
 
     for (i = 0; i < kasan_segment_count; i++) {
         kasan_shadow_clear_segment(kasan_segments[i].shadow,

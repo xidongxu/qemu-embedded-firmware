@@ -30,7 +30,7 @@ EXPECTED = {
     10: (2, 0xFA, 2),   # quarantine UAF
     11: (2, 0xF8, 1),   # global overflow
     12: (2, 0xF3, 1),   # stack overflow
-    13: (2, 0xFF, 4),   # multi-region (extra segment, generic poison)
+    13: (2, 0xFF, 4),   # runtime-registered region (generic poison)
     14: (2, 0xFB, 1),   # multi-heap (second heap overflow)
 }
 

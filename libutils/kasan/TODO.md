@@ -71,7 +71,7 @@
   - 验证：host reports=14（test_stack_redzone：0xF1 整 granule 毒化、mid-granule 访问被拦）；
     QEMU case12（独立函数 `buf[16]` 栈越界 shadow=0xF3 cause=1），case1-11 全回归过。
 
-### 7. 多区域覆盖 ✅ 已完成
+### 7. 多区域覆盖 ✅ 已完成（原宏段方案；后演进为 item 10 统一段表，REGION1/2 宏已删）
 - `kasan_shadow_of` 现按编译期段表匹配（宏展开，无运行时数组开销）：主区域恒为
   段 0，定义 `KASAN_REGION1_BASE/SIZE`（可选 `KASAN_REGION1_SHADOW_BASE`）加段 1，
   同理 `KASAN_REGION2_*` 加段 2（最多三段）。每段从各自尾部划影子（inline）或显式
@@ -125,15 +125,16 @@
 - **`kasan_register_region(base, size, shadow_base)`**（新公共 API）：纯 shadow 段注册（不关联
   分配器），返回 usable；`shadow_base==0` 从尾部划影子。用途：静态内存 bank（全局/DMA/外扩 RAM）
   的运行时覆盖——宏段做不到的"运行时定地址"。
-- **宏 REGION1/2 变成编译期便捷封装**：不再展开成 if 链，而是 `kasan_init` 重置段表后
-  `kasan_segment_add` 登记主区域 + 宏段，再统一清零。`kasan_heap_register` 内部复用
-  `kasan_region_layout` + `kasan_segment_add`（先占段槽、init_pool 失败则 `count--` 回滚，
-  避免残留段）。
+- **最终：删除 REGION1/2 编译期宏**（2026-09-12 续）：只保留主区域（段 0）+ 运行时注册
+  （`kasan_register_region` / `kasan_heap_register`），两种注册方式收敛为一种。`KASAN_MAX_SEGMENTS`
+  默认 `1 + KASAN_MAX_HEAPS`；host 删 `test_multi_region`，QEMU case13 改用
+  `kasan_register_region`。`kasan_heap_register` 内部复用 `kasan_region_layout` +
+  `kasan_segment_add`（先占段槽、init_pool 失败则 `count--` 回滚，避免残留段）。
 - **时序约束**：`kasan_register_region` / `kasan_heap_register` 必须 `kasan_init()` 之后调用
   （`kasan_init` 重置段表）。init_array 阶段 register_globals 在段表为空时调用无害（毒化本会被
   清零重来）。
-- 验证：host reports=19（test_register_region：注册/越界 0xFF/反毒化）；QEMU case1-14 全回归过
-  （case13 宏段、case14 多堆走统一表均正常），14/14 PASS。
+- 验证：host reports=18（test_register_region：注册/越界 0xFF/反毒化）；QEMU case1-14 全回归过
+  （case13 运行时注册段、case14 多堆走统一表均正常），14/14 PASS。
 
 ## 已对齐（不需要做）
 - 编译器插桩模型（每次访存查 shadow）、shadow 映射（addr>>3 + base）、堆越界/UAF/double-free 即时捕获、可插拔分配器后端。

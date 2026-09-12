@@ -22,7 +22,7 @@
  *                         generated redzone (--param asan-globals=1)
  *  12 = stack overflow  : a write past a local buffer hits the compiler-
  *                         generated stack redzone (--param asan-stack=1)
- *  13 = multi-region     : a write into a second instrumented segment
+ *  13 = runtime region   : a write into a runtime-registered segment
  *                         (0x80100000) is caught by its own shadow map
  *  14 = multi-heap       : a second heap (runtime-registered over
  *                         0x80100000) catches a heap overflow
@@ -212,10 +212,11 @@ int main(void) {
     }
 #elif KHEAP_CASE == 13
     {
-        /* A second instrumented segment (0x80100000, 128 KB; its shadow map
-         * is carved from its own tail).  Poison a granule there: the runtime
-         * kasan_shadow_of() maps the extra segment, so the write traps. */
+        /* A runtime-registered shadow segment (0x80100000, 128 KB; its shadow
+         * map is carved from its own tail).  Poison a granule there: the
+         * write traps via the segment table. */
         volatile uint8_t *seg1 = (volatile uint8_t *)0x80100000u;
+        kasan_register_region(0x80100000u, 0x20000u, 0);
         kasan_poison(0x80100000u, 16u);
         seg1[8] = 0xAA;                   /* poisoned -> trap */
         g_sink = seg1[0];
