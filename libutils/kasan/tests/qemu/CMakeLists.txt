@@ -8,6 +8,7 @@
 #   7 = partial-granule-tail  8 = memcpy-read-overflow  9 = memset-write-overflow
 #  10 = quarantine-uaf  11 = global-overflow  12 = stack-overflow
 #  13 = multi-region (a second instrumented segment)
+#  14 = multi-heap (a runtime-registered second heap)
 # Run under QEMU, then read kasan_* markers with gdb:
 #   qemu-system-arm -machine mps2-an505 -cpu cortex-m33 -m 16M \
 #       -kernel <elf> -display none -serial null -monitor none -no-reboot \
@@ -16,7 +17,7 @@
 #       -ex 'p kasan_reports' -ex 'p kasan_report_type' -ex 'p kasan_report_addr'
 
 set(KASAN_TEST_CASE 1 CACHE STRING
-    "kasan QEMU test case (1=overflow 2=uaf 3=doublefree 4=underflow 5=realloc-move 6=realloc-shrink 7=partial-granule 8=memcpy-read 9=memset-write 10=quarantine-uaf 11=global-overflow 12=stack-overflow 13=multi-region)")
+    "kasan QEMU test case (1=overflow 2=uaf 3=doublefree 4=underflow 5=realloc-move 6=realloc-shrink 7=partial-granule 8=memcpy-read 9=memset-write 10=quarantine-uaf 11=global-overflow 12=stack-overflow 13=multi-region 14=multi-heap)")
 
 add_executable(kasan_qemu_test
     kasan_test.c

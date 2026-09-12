@@ -24,6 +24,8 @@
  *                         generated stack redzone (--param asan-stack=1)
  *  13 = multi-region     : a write into a second instrumented segment
  *                         (0x80100000) is caught by its own shadow map
+ *  14 = multi-heap       : a second heap (runtime-registered over
+ *                         0x80100000) catches a heap overflow
  */
 #include "kasan.h"
 #include <stdint.h>
@@ -217,6 +219,23 @@ int main(void) {
         kasan_poison(0x80100000u, 16u);
         seg1[8] = 0xAA;                   /* poisoned -> trap */
         g_sink = seg1[0];
+    }
+#elif KHEAP_CASE == 14
+    {
+        /* Multi-heap: register a second TLSF heap over 0x80100000 (128 KB)
+         * and overflow an allocation from it.  The heap's own shadow map
+         * (carved from its tail by kasan_heap_register) catches the write. */
+        const kasan_alloc_backend_t *be = kasan_tlsf_create();
+        kasan_heap_t *h2 = kasan_heap_register(be, (void *)0x80100000u,
+                                               0x20000u, 0);
+        volatile uint8_t *a = 0;
+        if (h2 != 0) {
+            a = (volatile uint8_t *)kasan_heap_malloc(h2, 32u);
+        }
+        if (a != 0) {
+            a[32] = 0xAA;                 /* heap #2 overflow -> trap */
+        }
+        g_sink = 0;
     }
 #endif
 

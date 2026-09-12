@@ -3,9 +3,9 @@
 > 记录日期：2026-09-09。来源：本库与 Linux KASan（generic）+ slab 的逐项对比。
 > 用法：按优先级逐项推进，每完成一项打勾并记录 commit。
 >
-> 进度（2026-09-12）：P0#1/#2、P1#3/#4/#5、P2#6/#7 全部 ✅；P2#8 的记录表压缩 /
-> 报告 sink / tests 矩阵脚本化 ✅，仅剩「无锁」。
-> 测试现状：host reports=16 全过；QEMU case1-13 全过（run_matrix.py）。
+> 进度（2026-09-12）：P0#1/#2、P1#3/#4/#5、P2#6/#7、P2#9（多堆）全部 ✅；P2#8 的
+> 记录表压缩 / 报告 sink / tests 矩阵脚本化 ✅，仅剩「无锁」。
+> 测试现状：host reports=18 全过；QEMU case1-14 全过（run_matrix.py）。
 
 ## 一、正确性缺陷（P0，先修）
 
@@ -92,9 +92,30 @@
   潜伏 bug：原用 r0/r1 存 init_array 指针，blx 构造函数会破坏 r0-r3（caller-saved），全局
   数>2 时第二次迭代读垃圾地址跳 0x80038000（栈顶）INVSTATE；改用 r4/r5（callee-saved）。
 - 无锁：记录表/shadow 更新在多任务/中断下有竞态（需要时再加临界区）。
-- tests 矩阵脚本化 ✅ 已完成：`tests/qemu/run_matrix.py` 一次跑 case1-12 判 PASS（读 gdb
+- tests 矩阵脚本化 ✅ 已完成：`tests/qemu/run_matrix.py` 一次跑 case1-14 判 PASS（读 gdb
   marker 对照预期，全过退出码 0）；host ctest 已验证（`cmake -B build-host -S
   libutils/kasan -DKASAN_BUILD_TESTS=ON` + `ctest --test-dir build-host`）。
+
+### 9. 多堆支持（多地址 / 多分配算法）✅ 已完成（2026-09-12）
+- 需求：系统里可能有多个内存堆（不同地址、甚至 TLSF/slab/first-fit 混用），每个都要
+  ASan 检查。原来只有单个 `kasan_backend`（一个堆）+ 编译期宏段（最多 3 段），不够。
+- **backend 接口 ctx 化**（提交 `bf4cfdab`）：`kasan_alloc_backend_t` 加 `void *ctx`
+  实例状态，每个回调首参 `ctx`；新增可选 `init_pool(ctx, pool, size)`（在外部 pool 上
+  建实例）。一个实现可服务多个独立堆。
+- **TLSF 实例工厂** `kasan_tlsf_create()`：从静态实例表（上限 8）返回独立实例；默认堆
+  仍走 `kasan_tlsf_backend()`（全局实例）。
+- **堆表 + 动态影子段**：`kasan_heap_t` 描述符表（`KASAN_MAX_HEAPS` 默认 8，堆 #0=默认堆）；
+  `kasan_heap_register(backend, arena, size, shadow_base)` 注册新堆（`shadow_base==0` 从
+  arena 尾部划影子，否则指定）；每堆对应一个动态 shadow 段，`kasan_shadow_of` 查完宏段再
+  遍历动态段；`kasan_init` 清零所有动态段影子。arena 须 8 对齐。
+- **按堆 API**：`kasan_heap_malloc/calloc/realloc/memalign/free`；旧 `kasan_malloc/...`
+  恒为堆 #0 包装。`kasan_free` 与 quarantine 归还按指针反查所属堆（`kasan_heap_of_ptr`），
+  调用方无需记忆堆归属。
+- 验证：host `test_multi_heap`（reports=18：第二堆注册/分配/越界 0xFB/UAF 0xFA 捕获、
+  默认堆不受影响）；QEMU case14（第二堆 0x80100000 越界 store type=2 shadow=0xFB cause=1），
+  case1-13 全回归过，14/14 PASS。
+- 已知限制：堆不支持注销（unregister）；多堆下记录表/quarantine 全局共享（跨堆统一探测，
+  不隔离）；`kasan_heap_init` 重置全局记录表/quarantine，须在注册其他堆之前调用。
 
 ## 已对齐（不需要做）
 - 编译器插桩模型（每次访存查 shadow）、shadow 映射（addr>>3 + base）、堆越界/UAF/double-free 即时捕获、可插拔分配器后端。

@@ -139,6 +139,12 @@ extern "C" {
 #ifndef KASAN_QUARANTINE_MAX
 #define KASAN_QUARANTINE_MAX 64u
 #endif
+/* Number of simultaneously registered heaps (the default heap plus heaps
+ * created with kasan_heap_register); each costs a small descriptor and a
+ * dynamic shadow segment. */
+#ifndef KASAN_MAX_HEAPS
+#define KASAN_MAX_HEAPS 8u
+#endif
 
 /* Zero the shadow for the whole region. */
 void kasan_init(void);
@@ -181,8 +187,13 @@ typedef struct kasan_alloc_backend {
 
 /* Register the allocator backend; call before kasan_heap_init(). */
 void kasan_set_alloc_backend(const kasan_alloc_backend_t *backend);
-/* TLSF backend (libmem/tlsf): returns a static descriptor. */
+/* TLSF backend (libmem/tlsf): returns a static descriptor for the DEFAULT
+ * single heap (arena = the KASAN_HEAP_SIZE static pool, or KASAN_ARENA_EXT
+ * in host tests). */
 const kasan_alloc_backend_t *kasan_tlsf_backend(void);
+/* Fresh, independent TLSF instance for use with kasan_heap_register();
+ * returns NULL when the static instance table is exhausted. */
+const kasan_alloc_backend_t *kasan_tlsf_create(void);
 
 /* Poison the whole arena and (re)create the allocator via the registered
  * backend.  Only the user area of a live allocation is unpoisoned; block
@@ -204,6 +215,34 @@ void *kasan_realloc(void *p, uint32_t size);
 /* Allocate bytes aligned to align (a power of two); NULL if unsupported by
  * the backend. */
 void *kasan_memalign(uint32_t align, uint32_t bytes);
+
+/* ---- multiple heaps ---------------------------------------------------
+ * A heap pairs an allocator backend instance with a memory pool and its own
+ * shadow map, so several heaps (possibly with different algorithms) can be
+ * checked at once.  The kasan_malloc/kasan_free/... API above operates on
+ * the DEFAULT heap (set up via kasan_set_alloc_backend + kasan_heap_init). */
+
+typedef struct kasan_heap kasan_heap_t;
+
+/* Register a heap over the pool [arena, arena + arena_size) using backend.
+ * shadow_base == 0 carves the shadow from the pool's own tail (1/8), so the
+ * allocator must fit in the usable size that remains; otherwise shadow_base
+ * names an independent shadow area (the whole pool stays usable).  The pool
+ * is poisoned up front; live allocations are unpoisoned / re-poisoned on the
+ * fly, exactly like the default heap.  arena must be 8-byte aligned.
+ * Returns NULL on bad arguments, an exhausted heap table, or a failed
+ * backend init_pool(). */
+kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
+                                  void *arena, uint32_t arena_size,
+                                  uint32_t shadow_base);
+/* Per-heap allocation wrappers (mirror the default-heap API). */
+void *kasan_heap_malloc(kasan_heap_t *heap, uint32_t nbytes);
+void *kasan_heap_calloc(kasan_heap_t *heap, uint32_t nmemb, uint32_t size);
+void *kasan_heap_realloc(kasan_heap_t *heap, void *p, uint32_t size);
+void *kasan_heap_memalign(kasan_heap_t *heap, uint32_t align, uint32_t bytes);
+/* Free a block owned by heap. */
+void kasan_heap_free(kasan_heap_t *heap, void *p);
+
 /* Human-readable name for a shadow byte value ("addressable", "freed",
  * "redzone", ...); for reports / a UART-tracer sink. */
 const char *kasan_shadow_name(uint8_t value);

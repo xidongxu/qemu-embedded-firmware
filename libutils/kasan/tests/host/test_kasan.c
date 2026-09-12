@@ -36,6 +36,9 @@ static unsigned char s_region1[8192] __attribute__((aligned(8)));
 #define KASAN_REGION1_BASE ((uint32_t)(uintptr_t)s_region1)
 #define KASAN_REGION1_SIZE (sizeof(s_region1))
 
+/* A pool for a second heap registered at runtime (multi-heap support). */
+static unsigned char s_pool2[8192] __attribute__((aligned(8)));
+
 #include "../../kasan.c"
 #include "../../kasan_alloc_tlsf.c"
 #include "../../../../libmem/tlsf/tlsf.c"
@@ -527,6 +530,47 @@ static void test_multi_region(void) {
     assert(sh_at(KASAN_REGION_BASE + 128u) == 0);
 }
 
+static void test_multi_heap(void) {
+    const kasan_alloc_backend_t *be = 0;
+    kasan_heap_t *h2 = 0;
+    uint8_t *a = 0;
+    uint8_t *b = 0;
+    uint32_t up = 0;
+    uint32_t before = 0;
+
+    be = kasan_tlsf_create();
+    assert(be != 0);
+    h2 = kasan_heap_register(be, s_pool2, sizeof(s_pool2), 0);
+    assert(h2 != 0);
+
+    /* Two heaps, two independent allocations. */
+    a = (uint8_t *)kasan_heap_malloc(h2, 32u);
+    b = (uint8_t *)kasan_malloc(32u);
+    assert(a != 0);
+    assert(b != 0);
+    assert(a != b);
+    a[0] = 0x11;
+    b[0] = 0x22;
+
+    /* Heap overflow inside heap #2 is caught by its own shadow map. */
+    before = kasan_reports;
+    __asan_store1_noabort((uint32_t)(uintptr_t)a + 32u);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_shadow == KASAN_POISON_REDZONE);
+
+    /* Use-after-free inside heap #2 is caught. */
+    up = (uint32_t)(uintptr_t)a;
+    kasan_heap_free(h2, a);
+    before = kasan_reports;
+    __asan_store1_noabort(up);
+    assert(kasan_reports == before + 1u);
+    assert(kasan_report_shadow == KASAN_POISON_FREED);
+
+    /* The default heap is unaffected by heap #2's activity. */
+    assert(b[0] == 0x22);
+    kasan_free(b);
+}
+
 static uint32_t s_sink_calls = 0;
 static uint32_t s_sink_type = 0;
 static uint32_t s_sink_addr = 0;
@@ -592,6 +636,7 @@ int main(void) {
     test_global_redzone();
     test_stack_redzone();
     test_multi_region();
+    test_multi_heap();
     test_report_sink();
     printf("kasan host tests: ALL PASSED (reports=%u)\n",
            (unsigned)kasan_reports);

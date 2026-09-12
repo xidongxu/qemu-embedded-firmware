@@ -121,18 +121,43 @@ double-free / bad-free 探测），真正的分配策略委托给一个后端（
 ```c
 typedef struct kasan_alloc_backend {
     const char *name;
-    void (*init)(uint32_t *base, uint32_t *size);   /* 建 arena，回报范围 */
-    void *(*malloc)(uint32_t bytes);
-    uint32_t (*usable)(void *p);                    /* 用户区大小，可为 NULL */
-    void (*free)(void *p);
-    void *(*realloc)(void *p, uint32_t bytes);      /* 可为 NULL（回退 malloc+copy+free） */
-    void *(*memalign)(uint32_t align, uint32_t bytes); /* 可为 NULL（kasan_memalign 返 NULL） */
+    void *ctx;                                        /* 实例状态，传给每个回调 */
+    void (*init)(void *ctx, uint32_t *base, uint32_t *size);  /* 默认堆：自建 arena */
+    int (*init_pool)(void *ctx, void *pool, uint32_t size);   /* 多堆：外部 pool，可为 NULL */
+    void *(*malloc)(void *ctx, uint32_t bytes);
+    uint32_t (*usable)(void *ctx, void *p);           /* 用户区大小，可为 NULL */
+    void (*free)(void *ctx, void *p);
+    void *(*realloc)(void *ctx, void *p, uint32_t bytes);   /* 可为 NULL */
+    void *(*memalign)(void *ctx, uint32_t align, uint32_t bytes); /* 可为 NULL */
 } kasan_alloc_backend_t;
 ```
 
-- 内置 TLSF 后端：`kasan_tlsf_backend()`（`kasan_alloc_tlsf.c`，链接 `libmem/tlsf`）。
-- 自定义后端：实现上述 4 个函数后 `kasan_set_alloc_backend(&my_backend)`。
+- 内置 TLSF 后端：`kasan_tlsf_backend()`（默认堆）、`kasan_tlsf_create()`（多堆实例，
+  见下文「多堆」）。
+- 自定义后端：实现上述回调（`init` 用于默认堆；`init_pool` 用于多堆注册）后
+  `kasan_set_alloc_backend(&my_backend)`。
 - 后端须**无 sanitize 编译**（它直碰被 poison 的 arena 元数据，不看 shadow）。
+
+## 多堆（可选）
+
+系统里若有多个内存堆（不同地址、甚至不同算法），每个堆可独立注册并各自接受
+ASan 检查：
+
+```c
+/* 每个堆一个后端实例：TLSF 用 kasan_tlsf_create()，自定义算法自备实现 */
+kasan_heap_t *h2 = kasan_heap_register(kasan_tlsf_create(),
+                                       (void *)0x80100000, 0x20000, 0);
+void *p = kasan_heap_malloc(h2, 128);   /* 越界/UAF 与默认堆一样被拦 */
+kasan_free(p);                          /* free 不区分堆：内部按指针反查 */
+```
+
+- `kasan_heap_register(backend, arena, size, shadow_base)`：注册一个堆。`shadow_base==0`
+  时影子从 arena 尾部划 1/8（分配器只能用剩余的可用大小）；否则指定独立影子段。
+  `arena` 须 8 字节对齐。
+- 堆表容量 `KASAN_MAX_HEAPS`（默认 8）；注册返回 NULL 表示表满或后端 `init_pool` 失败。
+- 默认堆（`kasan_set_alloc_backend` + `kasan_heap_init` + `kasan_malloc/...`）恒为
+  堆 #0；多堆 API 是 `kasan_heap_malloc/calloc/realloc/memalign/free`。
+- `kasan_free` 与 quarantine 归还按指针反查所属堆，调用方无需记忆堆归属。
 
 ## 内存布局（可 -D 覆盖，默认 = mps2-an505 QEMU 验证值）
 
@@ -146,6 +171,7 @@ typedef struct kasan_alloc_backend {
 | `KASAN_LIVE_MAX` | 4096 | 存活分配记录表容量（每条 16 字节→约 64 KB；state 打包进 ptr 低 3 位；含 alloc/free 调用点；满则关闭 bad-free 探测） |
 | `KASAN_QUARANTINE_BYTES` | 8 KB | 隔离区总字节上限（0 关闭 quarantine） |
 | `KASAN_QUARANTINE_MAX` | 64 | 隔离区条数上限 |
+| `KASAN_MAX_HEAPS` | 8 | 可同时注册的堆数（默认堆 + 多堆；每堆一个描述符 + 一个动态影子段） |
 
 inline 模式下：`shadow_of(a) = 区尾 + (a - 区基)/8`，仅对可用区（区头到影子区）
 有效；影子区（区尾 1/8）不放置链接数据。链接脚本 RAM 长度须设可用区大小。

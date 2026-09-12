@@ -58,7 +58,21 @@ static uint32_t kasan_cause_of(uint8_t value) {
     return 4;
 }
 
+/* Dynamic shadow segments registered via kasan_heap_register() (one per
+ * extra heap).  The primary region + optional macro regions are matched
+ * inline in kasan_shadow_of(). */
+typedef struct {
+    uint32_t base;
+    uint32_t usable;
+    uint32_t shadow;
+} kasan_dyn_segment_t;
+
+static kasan_dyn_segment_t kasan_dyn_segments[KASAN_MAX_HEAPS];
+static uint32_t kasan_dyn_count = 0;
+
 static uint8_t *kasan_shadow_of(uint32_t addr) {
+    uint32_t i = 0;
+
     if (addr >= KASAN_SEG0_BASE && addr < KASAN_SEG0_BASE + KASAN_SEG0_USABLE) {
         return (uint8_t *)(uintptr_t)(KASAN_SEG0_SHADOW +
                                       ((addr - KASAN_SEG0_BASE) >> 3));
@@ -75,6 +89,14 @@ static uint8_t *kasan_shadow_of(uint32_t addr) {
                                       ((addr - KASAN_SEG2_BASE) >> 3));
     }
 #endif
+    for (i = 0; i < kasan_dyn_count; i++) {
+        if (addr >= kasan_dyn_segments[i].base &&
+            addr < kasan_dyn_segments[i].base + kasan_dyn_segments[i].usable) {
+            return (uint8_t *)(uintptr_t)(
+                kasan_dyn_segments[i].shadow +
+                ((addr - kasan_dyn_segments[i].base) >> 3));
+        }
+    }
     return 0;
 }
 
@@ -90,6 +112,8 @@ static void kasan_shadow_clear_segment(uint32_t shadow_base, uint32_t size) {
 }
 
 void kasan_init(void) {
+    uint32_t i = 0;
+
     kasan_shadow_clear_segment(KASAN_SEG0_SHADOW, KASAN_SEG0_USABLE / 8u);
 #ifdef KASAN_REGION1_BASE
     kasan_shadow_clear_segment(KASAN_SEG1_SHADOW, KASAN_SEG1_USABLE / 8u);
@@ -97,6 +121,10 @@ void kasan_init(void) {
 #ifdef KASAN_REGION2_BASE
     kasan_shadow_clear_segment(KASAN_SEG2_SHADOW, KASAN_SEG2_USABLE / 8u);
 #endif
+    for (i = 0; i < kasan_dyn_count; i++) {
+        kasan_shadow_clear_segment(kasan_dyn_segments[i].shadow,
+                                   kasan_dyn_segments[i].usable / 8u);
+    }
     kasan_poison_globals();
 }
 
@@ -426,7 +454,17 @@ static void kasan_live_set(kasan_live_entry_t *e, uint32_t ptr, uint32_t state) 
 }
 
 static kasan_live_entry_t kasan_live_table[KASAN_LIVE_MAX];
-static const kasan_alloc_backend_t *kasan_backend = 0;
+
+/* Heap table: heap #0 is the default heap; kasan_heap_register() fills the
+ * rest.  Each heap owns a backend instance and an arena [base, base+size). */
+struct kasan_heap {
+    const kasan_alloc_backend_t *backend;
+    uint32_t arena_base;
+    uint32_t arena_size;
+    uint32_t in_use;
+};
+
+static kasan_heap_t kasan_heaps[KASAN_MAX_HEAPS];
 
 /* Quarantine: freed blocks are held (still 0xFA-poisoned) instead of being
  * returned to the allocator, extending the UAF detection window.  A FIFO of
@@ -535,7 +573,23 @@ static int kasan_live_find_freed(uint32_t addr, uint32_t *alloc_pc,
 }
 
 void kasan_set_alloc_backend(const kasan_alloc_backend_t *backend) {
-    kasan_backend = backend;
+    kasan_heaps[0].backend = backend;
+    kasan_heaps[0].arena_base = 0;
+    kasan_heaps[0].arena_size = 0;
+    kasan_heaps[0].in_use = 0;
+}
+
+static kasan_heap_t *kasan_heap_of_ptr(uint32_t ptr) {
+    uint32_t i = 0;
+
+    for (i = 0; i < KASAN_MAX_HEAPS; i++) {
+        if (kasan_heaps[i].in_use &&
+            ptr >= kasan_heaps[i].arena_base &&
+            ptr < kasan_heaps[i].arena_base + kasan_heaps[i].arena_size) {
+            return &kasan_heaps[i];
+        }
+    }
+    return 0;
 }
 
 static void kasan_quarantine_reset(void) {
@@ -547,25 +601,29 @@ static void kasan_quarantine_reset(void) {
 static void kasan_quarantine_pop_oldest(void) {
     uint32_t idx = kasan_quarantine_head;
     uint32_t ptr = kasan_quarantine[idx].ptr;
+    kasan_heap_t *heap = kasan_heap_of_ptr(ptr);
 
     kasan_quarantine_bytes -= kasan_quarantine[idx].size;
     kasan_quarantine_head =
         (kasan_quarantine_head + 1u) % KASAN_QUARANTINE_MAX;
     kasan_quarantine_count--;
-    kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
+    if (heap && heap->backend->free) {
+        heap->backend->free(heap->backend->ctx, (void *)(uintptr_t)ptr);
+    }
 }
 
 /* Hand a freed block to the quarantine, releasing the oldest held blocks if
  * needed to stay under the byte / entry caps. */
-static void kasan_quarantine_push(uint32_t ptr, uint32_t size) {
+static void kasan_quarantine_push(kasan_heap_t *heap, uint32_t ptr,
+                                  uint32_t size) {
     uint32_t idx = 0;
 
     if (KASAN_QUARANTINE_BYTES == 0u) {
-        kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
+        heap->backend->free(heap->backend->ctx, (void *)(uintptr_t)ptr);
         return;
     }
     if (size >= KASAN_QUARANTINE_BYTES) {
-        kasan_backend->free(kasan_backend->ctx, (void *)(uintptr_t)ptr);
+        heap->backend->free(heap->backend->ctx, (void *)(uintptr_t)ptr);
         return;
     }
     while (kasan_quarantine_count > 0u &&
@@ -590,22 +648,77 @@ void kasan_quarantine_drain(void) {
 }
 
 void kasan_heap_init(void) {
+    kasan_heap_t *heap = &kasan_heaps[0];
     uint32_t base = 0;
     uint32_t size = 0;
 
     kasan_live_reset();
     kasan_quarantine_reset();
-    if (!kasan_backend || !kasan_backend->init) {
+    if (!heap->backend || !heap->backend->init) {
         return;
     }
-    kasan_backend->init(kasan_backend->ctx, &base, &size);
-    if (base != 0 && size != 0) {
+    heap->backend->init(heap->backend->ctx, &base, &size);
+    heap->arena_base = base;
+    heap->arena_size = size;
+    heap->in_use = (base != 0 && size != 0) ? 1u : 0u;
+    if (heap->in_use) {
         kasan_poison_as(base, size, KASAN_POISON_REDZONE);
     }
 }
 
-static uint32_t kasan_usable_of(void *p, uint32_t requested) {
-    uint32_t size = kasan_backend->usable ? kasan_backend->usable(kasan_backend->ctx, p) : requested;
+kasan_heap_t *kasan_heap_register(const kasan_alloc_backend_t *backend,
+                                  void *arena, uint32_t arena_size,
+                                  uint32_t shadow_base) {
+    uint32_t base = (uint32_t)(uintptr_t)arena;
+    uint32_t usable = arena_size;
+    uint32_t shadow = shadow_base;
+    uint32_t i = 0;
+    kasan_heap_t *heap = 0;
+
+    if (!backend || !backend->init_pool || !backend->malloc ||
+        !backend->free) {
+        return 0;
+    }
+    if (base == 0 || arena_size == 0) {
+        return 0;
+    }
+    if (shadow == 0) {
+        usable = arena_size - arena_size / 8u;
+        shadow = base + usable;
+    }
+    if (kasan_dyn_count >= KASAN_MAX_HEAPS) {
+        return 0;
+    }
+    for (i = 0; i < KASAN_MAX_HEAPS; i++) {
+        if (!kasan_heaps[i].in_use) {
+            heap = &kasan_heaps[i];
+            break;
+        }
+    }
+    if (heap == 0) {
+        return 0;
+    }
+    if (backend->init_pool(backend->ctx, arena, usable) != 0) {
+        return 0;
+    }
+    heap->backend = backend;
+    heap->arena_base = base;
+    heap->arena_size = usable;
+    heap->in_use = 1;
+    kasan_dyn_segments[kasan_dyn_count].base = base;
+    kasan_dyn_segments[kasan_dyn_count].usable = usable;
+    kasan_dyn_segments[kasan_dyn_count].shadow = shadow;
+    kasan_dyn_count++;
+    kasan_shadow_clear_segment(shadow, usable / 8u);
+    kasan_poison_as(base, usable, KASAN_POISON_REDZONE);
+    return heap;
+}
+
+static uint32_t kasan_usable_of(const kasan_heap_t *heap, void *p,
+                                uint32_t requested) {
+    uint32_t size = heap->backend->usable
+                        ? heap->backend->usable(heap->backend->ctx, p)
+                        : requested;
 
     if (size == 0) {
         size = requested;
@@ -613,25 +726,33 @@ static uint32_t kasan_usable_of(void *p, uint32_t requested) {
     return size;
 }
 
-void *kasan_malloc(uint32_t nbytes) {
+static void *kasan_malloc_impl(kasan_heap_t *heap, uint32_t nbytes) {
     void *p = 0;
     uint32_t size = 0;
     uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
-    if (!kasan_backend || !kasan_backend->malloc) {
+    if (!heap || !heap->in_use || !heap->backend->malloc) {
         return 0;
     }
-    p = kasan_backend->malloc(kasan_backend->ctx, nbytes);
+    p = heap->backend->malloc(heap->backend->ctx, nbytes);
     if (p == 0) {
         return 0;
     }
-    size = kasan_usable_of(p, nbytes);
+    size = kasan_usable_of(heap, p, nbytes);
     kasan_live_add((uint32_t)(uintptr_t)p, size, alloc_pc);
     kasan_unpoison((uint32_t)(uintptr_t)p, size);
     return p;
 }
 
-void kasan_free(void *p) {
+void *kasan_malloc(uint32_t nbytes) {
+    return kasan_malloc_impl(&kasan_heaps[0], nbytes);
+}
+
+void *kasan_heap_malloc(kasan_heap_t *heap, uint32_t nbytes) {
+    return kasan_malloc_impl(heap, nbytes);
+}
+
+static void kasan_free_impl(kasan_heap_t *heap, void *p) {
     uint32_t size = 0;
     uint32_t state = 0;
     uint32_t free_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
@@ -639,7 +760,7 @@ void kasan_free(void *p) {
     if (p == 0) {
         return;
     }
-    if (!kasan_backend || !kasan_backend->free) {
+    if (!heap || !heap->in_use || !heap->backend->free) {
         return;
     }
     if (!kasan_live_find((uint32_t)(uintptr_t)p, &size, &state)) {
@@ -647,12 +768,14 @@ void kasan_free(void *p) {
          * record table overflowed earlier, detection is off; free
          * best-effort to avoid leaking. */
         if (kasan_live_overflow) {
-            size = kasan_backend->usable ? kasan_backend->usable(kasan_backend->ctx, p) : 0;
+            size = heap->backend->usable
+                       ? heap->backend->usable(heap->backend->ctx, p)
+                       : 0;
             if (size != 0) {
                 kasan_poison_as((uint32_t)(uintptr_t)p, size,
                                 KASAN_POISON_FREED);
             }
-            kasan_backend->free(kasan_backend->ctx, p);
+            heap->backend->free(heap->backend->ctx, p);
         } else {
             kasan_report(4, (uint32_t)(uintptr_t)p, 0, free_pc,
                          (uint32_t)(uintptr_t)p);
@@ -666,7 +789,20 @@ void kasan_free(void *p) {
     }
     kasan_live_mark_freed((uint32_t)(uintptr_t)p, free_pc);
     kasan_poison_as((uint32_t)(uintptr_t)p, size, KASAN_POISON_FREED);
-    kasan_quarantine_push((uint32_t)(uintptr_t)p, size);
+    kasan_quarantine_push(heap, (uint32_t)(uintptr_t)p, size);
+}
+
+void kasan_free(void *p) {
+    kasan_heap_t *heap = kasan_heap_of_ptr((uint32_t)(uintptr_t)p);
+
+    if (heap == 0) {
+        heap = &kasan_heaps[0];
+    }
+    kasan_free_impl(heap, p);
+}
+
+void kasan_heap_free(kasan_heap_t *heap, void *p) {
+    kasan_free_impl(heap, p);
 }
 
 static void kasan_memcpy(uint8_t *dst, const uint8_t *src, uint32_t n) {
@@ -740,7 +876,8 @@ void *__wrap_memset(void *ptr, int value, uint32_t n) {
     return ptr;
 }
 
-void *kasan_calloc(uint32_t nmemb, uint32_t size) {
+static void *kasan_calloc_impl(kasan_heap_t *heap, uint32_t nmemb,
+                               uint32_t size) {
     uint32_t total = 0;
     void *p = 0;
     uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
@@ -749,7 +886,7 @@ void *kasan_calloc(uint32_t nmemb, uint32_t size) {
         return 0;
     }
     total = nmemb * size;
-    p = kasan_malloc(total);
+    p = kasan_malloc_impl(heap, total);
     if (p != 0) {
         kasan_zero((uint8_t *)p, total);
         /* kasan_malloc recorded its own (internal) call site; point the
@@ -759,25 +896,42 @@ void *kasan_calloc(uint32_t nmemb, uint32_t size) {
     return p;
 }
 
-void *kasan_memalign(uint32_t align, uint32_t bytes) {
+void *kasan_calloc(uint32_t nmemb, uint32_t size) {
+    return kasan_calloc_impl(&kasan_heaps[0], nmemb, size);
+}
+
+void *kasan_heap_calloc(kasan_heap_t *heap, uint32_t nmemb, uint32_t size) {
+    return kasan_calloc_impl(heap, nmemb, size);
+}
+
+static void *kasan_memalign_impl(kasan_heap_t *heap, uint32_t align,
+                                 uint32_t bytes) {
     void *p = 0;
     uint32_t size = 0;
     uint32_t alloc_pc = (uint32_t)(uintptr_t)__builtin_return_address(0);
 
-    if (!kasan_backend || !kasan_backend->memalign) {
+    if (!heap || !heap->in_use || !heap->backend->memalign) {
         return 0;
     }
-    p = kasan_backend->memalign(kasan_backend->ctx, align, bytes);
+    p = heap->backend->memalign(heap->backend->ctx, align, bytes);
     if (p == 0) {
         return 0;
     }
-    size = kasan_usable_of(p, bytes);
+    size = kasan_usable_of(heap, p, bytes);
     kasan_live_add((uint32_t)(uintptr_t)p, size, alloc_pc);
     kasan_unpoison((uint32_t)(uintptr_t)p, size);
     return p;
 }
 
-void *kasan_realloc(void *p, uint32_t size) {
+void *kasan_memalign(uint32_t align, uint32_t bytes) {
+    return kasan_memalign_impl(&kasan_heaps[0], align, bytes);
+}
+
+void *kasan_heap_memalign(kasan_heap_t *heap, uint32_t align, uint32_t bytes) {
+    return kasan_memalign_impl(heap, align, bytes);
+}
+
+static void *kasan_realloc_impl(kasan_heap_t *heap, void *p, uint32_t size) {
     uint32_t old_size = 0;
     uint32_t state = 0;
     uint32_t new_usable = 0;
@@ -785,22 +939,23 @@ void *kasan_realloc(void *p, uint32_t size) {
     void *newp = 0;
 
     if (p == 0) {
-        return kasan_malloc(size);
+        return kasan_malloc_impl(heap, size);
     }
     if (size == 0) {
-        kasan_free(p);
+        kasan_free_impl(heap, p);
         return 0;
     }
-    if (!kasan_backend || !kasan_backend->malloc || !kasan_backend->free) {
+    if (!heap || !heap->in_use || !heap->backend->malloc ||
+        !heap->backend->free) {
         return 0;
     }
     if (!kasan_live_find((uint32_t)(uintptr_t)p, &old_size, &state)) {
         /* Record table overflowed: forward best-effort without the old size
          * (the old area cannot be re-poisoned, so UAF via it may slip). */
-        if (kasan_live_overflow && kasan_backend->realloc) {
-            newp = kasan_backend->realloc(kasan_backend->ctx, p, size);
+        if (kasan_live_overflow && heap->backend->realloc) {
+            newp = heap->backend->realloc(heap->backend->ctx, p, size);
             if (newp != 0) {
-                new_usable = kasan_usable_of(newp, size);
+                new_usable = kasan_usable_of(heap, newp, size);
                 kasan_live_add((uint32_t)(uintptr_t)newp, new_usable, pc);
                 kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
             }
@@ -816,25 +971,25 @@ void *kasan_realloc(void *p, uint32_t size) {
         return 0;
     }
     /* state == LIVE: old_size is the current user area size. */
-    if (!kasan_backend->realloc) {
+    if (!heap->backend->realloc) {
         /* Emulate: allocate a new block, copy the live bytes, free the old. */
         uint32_t copy = (old_size < size) ? old_size : size;
 
-        newp = kasan_malloc(size);
+        newp = kasan_malloc_impl(heap, size);
         if (newp != 0) {
             kasan_memcpy((uint8_t *)newp, (const uint8_t *)p, copy);
-            kasan_free(p);
+            kasan_free_impl(heap, p);
             /* kasan_malloc recorded its own call site; point the record at
              * this wrapper's caller instead. */
             kasan_live_set_alloc_pc((uint32_t)(uintptr_t)newp, pc);
         }
         return newp;
     }
-    newp = kasan_backend->realloc(kasan_backend->ctx, p, size);
+    newp = heap->backend->realloc(heap->backend->ctx, p, size);
     if (newp == 0) {
         return 0;
     }
-    new_usable = kasan_usable_of(newp, size);
+    new_usable = kasan_usable_of(heap, newp, size);
     if (newp == p) {
         /* In place: re-poison a shrunk tail, then unpoison the new area. */
         if (new_usable < old_size) {
@@ -852,4 +1007,12 @@ void *kasan_realloc(void *p, uint32_t size) {
         kasan_unpoison((uint32_t)(uintptr_t)newp, new_usable);
     }
     return newp;
+}
+
+void *kasan_realloc(void *p, uint32_t size) {
+    return kasan_realloc_impl(&kasan_heaps[0], p, size);
+}
+
+void *kasan_heap_realloc(kasan_heap_t *heap, void *p, uint32_t size) {
+    return kasan_realloc_impl(heap, p, size);
 }
